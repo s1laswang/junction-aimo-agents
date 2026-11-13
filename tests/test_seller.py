@@ -55,3 +55,7 @@ def test_total_not_unit():
     big["total_net"] = 900
     r = rank("1", [offer("1", 5, 500, 0.8), big], M)
     assert r and "900.00 vs 500.00" not in r[0]["why"] or r == []
+
+
+def test_usual_items_count_only():
+    assert usual_items([{"detail": {"lines": 1, "quote_id": "q"}}]) == []

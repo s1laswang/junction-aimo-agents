@@ -24,13 +24,18 @@ def _call(method, path, key, url, **kw):
     return r.json()
 
 
-def usual_items(events):
+def usual_items(events, name_of=None):
     seen = {}
     for e in events:
         d = e.get("detail") or e
-        for ln in d.get("lines") or d.get("items") or []:
+        lines = d.get("lines") or d.get("items") or []
+        for ln in lines if isinstance(lines, list) else []:
+            if not isinstance(ln, dict):
+                continue
             pid = str(ln.get("product_id", ""))
             q = ln.get("name") or ln.get("query") or ln.get("product_name")
+            if not q and pid and name_of:
+                q = name_of(pid)
             if pid and q and pid not in seen:
                 seen[pid] = {"product_id": pid, "query": q, "quantity": float(ln.get("quantity") or 1), "unit": ln.get("sales_unit") or ln.get("unit") or "kg"}
     return list(seen.values())
@@ -89,26 +94,37 @@ def rank(usual_id, offers, mandate, limit=1):
 
 def propose(customer, key, url=URL, max_offers=3):
     mandate = _call("GET", "/mandate", key, url)
+    def name_of(pid):
+        try:
+            return _call("GET", f"/products/{pid}", key, url).get("name")
+        except httpx.HTTPError:
+            return None
+
     orders = _call("GET", "/orders", key, url, params={"customer": customer})
     events = orders.get("orders", []) if isinstance(orders, dict) else orders
-    items = usual_items(events)
+    items = usual_items(events, name_of)
     if not items:
         audit = _call("GET", "/audit", key, url, params={"customer": customer})
         items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit)
-    if not items:
-        items = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
+    seeds = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
     deliver_by = (date.today() + timedelta(days=3)).isoformat()
     excl = mandate.get("exclude_allergens") or []
-    props = []
-    for it in items:
-        need = {
-            "customer": customer,
-            "deliver_by": deliver_by,
-            "items": [{"query": it["query"], "quantity": it["quantity"], "unit": it["unit"], "constraints": {"exclude_allergens": excl, "labels": [], "brands": []}}],
-        }
-        res = _call("POST", "/offers", key, url, json=need)
-        for group in res.get("items", []):
-            props += rank(it["product_id"], group["offers"], mandate)
+    def run(items):
+        props = []
+        for it in items:
+            need = {
+                "customer": customer,
+                "deliver_by": deliver_by,
+                "items": [{"query": it["query"], "quantity": it["quantity"], "unit": it["unit"], "constraints": {"exclude_allergens": excl, "labels": [], "brands": []}}],
+            }
+            res = _call("POST", "/offers", key, url, json=need)
+            for group in res.get("items", []):
+                props += rank(it["product_id"], group["offers"], mandate)
+        return props
+
+    props = run(items)
+    if not props:
+        props = run(seeds)
     props.sort(key=lambda p: -p["score"])
     return props[:max_offers]
 
