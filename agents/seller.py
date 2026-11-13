@@ -24,7 +24,7 @@ def _call(method, path, key, url, **kw):
     return r.json()
 
 
-def usual_items(events):
+def usual_items(events, name_of=None):
     seen = {}
     for e in events:
         d = e.get("detail") or e
@@ -34,6 +34,8 @@ def usual_items(events):
                 continue
             pid = str(ln.get("product_id", ""))
             q = ln.get("name") or ln.get("query") or ln.get("product_name")
+            if not q and pid and name_of:
+                q = name_of(pid)
             if pid and q and pid not in seen:
                 seen[pid] = {"product_id": pid, "query": q, "quantity": float(ln.get("quantity") or 1), "unit": ln.get("sales_unit") or ln.get("unit") or "kg"}
     return list(seen.values())
@@ -92,9 +94,15 @@ def rank(usual_id, offers, mandate, limit=1):
 
 def propose(customer, key, url=URL, max_offers=3):
     mandate = _call("GET", "/mandate", key, url)
+    def name_of(pid):
+        try:
+            return _call("GET", f"/products/{pid}", key, url).get("name")
+        except httpx.HTTPError:
+            return None
+
     orders = _call("GET", "/orders", key, url, params={"customer": customer})
     events = orders.get("orders", []) if isinstance(orders, dict) else orders
-    items = usual_items(events)
+    items = usual_items(events, name_of)
     if not items:
         audit = _call("GET", "/audit", key, url, params={"customer": customer})
         items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit)
