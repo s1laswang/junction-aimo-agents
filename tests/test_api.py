@@ -82,3 +82,10 @@ def test_quote_place_flow(client, monkeypatch):
     assert client.get(f"/v1/orders/{r.json().get('order_id', 'x')}", headers=A).status_code == 404
     assert client.get("/v1/orders", headers=ADMIN).status_code == 200
     assert client.get(f"/v1/audit?order_id={q['quote_id']}", headers=A).json()["events"]
+
+
+def test_audit_trail_verified(client):
+    r = client.get("/v1/audit", headers=A)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["verified"] == {"ok": True, "bad_seq": None} and d["checkpoint"]

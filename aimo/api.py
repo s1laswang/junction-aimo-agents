@@ -180,7 +180,13 @@ def decide_approval(order_id, body: ApprovalDecision):
 def get_audit_trail(p, customer=None, order_id=None):
     from aimo import audit
     events = audit.events(customer=scope(p, customer), order_id=order_id)
-    return {"events": jsonable_encoder(events), "text": audit.narrate(events)}
+    ok, bad_seq = audit.verify()
+    return {
+        "events": jsonable_encoder(events),
+        "text": audit.narrate(events),
+        "verified": {"ok": ok, "bad_seq": bad_seq},
+        "checkpoint": audit.checkpoint(),
+    }
 
 
 def get_mandate(p, customer=None):
