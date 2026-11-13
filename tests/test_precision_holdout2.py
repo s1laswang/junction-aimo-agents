@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from aimo.parse import parse_need
+from precision_cases import HOLDOUT2
 
 catalog = pytest.importorskip("aimo.catalog")
 substitute = pytest.importorskip("aimo.substitute")
@@ -16,18 +17,7 @@ pytestmark = pytest.mark.skipif(not (DATA.exists() and os.environ.get("AIMO_EVAL
 T = date(2026, 11, 13)
 PREPARED = r"soup|keitto|sauce|kastike|salad|salaatti|pizza|chips|crisp|pie|piirakka|cake|kakku|juice|mehu"
 
-CASES = [
-    ("Sairaalakeittiö tarvitsee 80 l laktoositonta maitoa, pähkinätön", [(r"\bmilk\b|maito", r"chocolate|suklaa|yogh?urt|jogurt|oat|kaura|soy|soija|powder|jauhe|ice cream|jäätelö")]),
-    ("School kitchen: 120 kg carrots and 90 kg potatoes by Thursday", [(r"carrot|porkkana", r"salad|salaatti|cake|kakku|juice|mehu|soup|keitto|mash|muusi"), (r"potato|peruna", r"salad|salaatti|chips|fries|ranskal|mash|muusi")]),
-    ("Koulukeittiölle 60 kg riisiä", [(r"\brice\b|riisi", r"pudding|puuro|cake|kakku|noodle|milk|maito|crisp|waffle|vinegar|etikka")]),
-    ("40 kg gluten-free oats for the hospital, no nuts", [(r"oat|kaura", r"bar|patukka|cookie|keksi|biscuit|drink|juoma|chocolate|suklaa")]),
-    ("Tarvitsen 30 kg kananmunia perjantaiksi", [(r"\begg|muna", r"plant|salad|salaatti|noodle|nuudeli|mayo|majoneesi|chocolate|suklaa|pasta")]),
-    ("25 l lactose free milk and 10 kg lactose free butter", [(r"\bmilk\b|maito", r"chocolate|suklaa|yogh?urt|jogurt|oat|kaura|soy|soija|powder|jauhe|ice cream|jäätelö"), (r"butter|voi\b|voi ", r"cookie|keksi|bun|pulla|peanut|maapähkinä|sauce|kastike|croissant|veitsi")]),
-    ("Tilaan 50 kg lohta ja 20 kg tilliä", [(r"salmon|lohi", r"sauce|kastike|salad|salaatti|soup|keitto|pasta|veitsi|knife"), (r"dill|tilli", r"pickle|kurkku|sauce|kastike|salad|salaatti|mustard|sinappi")]),
-    ("100 kg tomatoes, hospital, allergen free (no gluten)", [(r"tomato|tomaatti", r"sauce|kastike|soup|keitto|ketchup|paste|purée|sose|pizza")]),
-    ("Koulu tarvitsee 200 l maitoa ja 50 kg juustoa huomenna", [(r"\bmilk\b|maito", r"chocolate|suklaa|yogh?urt|jogurt|oat|kaura|soy|soija|powder|jauhe|ice cream|jäätelö"), (r"cheese|juusto", r"cream cheese|tuorejuusto|sauce|kastike|pizza|burger|mac &|sämpylä|bun")]),
-    ("45 kg pork for Monday", [(r"pork|possu|sika", r"sauce|kastike|soup|keitto|pizza|pie|piirakka|burger|dog|sausage|makkara")]),
-]
+CASES = HOLDOUT2
 
 
 KNOWN_MISSES = {
