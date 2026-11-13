@@ -72,7 +72,7 @@ ORIGIN_ALIASES = {
     "netherlands": "nl", "hollanti": "nl", "france": "fr", "ranska": "fr", "italy": "it", "italia": "it",
     "spain": "es", "espanja": "es",
 }
-HEAD_PREFIXES = ("täys", "kevyt", "rasvaton", "vähärasvainen", "luomu", "ylikorkea", "uht", "tuore", "puolirasvainen")
+MODIFIER_PREFIXES = ("kahvi", "suklaa", "mansikka", "vanilja", "kaakao", "banaani", "kookos")
 HEAD_SUFFIXES = ("juoma",)
 WORD_RE = re.compile(r"[^\W\d_]+", re.U)
 TEMPERATURE_LABELS = {"warmTemperature", "coolTemperature", "freezeTemperature"}
@@ -188,8 +188,8 @@ def _read_csv(name: str, col: str) -> dict:
     return out
 
 
-def _fts_query(groups: list[list[str]]) -> str | None:
-    terms = {v for g in groups for v in g if len(v) >= 3}
+def _fts_query(groups: list[list[tuple]]) -> str | None:
+    terms = {v for g in groups for v, _, _ in g if len(v) >= 3}
     if not terms:
         return None
     return " OR ".join('"' + t.replace('"', "") + '"' for t in sorted(terms))
@@ -233,15 +233,15 @@ def _load() -> dict:
         return _state
 
 
-def _groups(q: str) -> list[list[str]]:
+def _groups(q: str) -> list[list[tuple]]:
     q = re.sub(r"(lactose|laktos)[\s-]*free|laktoositon|laktosfri", " laktoositon ", q.lower())
     q = re.sub(r"gluten[\s-]*free|gluteeniton|glutenfri", " gluteeniton ", q)
     out = []
     for tok in re.findall(r"[\wäöåÄÖÅ%]+", q):
-        group = [tok]
+        group = [(tok, 1.0, True)]
         for syn in SYNONYMS:
             if tok in syn:
-                group = [tok] + [v for v in syn if v != tok]
+                group = [(v, 1.0 if v == syn[0] else 0.85, v == syn[0]) for v in syn]
                 break
         out.append(group)
     return out
@@ -275,15 +275,17 @@ def _origin_code(o: str) -> str:
     return ORIGIN_ALIASES.get(o, o[:2])
 
 
-def _word_score(v: str, words: list[str], nb: str) -> float:
+def _word_score(v: str, words: list[str], nb: str, compound: bool = True) -> float:
     if " " in v:
         return 3.0 if v in " ".join(words) else (0.5 if v in nb else 0.0)
     best = 0.5 if v in nb else 0.0
     for w in words:
         if w == v:
             return 3.0
+        if not compound:
+            continue
         if w.endswith(v):
-            best = max(best, 3.0 if w[: -len(v)] in HEAD_PREFIXES else 1.5)
+            best = max(best, 1.5 if w[: -len(v)] in MODIFIER_PREFIXES else 3.0)
         elif w.startswith(v):
             best = max(best, 3.0 if w[len(v):] in HEAD_SUFFIXES else 0.5)
         elif v in w:
@@ -329,9 +331,13 @@ def search(q: str, constraints: Constraint | None = None, limit: int = 50) -> li
             nb = s["names"][pid]
             words = s["primary"][pid]
             score = 0.0
+            hits = 0
             for g in groups:
-                score += max(_word_score(v, words, nb) * (1 if i == 0 else 0.8) for i, v in enumerate(g))
-            if score:
+                hits += any(v in nb for v, _, _ in g)
+                score += max(_word_score(v, words, nb, c) * w for v, w, c in g)
+            if hits == len(groups):
+                score += 3
+            if hits:
                 scored.append((-score, len(nb), pid))
         scored.sort()
         order = [pid for _, _, pid in scored]
