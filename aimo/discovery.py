@@ -40,6 +40,7 @@ def agent_card():
                 "alg": "EdDSA",
                 "curve": "Ed25519",
                 "keys": "/.well-known/jwks.json",
+                "steps": ["GET /.well-known/jwks.json", "read the kid in the JWS protected header", "verify the signature with the matching key, algorithms pinned to EdDSA", "compare the payload with the quote you received"],
                 "note": "Select the key by the kid header and pin the algorithm to EdDSA, for example joserfc with algorithms=[\"EdDSA\"].",
             },
             "decisions": ["auto", "needs_approval", "blocked"],
