@@ -1,3 +1,4 @@
+import tempfile
 from _common import *
 
 base = parse_base()
@@ -5,30 +6,35 @@ r = Run("s4_stockout", base)
 
 
 def go():
+    from agents import drift
     c = Client(base, "hotel-aurora")
     day = next_monday()
-    r.say("order placed Monday, supplier stock-out Wednesday: system reacts and asks a human")
+    r.say("order placed, supplier stock-out mid-week: drift watcher re-plans and asks a human")
     need = c.parse(f"I need 200 litres of lactose-free milk by {day}", "hotel-aurora")
-    offers = c.offers(need)
-    q = c.quote(best_picks_covering(offers["items"][0]), day)
+    q = c.quote(best_picks_covering(c.offers(need)["items"][0]), day)
     o = c.order(q)
     if o["status"] == "pending_approval":
-        o = c.decide(o["order_id"], True, "scenario-human", "initial ok")
+        o = c.decide(o["order_id"], True, note="initial ok")
     r.check("order placed before fault", o["status"] in ("placed", "approved", "confirmed"), o["status"])
     pid = o["lines"][0]["product_id"]
-    sim = simulate(c, "stockout", product_id=pid, available_amount=0)
-    r.check("fault injected", sim is not None)
-    after = c.j("GET", f"/v1/orders/{o['order_id']}")
-    pend = any(a["order_id"] == o["order_id"] for a in c.approvals())
-    clear_simulation(c)
-    changed = after["status"] != o["status"] or after["substitutions"] or after["lines"] != o["lines"]
-    r.check("order reacted (split, substitute or new date)", bool(changed) or pend, after["status"])
-    r.check("human asked before changing the order", pend or after["decision"]["outcome"] == "needs_approval", after["decision"]["outcome"])
-    events = c.audit(o["order_id"])
+    simulate(c, "stockout", product_id=pid, available_amount=0)
+    try:
+        res = drift.watch_orders("hotel-aurora", KEYS["hotel-aurora"], base, state_path=os.path.join(tempfile.mkdtemp(), "d.json"))
+    finally:
+        clear_simulation(c)
+    mine = [x for x in res if x["order_id"] == o["order_id"]]
+    r.check("watcher flagged the affected order", bool(mine), str(len(res)))
+    r.check("every flag has a why", all(x["why"] for x in mine))
+    nid = next((x["new_order_id"] for x in mine if x["new_order_id"]), None)
+    r.check("a replacement order was created", bool(nid))
+    new = c.j("GET", f"/v1/orders/{nid}") if nid else {}
+    r.check("replacement waits for a human", new.get("status") == "pending_approval", str(new.get("status")))
+    reasons = new.get("decision", {}).get("reasons", [])
+    r.check("reason AGENT_REQUESTED", any(x["code"] == "AGENT_REQUESTED" for x in reasons), str(reasons))
+    r.check("note names the original order", any(o["order_id"] in x.get("text", "") for x in reasons))
+    events = c.audit(nid) if nid else []
     events = events["events"] if isinstance(events, dict) and "events" in events else events
-    r.check("audit records the stock-out with a why", any("stock" in (e.get("why", "") + e.get("action", "")).lower() for e in events))
-    for s in after["substitutions"]:
-        r.check("substitute is a different product with reason", s["substitute_id"] != s["original_id"] and s["reason"], str(s))
+    r.check("audit has events with a why", bool(events) and all(e.get("why") for e in events))
 
 
 r.guard(go)
