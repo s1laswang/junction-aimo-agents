@@ -535,7 +535,10 @@ def describe_need(need: Need, lang: str = "en") -> str:
         if c.gluten_free:
             tags.append("gluteeniton" if fi else "gluten-free")
         for a in c.exclude_allergens:
-            tags.append(f"ilman: {FI_ALLERGEN.get(a, a)}" if fi else f"no {a}")
+            if a == "milk":
+                tags.append("maidoton" if fi else "dairy-free")
+            else:
+                tags.append(f"ilman: {FI_ALLERGEN.get(a, a)}" if fi else f"no {a}")
         for l in c.labels:
             tags.append(FI_LABEL.get(l, l) if fi else l)
         if c.origin:
