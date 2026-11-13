@@ -170,7 +170,7 @@ if __name__ == "__main__":
             ps = show(c, KEYS[c], a.url)
             if c == "hotel-aurora" and ps:
                 top = ps[0]
-        if top:
+        if top and a.accept is not None:
             print("== accepting top hotel-aurora proposal")
             o = accept(top, KEYS["hotel-aurora"], a.url)
             print(o["order_id"], o["status"], json.dumps(o["decision"]))
