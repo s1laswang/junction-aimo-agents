@@ -72,6 +72,9 @@ ORIGIN_ALIASES = {
     "netherlands": "nl", "hollanti": "nl", "france": "fr", "ranska": "fr", "italy": "it", "italia": "it",
     "spain": "es", "espanja": "es",
 }
+HEAD_PREFIXES = ("täys", "kevyt", "rasvaton", "vähärasvainen", "luomu", "ylikorkea", "uht", "tuore", "puolirasvainen")
+HEAD_SUFFIXES = ("juoma",)
+WORD_RE = re.compile(r"[^\W\d_]+", re.U)
 TEMPERATURE_LABELS = {"warmTemperature", "coolTemperature", "freezeTemperature"}
 LITRE_UNITS = {"l": 1.0, "ltr": 1.0, "litre": 1.0, "litres": 1.0, "liter": 1.0, "liters": 1.0, "litra": 1.0,
                "litraa": 1.0, "dl": 0.1, "cl": 0.01, "ml": 0.001, "mlt": 0.001, "clt": 0.01}
@@ -199,7 +202,7 @@ def _load() -> dict:
         path = _json_path()
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
-        products, raws, names_blob, blob = {}, {}, {}, {}
+        products, raws, names_blob, blob, primary = {}, {}, {}, {}, {}
         for item in items:
             if item.get("deleted"):
                 continue
@@ -209,6 +212,7 @@ def _load() -> dict:
             raws[pid] = item
             nb = " ".join(names.values()).lower()
             names_blob[pid] = nb
+            primary[pid] = WORD_RE.findall(next((names[l] for l in NAME_LANGS if l in names), "").lower())
             blob[pid] = " ".join([nb, (p.brand or "").lower(), (p.vendor or "").lower(), p.category or ""])
         stat = path.stat()
         sig = f"{stat.st_size}:{stat.st_mtime_ns}:{len(products)}"
@@ -222,7 +226,7 @@ def _load() -> dict:
             con.execute("insert or replace into catalog_meta values('sig', ?)", (sig,))
             con.commit()
         _state.update(
-            products=products, raws=raws, names=names_blob, blob=blob, con=con,
+            products=products, raws=raws, names=names_blob, blob=blob, primary=primary, con=con,
             reliability=_read_csv("valio_aimo_junction26_delivery_reliability.csv", "deliveryReliability"),
             co2=_read_csv("valio_aimo_junction26_carbon_footprint.csv", "AVG kg CO2-eq/kg"),
         )
@@ -237,7 +241,7 @@ def _groups(q: str) -> list[list[str]]:
         group = [tok]
         for syn in SYNONYMS:
             if tok in syn:
-                group = list(syn)
+                group = [tok] + [v for v in syn if v != tok]
                 break
         out.append(group)
     return out
@@ -269,6 +273,22 @@ def _gluten_free(raw: dict, nb: str) -> bool:
 def _origin_code(o: str) -> str:
     o = o.strip().lower()
     return ORIGIN_ALIASES.get(o, o[:2])
+
+
+def _word_score(v: str, words: list[str], nb: str) -> float:
+    if " " in v:
+        return 3.0 if v in " ".join(words) else (0.5 if v in nb else 0.0)
+    best = 0.5 if v in nb else 0.0
+    for w in words:
+        if w == v:
+            return 3.0
+        if w.endswith(v):
+            best = max(best, 3.0 if w[: -len(v)] in HEAD_PREFIXES else 1.5)
+        elif w.startswith(v):
+            best = max(best, 3.0 if w[len(v):] in HEAD_SUFFIXES else 0.5)
+        elif v in w:
+            best = max(best, 0.5)
+    return best
 
 
 def _passes(pid: str, c: Constraint, s: dict) -> bool:
@@ -306,11 +326,11 @@ def search(q: str, constraints: Constraint | None = None, limit: int = 50) -> li
             cands = list(s["products"])
         scored = []
         for pid in cands:
-            blob, nb = s["blob"][pid], s["names"][pid]
+            nb = s["names"][pid]
+            words = s["primary"][pid]
             score = 0.0
             for g in groups:
-                if any(v in blob for v in g):
-                    score += 1 + (0.5 if any(v in nb for v in g) else 0)
+                score += max(_word_score(v, words, nb) * (1 if i == 0 else 0.8) for i, v in enumerate(g))
             if score:
                 scored.append((-score, len(nb), pid))
         scored.sort()

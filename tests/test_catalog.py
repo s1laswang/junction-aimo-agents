@@ -44,3 +44,25 @@ def test_unit_math():
 def test_csv_lookups():
     assert catalog.reliability("460001") == 1.0
     assert catalog.co2_per_kg("460000") == 2.315
+
+
+def _fi(p):
+    return catalog.names(p.product_id).get("fi", "").lower()
+
+
+def test_rank_plain_milk_first():
+    for q in ("maito", "laktoositon maito", "lactose-free milk"):
+        res = catalog.search(q, Constraint(lactose_free=True), limit=10)
+        assert len(res) == 10
+        for p in res:
+            n = _fi(p)
+            assert "maitorahka" not in n and "maitosuklaa" not in n and "kahvimaito" not in n
+            assert "maito" in n or "maitojuoma" in n
+
+
+def test_rank_head_before_modifier():
+    res = catalog.search("maito", limit=300)
+    names = [_fi(p) for p in res]
+    first_mod = next(i for i, n in enumerate(names) if "maitorahka" in n)
+    plain = [i for i, n in enumerate(names) if n.split()[-1:] and any(w in ("maito", "täysmaito", "kevytmaito") for w in n.split())]
+    assert plain and min(plain) < first_mod
