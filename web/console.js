@@ -1,6 +1,5 @@
 (function(){
 const $=s=>document.querySelector(s);
-const KEYS={"hotel-aurora":"demo-key-hotel-aurora","hospital-tays":"demo-key-hospital-tays","school-hervanta":"demo-key-school-hervanta"};
 const TEXTS={
 milk:"I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
 school:"Weekly school lunch: 200 kg of gluten-free pasta and 80 litres of oat drink, no nuts, no egg, delivered by Thursday.",
@@ -28,12 +27,12 @@ event:{need:{customer:"",deliver_by:"2026-11-20",raw_text:"",items:[
  {need_item:2,offers:[{product_id:"mock-610003",product:{name:"Butter 500 g",brand:"Valio",sales_unit:"PK",unit_size:{value:.5,unit:"kg"}},units_needed:50,unit_price_net:3.9,total_net:195,available_amount:50,available_date:"2026-11-19",reliability:.98,co2_per_kg:9.2,match_score:.97,tier:"exact",notes:[]}],shortfall:0}],
  order:{status:"blocked",decision:{outcome:"blocked",reasons:[{code:"CATEGORY_NOT_ALLOWED",text:"Fresh fish is outside this agent's allowed categories."},{code:"LEAD_TIME",text:"Delivery in under 48 hours is not covered by the mandate."}]},substitutions:[]}}};
 const S={mock:new URLSearchParams(location.search).has("mock"),seen:new Set(),base:false,sc:"milk"};
-const cust=()=>$("#customer").value;
+const cust=()=>aimo.customer();
 const esc=v=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const eur=v=>v==null?"-":Number(v).toLocaleString("en-FI",{minimumFractionDigits:2,maximumFractionDigits:2});
 const clock=()=>{const d=new Date(),p=(n,l=2)=>String(n).padStart(l,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-function setMock(on){if(on)S.mock=true;$("#mock-tag").hidden=!S.mock}
+function setMock(on){if(on)S.mock=true;aimo.mock(S.mock)}
 function line(o){
  $("#trace-empty").hidden=true;
  const li=document.createElement("li");li.className="ln"+(o.ext?" ext":"");
@@ -49,10 +48,7 @@ async function call(tool,method,path,body,mock,why){
  const li=line({tool,status:"running",why:"Calling "+path+"..."});
  const t0=performance.now();let res=null,real=false;
  if(!S.mock){
-  try{
-   const r=await fetch(path,{method,headers:{"Content-Type":"application/json","X-Agent-Key":KEYS[cust()]||""},body:body?JSON.stringify(body):undefined});
-   if(r.ok&&(r.headers.get("content-type")||"").includes("json")){res=await r.json();real=true}
-  }catch(e){}
+  res=await aimo.api(path,{method,body});real=res!=null;
   if(!real){setMock(true);S.fell=true}
  }
  if(!real){await sleep(200+Math.random()*400);res=mock()}
@@ -116,19 +112,15 @@ async function run(){
 }
 async function poll(){
  if(!S.mock){
-  try{
-   const r=await fetch("/v1/audit?customer="+encodeURIComponent(cust()),{headers:{"X-Agent-Key":KEYS[cust()]||""}});
-   if(r.ok){const j=await r.json();const ev=Array.isArray(j)?j:(j.events||[]);
-    ev.sort((a,b)=>a.seq-b.seq).forEach(e=>{const k=cust()+e.seq;if(S.seen.has(k))return;S.seen.add(k);if(S.base)line({t:(e.ts||"").slice(11,23)||clock(),tool:e.action,status:"audit",cls:"ok",actor:e.actor,why:e.why,res:e.detail,ext:!/console/.test(e.actor||"")})});
-    S.base=true}
-  }catch(e){}
+  const j=await aimo.api("/v1/audit?customer="+encodeURIComponent(cust()));
+  if(j){const ev=Array.isArray(j)?j:(j.events||[]);
+   ev.sort((a,b)=>a.seq-b.seq).forEach(e=>{const k=cust()+e.seq;if(S.seen.has(k))return;S.seen.add(k);if(S.base)line({t:(e.ts||"").slice(11,23)||clock(),tool:e.action,status:"audit",cls:"ok",actor:e.actor,why:e.why,res:e.detail,ext:!/console/.test(e.actor||"")})});
+   S.base=true}
  }
  setTimeout(poll,2000);
 }
 function init(){
- const sel=$("#customer"),saved=localStorage.getItem("aimo.customer");
- if(saved&&[...sel.options].some(o=>o.value===saved))sel.value=saved;
- sel.onchange=()=>{localStorage.setItem("aimo.customer",sel.value);S.base=false};
+ window.addEventListener("customer",()=>{S.base=false});
  $("#scenarios").onclick=e=>{const b=e.target.closest("[data-s]");if(b){$("#text").value=TEXTS[b.dataset.s];$("#text").focus()}};
  $("#req").onsubmit=e=>{e.preventDefault();run()};
  setMock(S.mock);poll();

@@ -7,25 +7,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="console.css">
+<link rel="stylesheet" href="/console.css">
 </head>
 <body>
-<header class="hdr">
-  <a class="brand" href="/">Aimo Trade Gateway</a>
-  <nav aria-label="Primary">
-    <a href="console.html" aria-current="page">Console</a>
-    <a href="inbox.html">Approvals</a>
-    <a href="audit.html">Audit</a>
-    <a href="index.html">Mandates</a>
-  </nav>
-  <span class="grow"></span>
-  <span id="mock-tag" class="tag warn" hidden>mock data</span>
-  <label class="cust"><span class="sr">Customer</span>
-    <select id="customer">
-      <option>hotel-aurora</option><option>hospital-tays</option><option>school-hervanta</option>
-    </select>
-  </label>
-</header>
+<header class="top"><a class="brand" href="/">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html" aria-current="page">Console</a><a href="/inbox.html">Approvals</a><a href="/audit.html">Audit</a><a href="/admin.html">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
 <main class="grid">
   <section class="left">
     <form id="req" class="panel">
@@ -56,7 +41,7 @@
     </div>
   </aside>
 </main>
-<script src="/shell.js" defer onerror="void 0"></script>
-<script src="console.js" defer></script>
+<script src="/shell.js"></script>
+<script src="console.js"></script>
 </body>
 </html>

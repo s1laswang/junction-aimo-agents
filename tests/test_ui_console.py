@@ -3,7 +3,7 @@ from pathlib import Path
 
 W = Path(__file__).resolve().parent.parent / "web"
 FILES = ["console.html", "console.js", "console.css"]
-IDS = ["customer", "text", "run", "scenarios", "result", "trace", "mock-tag"]
+IDS = ["text", "run", "scenarios", "result", "trace", "customer"]
 
 
 def test_files_exist():

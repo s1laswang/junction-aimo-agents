@@ -2,16 +2,9 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-.hdr{height:44px;display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--sheet);border-bottom:1px solid var(--rule);position:sticky;top:0;z-index:5}
-.brand{font-weight:600;color:var(--ink);text-decoration:none;white-space:nowrap}
-.hdr nav{display:flex;gap:4px}
-.hdr nav a{color:var(--ink-2);text-decoration:none;padding:4px 8px;border-radius:4px}
-.hdr nav a:hover{background:var(--well)}
-.hdr nav a[aria-current=page]{color:var(--valio);font-weight:500;background:rgba(31,78,140,.08)}
 .grow{flex:1}
 select,textarea,button{font:inherit;color:inherit}
-select{background:var(--well);border:1px solid var(--rule);border-radius:4px;padding:4px 8px}
-.grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr);gap:12px;padding:12px 16px;align-items:start}
+main.grid{max-width:1560px;padding:12px 16px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr);gap:12px;padding:12px 16px;align-items:start}
 .left{display:grid;gap:12px;min-width:0}
 .right{position:sticky;top:56px;min-width:0}
 .panel{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:12px 16px}
@@ -79,4 +72,4 @@ button.ghost:hover{background:var(--well)}
 .ln details{grid-column:1/-1;margin-top:2px}
 .ln summary{font-size:11px;color:var(--ink-3);cursor:pointer}
 .ln pre{margin:4px 0 0;background:var(--well);border-radius:4px;padding:6px 8px;font:11px/1.4 var(--mono);overflow:auto;max-height:200px;white-space:pre-wrap;word-break:break-all}
-@media (max-width:860px){.grid{grid-template-columns:1fr;padding:8px 12px}.right{position:static}.hdr{gap:8px;padding:0 12px}.hdr nav a{padding:4px 5px}.brand{display:none}}
+@media (max-width:860px){main.grid{grid-template-columns:minmax(0,1fr);padding:8px 12px}.right{position:static}td:first-child{min-width:220px}td:first-child .note{font-size:11px}
