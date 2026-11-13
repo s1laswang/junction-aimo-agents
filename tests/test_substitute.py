@@ -1,3 +1,4 @@
+import re
 import json
 import os
 
@@ -143,3 +144,13 @@ def test_mince_top_is_jauheliha():
     item = NeedItem(query="mince", quantity=60, unit="kg")
     top = max(catalog.search("mince", item.constraints, limit=50), key=lambda p: match_score(item, p))
     assert "jauheliha" in top.name.lower(), top.name
+
+
+def test_oat_drink_requires_oat():
+    from aimo import catalog
+
+    item = NeedItem(query="oat drink", quantity=100, unit="l", constraints=Constraint(exclude_allergens=["soy"]))
+    top = max(catalog.search("oat drink", item.constraints, limit=50), key=lambda p: match_score(item, p))
+    assert re.search(r"oat|kaura", top.name.lower()), top.name
+    prot = next(p for p in catalog.search("protein drink", Constraint(), limit=50) if "PROTEINDRINK" in p.name.upper())
+    assert match_score(item, prot) < 0.5

@@ -118,6 +118,7 @@ DERIVED = [
 ]
 
 
+DRINK_WORDS = {"drink", "drinks", "juoma", "juomat"}
 START_ONLY = {"kana", "liha", "bar", "pie", "jam", "bun"}
 
 
@@ -154,6 +155,8 @@ def _forms(w):
 PENALTY_GROUPS = [
     ("chocolate", ["chocolate", "kaakao", "suklaa", "cocoa", "choklad"], 0.7),
     ("flavour", ["vanilla", "vanilja", "strawberry", "mansikka", "banana", "banaani", "peach", "persikka", "mango", "flavoured", "maustettu"], 0.5),
+    ("protein", ["protein", "proteiini"], 0.6),
+    ("energy", ["energy", "energia", "energiajuoma"], 0.7),
     ("coffee", ["coffee", "kahvi", "café", "cafe", "latte", "cappuccino", "espresso", "cold brew"], 0.7),
     ("powder", ["powder", "jauhe", "pulver"], 0.6),
     ("fermented", ["fermented", "piimä", "viili", "jogurtti", "yogurt", "yoghurt", "kefir", "filmjölk"], 0.5),
@@ -175,12 +178,15 @@ def match_score(item: NeedItem, product: Product) -> float:
     qwords = [w for w in re.findall(r"[\wäöå]+", q) if w not in ("lactose", "free", "laktoositon", "gluten", "and", "of")]
     if not qwords:
         return 0.0
-    hit = 0
-    for w in qwords:
-        hit += max(_form_w(f, name) for f in _forms(w))
+    if len(qwords) > 1:
+        qwords = [w for w in qwords if w not in DRINK_WORDS] or qwords
+    ws = [max(_form_w(f, name) for f in _forms(w)) for w in qwords]
+    hit = sum(ws)
     if hit == 0:
         return 0.0
     score = 0.6 + 0.4 * hit / len(qwords)
+    if DRINK_WORDS & set(re.findall(r"[\wäöå]+", q)) and min(ws) == 0:
+        score *= 0.3
     pname = name.replace("jauheliha", "mince")
     for _, words, pen in PENALTY_GROUPS:
         if _has(pname, words) and not _has(q, words):
