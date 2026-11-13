@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from aimo.allocate import allocate, options, reallocate, units_for
+from aimo.allocate import allocate, options, reallocate, stockout_plan, units_for
 from aimo.models import NeedItem, Offer, Product, UnitSize
 
 FX = Path(__file__).parent / "fixtures"
@@ -163,3 +163,20 @@ def test_options_nothing_on_time_gives_late_only():
 def test_options_never_covers():
     o = options(ITEM, [offer("462775", 1)], D, NOW)
     assert [x["kind"] for x in o] == ["partial"]
+
+
+def test_stockout_plan_swaps_to_next_offer():
+    from aimo.models import QuoteLine
+    fresh = [offer("464201", 1).model_copy(update={"available_amount": 0}), offer("464073", 1)]
+    line = QuoteLine(product_id="464201", name="p", quantity=200, sales_unit="ST", unit_price_net=1.56, line_total_net=312)
+    p = stockout_plan([line], fresh, D, NOW)
+    assert p["changed"] and p["shortfall"] == 0.0
+    assert [(l.product_id, l.quantity) for l in p["lines"]] == [("464073", 200)]
+    assert any("464201: 200 -> 0 units" in c for c in p["changes"])
+
+
+def test_stockout_plan_untouched():
+    from aimo.models import QuoteLine
+    line = QuoteLine(product_id="464201", name="p", quantity=200, sales_unit="ST", unit_price_net=1.56, line_total_net=312)
+    p = stockout_plan([line], [offer("464201", 1)], D, NOW)
+    assert not p["changed"] and p["lines"][0].quantity == 200
