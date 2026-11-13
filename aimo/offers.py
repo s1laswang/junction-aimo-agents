@@ -81,7 +81,8 @@ def _units(product: Product, quantity: float, unit: str) -> float | None:
     return float(-(-quantity // 1))
 
 
-def _priced(customer: str, day: date, item: NeedItem, products: list[Product], scores: dict[str, float]) -> list[Offer]:
+def _priced(customer: str, day: date, item: NeedItem, products: list[Product], scores: dict[str, float], now: datetime | None = None) -> list[Offer]:
+    now = now or datetime.now(HEL)
     catalog = _mod("catalog")
     ids = [p.product_id for p in products]
     prices = valio.price(customer, day, ids)
@@ -103,12 +104,12 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
             if ct:
                 co = cutoff(ct, adate, day)
                 notes.append(f"cutoff computed from Valio closing time {co:%H:%M}, day before delivery")
-                if co <= datetime.now(HEL):
+                if co <= now:
                     new = date.fromisoformat(adate) if adate else day
                     for _ in range(14):
                         new += timedelta(days=1)
                         co = cutoff(ct, new, day)
-                        if co > datetime.now(HEL):
+                        if co > now:
                             break
                     notes.insert(0, f"cutoff passed for {adate or day}, earliest delivery {new}")
                     adate = new.isoformat()
@@ -146,7 +147,7 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
     return offers
 
 
-def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
+def _item(need: Need, item: NeedItem, mandate: Mandate | None, now: datetime | None = None) -> OfferGroup:
     catalog, subst, allocate = _mod("catalog"), _mod("substitute"), _mod("allocate")
     excl = list(dict.fromkeys([*item.constraints.exclude_allergens, *(mandate.exclude_allergens if mandate else [])]))
     c = item.constraints.model_copy(update={"exclude_allergens": excl})
@@ -159,9 +160,9 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
         dropped = before - len(cands)
     scores = {p.product_id: subst.match_score(item, p) if subst else 1.0 for p in cands}
     cands = [p for p in cands if scores[p.product_id] >= MIN_MATCH]
-    offers = _priced(need.customer, need.deliver_by, item, cands, scores)
+    offers = _priced(need.customer, need.deliver_by, item, cands, scores, now)
     if allocate:
-        chosen, shortfall = allocate.allocate(item, offers, need.deliver_by)
+        chosen, shortfall = allocate.allocate(item, offers, need.deliver_by, now)
     else:
         chosen = [o for o in offers if o.available_amount > 0 and not o.sales_block][:1]
         shortfall = 0.0 if chosen else item.quantity
@@ -182,14 +183,14 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
         pool = [o for o in offers if o.available_date and o.available_date <= need.deliver_by and (o.product_id not in used or o.product_id == original.product_id)]
         subs = subst.rank_substitutes(item, pool, excl, original=original, limit=3)
         subs = [x for x in subs if x.product_id not in used]
-        filled, remaining = allocate.allocate(item.model_copy(update={"quantity": shortfall}), subs, need.deliver_by) if allocate and subs else ([], shortfall)
+        filled, remaining = allocate.allocate(item.model_copy(update={"quantity": shortfall}), subs, need.deliver_by, now) if allocate and subs else ([], shortfall)
         for x in filled:
             x.substitute_for = original.product_id
             x.notes.insert(0, subst.tradeoff(x, base))
             chosen.append(x)
     if shortfall > 1e-9 and subst:
         for alt, why in subst.safe_alternatives(item, excl):
-            g = _item(need, alt.model_copy(update={"quantity": alt.quantity * remaining / item.quantity}), mandate)
+            g = _item(need, alt.model_copy(update={"quantity": alt.quantity * remaining / item.quantity}), mandate, now)
             if g.offers:
                 for x in g.offers:
                     x.tier = "good"
@@ -217,8 +218,8 @@ def _alternatives(item: NeedItem, offers: list[Offer], chosen: list[Offer], excl
     return subst.rank_substitutes(item, pool, excl, original=base.product, limit=3)
 
 
-def get_offers(need: Need, mandate: Mandate | None = None) -> OffersResponse:
-    return OffersResponse(items=[_item(need, it, mandate) for it in need.items])
+def get_offers(need: Need, mandate: Mandate | None = None, now: datetime | None = None) -> OffersResponse:
+    return OffersResponse(items=[_item(need, it, mandate, now) for it in need.items])
 
 
 def _local_noon(day: date) -> datetime:
