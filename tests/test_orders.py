@@ -62,6 +62,7 @@ def test_under_limit_confirms(env):
     q = env["q1"] = quote("q1")
     o = orders.place("hotel-aurora", "a1", req(q))
     assert o.status == "confirmed"
+    assert o.delivery_date == date(2026, 11, 16) and o.valid_until
     assert orders.confirmation(o.order_id)["delivery_date"] == "2026-11-16"
     assert orders.spent_this_week("hotel-aurora") >= 2.0
 
@@ -100,3 +101,13 @@ def test_ask_human_and_substitutions(env):
     assert o.status == "pending_approval"
     assert o.decision.reasons[0].code == "AGENT_REQUESTED"
     assert o.substitutions[0].original_id == "orig"
+
+
+def test_audit_reasons(env, monkeypatch):
+    ev = []
+    monkeypatch.setattr(orders.audit, "record", lambda *a, **k: ev.append((a, k)), raising=False)
+    q = env["q6"] = quote("q6", 500)
+    orders.place("hotel-aurora", "a1", req(q))
+    a, k = [e for e in ev if e[0][2] == "order.pending_approval"][0]
+    assert a[4] == "over limit"
+    assert (k.get("detail") or a[5])["reasons"][0]["code"] == "OVER_ORDER_LIMIT"
