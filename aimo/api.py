@@ -107,7 +107,7 @@ def domain(fn, *a, **kw):
             status = {"NOT_FOUND": 404, "NOT_APPROVER": 403}.get(e.code, 409)
             raise Err(status, {"code": e.code, "text": e.text})
         if type(e).__name__ == "UpstreamUnavailable":
-            raise Err(503, {"code": "UPSTREAM_UNAVAILABLE", "text": str(e) or "The supplier system is unavailable, try again shortly."})
+            raise Err(503, {"code": getattr(e, "code", "UPSTREAM_UNAVAILABLE"), "text": getattr(e, "text", None) or str(e) or "The supplier system is unavailable, try again shortly."})
         raise
 
 
@@ -230,13 +230,13 @@ def put_mandate(m: Mandate):
 
 def simulate(body: SimulateStock):
     from aimo import offers
-    offers.simulate(body)
+    domain(offers.simulate, body)
     return {"ok": True}
 
 
 def clear_simulation():
     from aimo import offers
-    offers.clear_simulation()
+    domain(offers.clear_simulation)
     return {"ok": True}
 
 
