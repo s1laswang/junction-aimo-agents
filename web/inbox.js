@@ -99,7 +99,7 @@ function card(o, isCur) {
       o.delivery_date ? h("span", null, "Delivery ", h("span", { class: "num" }, dday(o.delivery_date))) : null,
       h("span", null, h("span", { class: "num" }, o.lines.length), o.lines.length === 1 ? " line" : " lines"),
       h("span", null, ago(o.created_at))));
-  return h("li", null, b);
+  return h("li", { class: "ci" }, b, h("a", { class: "aud", href: "/audit.html?order_id=" + encodeURIComponent(o.order_id) }, "Audit trail"));
 }
 
 function lastLine() {
@@ -152,11 +152,12 @@ function renderDetail() {
       h("div", { class: "dtitle" }, h("div", null, h("h2", null, o.customer), h("span", { class: "mono" }, o.agent_id + " / " + o.order_id)), amt(o.total_net)),
       h("section", { class: "pn reasons" }, h("h3", null, "Why this needs you"), h("div", { class: "in" }, reasons(o), o.substitutions && o.substitutions.length ? h("div", { style: "margin-top:12px" }, subs(o)) : null)),
       h("section", { class: "pn" }, h("h3", null, "Lines"),
-        h("table", null, h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Qty"), h("th", null, "Unit"), h("th", null, "Total"))),
+        h("div", { class: "scroll" }, h("table", null, h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Qty"), h("th", null, "Unit"), h("th", null, "Total"))),
           h("tbody", null, rows),
-          h("tfoot", null, h("tr", null, h("td", { colspan: "3" }, "Total net"), h("td", null, money(o.total_net)))))),
+          h("tfoot", null, h("tr", null, h("td", { colspan: "3" }, "Total net"), h("td", null, money(o.total_net))))))),
       h("section", { class: "pn" }, h("h3", null, "Quote"), h("div", { class: "in" }, h("dl", { class: "kv" },
         field("Quote", [h("span", { class: "mono" }, o.quote_id), h("span", { class: "tag ok" }, icon("verified"), "Signature verified")]),
+        field("Audit", h("a", { href: "/audit.html?order_id=" + encodeURIComponent(o.order_id) }, "Audit trail")),
         field("Created", ago(o.created_at)),
         o.valid_until ? field("Valid until", h("span", { class: "tag warn", "data-until": o.valid_until }, left(o.valid_until))) : null,
         o.delivery_date ? field("Delivery", dday(o.delivery_date)) : null)))),
@@ -200,7 +201,9 @@ async function decide(o, approve, note) {
   } else {
     S.orders.splice(Math.max(0, idx), 0, o); S.sel = o.order_id; location.hash = encodeURIComponent(o.order_id);
     S.sig = S.dsig = ""; render();
-    toast("Could not " + (approve ? "approve" : "reject") + " " + o.order_id + ". The order is still waiting. Check the connection and try again.", true);
+    var e = window.aimo && window.aimo.lastError, d = e && e.detail;
+    if (d && typeof d !== "string") d = d.message || d.error || JSON.stringify(d);
+    toast(!e || e.status === 0 ? "Gateway offline. The order is still waiting." : "Could not " + (approve ? "approve" : "reject") + ": " + (d || "error " + e.status) + ". The order is still waiting.", true);
   }
 }
 

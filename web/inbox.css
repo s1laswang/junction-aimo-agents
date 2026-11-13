@@ -117,3 +117,12 @@ dialog .row .act{flex:1}
 .actions label{display:block}
 .lk{background:none;border:0}
 [hidden]{display:none!important}
+.ci{position:relative}
+.ci .card{padding-bottom:36px}
+.aud{position:absolute;right:16px;bottom:8px;min-height:28px;display:inline-flex;align-items:center;font-size:12px}
+.scroll{overflow-x:auto}
+.scroll table{min-width:300px}
+.pn td:nth-child(2){white-space:nowrap}
+.detail{display:flex;flex-direction:column;min-height:calc(100dvh - 44px)}
+.dbody{flex:1}
+.act.danger:disabled{background:var(--sheet)}
