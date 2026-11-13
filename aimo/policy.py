@@ -4,11 +4,11 @@ from aimo.models import Decision, Reason
 
 _CODES = {
     "peanut": "AP", "peanuts": "AP", "nuts": "AN", "nut": "AN", "tree nuts": "AN", "milk": "AM",
-    "lactose": "AM", "egg": "AE", "eggs": "AE", "gluten": "AW", "wheat": "AW", "soy": "AY",
+    "lactose": "ML", "wheat": "UW", "barley": "GB", "oats": "GO", "rye": "NR", "egg": "AE", "eggs": "AE", "gluten": "AW", "soy": "AY",
     "soya": "AY", "fish": "AF", "crustaceans": "AC", "shellfish": "AC", "sesame": "AS",
     "celery": "BC", "mustard": "BM", "lupin": "NL", "molluscs": "UM", "sulphites": "AU",
 }
-_LABELS = {"AP": "peanut", "AN": "nuts", "AM": "milk", "AE": "egg", "AW": "gluten", "AY": "soy",
+_LABELS = {"ML": "lactose", "UW": "wheat", "GB": "barley", "GO": "oats", "NR": "rye", "AP": "peanut", "AN": "nuts", "AM": "milk", "AE": "egg", "AW": "gluten", "AY": "soy",
            "AF": "fish", "AC": "crustaceans", "AS": "sesame", "BC": "celery", "BM": "mustard",
            "NL": "lupin", "UM": "molluscs", "AU": "sulphites"}
 
@@ -18,6 +18,13 @@ def _canon(a):
     return _CODES.get(a.lower(), a.upper())
 
 
+_WIDE = {"nuts": {"AN", "AP"}, "nut": {"AN", "AP"}, "milk": {"AM", "ML"}, "dairy": {"AM", "ML"}, "gluten": {"AW", "UW", "GB", "NR"}}
+
+
+def _expand(a):
+    return _WIDE.get(str(a).strip().lower()) or {_canon(a)}
+
+
 def _eur(x):
     return f"{x:,.2f} EUR"
 
@@ -25,7 +32,7 @@ def _eur(x):
 def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=None):
     blocked, ask, info = [], [], []
     total = quote.total_net
-    banned = {_canon(a) for a in mandate.exclude_allergens}
+    banned = set().union(*[_expand(a) for a in mandate.exclude_allergens]) if mandate.exclude_allergens else set()
 
     def add(bucket, code, text):
         bucket.append(Reason(code=code, text=text))
