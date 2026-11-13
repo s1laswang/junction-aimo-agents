@@ -18,7 +18,7 @@ def env(monkeypatch):
         list=lambda status=None, customer=None: [o for o in db.values() if o.status == status and customer in (None, o.customer)],
     )
 
-    def set_status(i, status, actor):
+    def set_status(i, status, actor, why=None):
         db[i] = db[i].model_copy(update={"status": status})
         return db[i]
 
