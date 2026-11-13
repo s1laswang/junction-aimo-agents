@@ -8,7 +8,6 @@ os.environ.setdefault("AIMO_DATA_DIR", "data")
 def tmp_db(tmp_path_factory):
     p = str(tmp_path_factory.mktemp("db") / "aimo.db")
     os.environ["AIMO_DB"] = p
-    os.environ["AIMO_DB_PATH"] = p
     return p
 
 
