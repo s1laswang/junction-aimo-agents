@@ -108,11 +108,12 @@ def accept(proposal, key, url=URL):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--customer", required=True)
-    ap.add_argument("--key", default=os.environ.get("AGENT_KEY") or os.environ.get(KEYS.get("", ""), ""))
+    ap.add_argument("--key", default=None)
     ap.add_argument("--url", default=URL)
     ap.add_argument("--accept", type=int)
     a = ap.parse_args()
-    ps = propose(a.customer, a.key or os.environ.get(KEYS.get(a.customer, ""), ""), a.url)
+    a.key = a.key or os.environ.get(KEYS.get(a.customer, ""), "")
+    ps = propose(a.customer, a.key, a.url)
     for i, p in enumerate(ps):
         print(i, p["why"])
     if a.accept is not None:
