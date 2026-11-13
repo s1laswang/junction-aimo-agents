@@ -68,7 +68,8 @@ var q=state.q2o[d.quote_id||e.subject];return q||null;
 }
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function short(h){return h?h.slice(0,8)+"…"+h.slice(-4):"none"}
-function tm(ts){var d=new Date(ts);return isNaN(d)?ts:d.toISOString().slice(11,19)}
+var HF=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Helsinki",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+function tm(ts){var d=new Date(ts);return isNaN(d)?ts:HF.format(d)}
 function dt(ts){var d=new Date(ts);return isNaN(d)?"":d.toISOString().slice(0,10)}
 
 function filtered(){
@@ -163,7 +164,7 @@ var out={auto:"Placed automatically within the mandate",needs_approval:"Needed h
 var h='<div class="panel-head"><h2>Order receipt <span class="mono muted">'+esc(o.order_id)+'</span></h2><span class="tag '+(TAG[o.status]||"neutral")+'">'+esc(String(o.status).replace(/_/g," "))+'</span></div><div class="rc">';
 h+=row("Customer",esc(o.customer))+row("Buyer agent",'<span class="mono">'+esc(o.agent_id)+'</span>')+row("Total net",'<span class="mono">'+eur(o.total_net)+'</span>')+row("Delivery",o.delivery_date?'<span class="mono">'+esc(String(o.delivery_date).slice(0,10))+'</span>':'<span class="muted">not set</span>');
 h+=row("Decision",esc(out)+(dec.reasons&&dec.reasons.length?'<ul>'+dec.reasons.map(function(r){return '<li>'+esc(r.text||r.code)+'</li>'}).join("")+'</ul>':""));
-h+=row("Approval",ap?esc(/reject/.test(ap.action)?"Rejected":"Approved")+" by <span class=\"mono\">"+esc(ap.actor.replace(/^human:/,""))+"</span> at <span class=\"mono\">"+esc(ap.ts.replace("T"," ").replace("Z"," UTC"))+"</span>"+(ap.why?'<div class="muted small">'+esc(ap.why)+'</div>':''):'<span class="muted">'+(dec.outcome==="needs_approval"?"Awaiting a human decision":"No human approval required")+'</span>');
+h+=row("Approval",ap?esc(/reject/.test(ap.action)?"Rejected":"Approved")+" by <span class=\"mono\">"+esc(ap.actor.replace(/^human:/,""))+"</span> at <span class=\"mono\">"+esc(ap.ts.slice(0,10)+" "+tm(ap.ts)+" Helsinki")+"</span>"+(ap.why?'<div class="muted small">'+esc(ap.why)+'</div>':''):'<span class="muted">'+(dec.outcome==="needs_approval"?"Awaiting a human decision":"No human approval required")+'</span>');
 var subs=o.substitutions||[];
 h+=row("Substitutions",subs.length?'<ul>'+subs.map(function(x){return '<li><span class="mono">'+esc(x.original_id)+'</span> &rarr; <span class="mono">'+esc(x.substitute_id)+'</span>: '+esc(x.reason)+'</li>'}).join("")+'</ul>':'<span class="muted">none</span>');
 h+=row("Quote",'<span class="mono">'+esc(o.quote_id)+'</span> '+(red?'<span class="tag ok">signature verified at placement</span>':'<span class="tag neutral">not yet redeemed</span>'));
