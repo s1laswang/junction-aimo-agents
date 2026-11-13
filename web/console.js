@@ -26,6 +26,7 @@ event:{need:{customer:"",deliver_by:"2026-11-20",raw_text:"",items:[
  {need_item:1,offers:[{product_id:"mock-610002",product:{name:"Cream 35% 1 l",brand:"Valio",sales_unit:"PK",unit_size:{value:1,unit:"l"}},units_needed:40,unit_price_net:3.2,total_net:128,available_amount:40,available_date:"2026-11-19",reliability:.98,co2_per_kg:2.4,match_score:.97,tier:"exact",notes:[]}],shortfall:0},
  {need_item:2,offers:[{product_id:"mock-610003",product:{name:"Butter 500 g",brand:"Valio",sales_unit:"PK",unit_size:{value:.5,unit:"kg"}},units_needed:50,unit_price_net:3.9,total_net:195,available_amount:50,available_date:"2026-11-19",reliability:.98,co2_per_kg:9.2,match_score:.97,tier:"exact",notes:[]}],shortfall:0}],
  order:{status:"blocked",decision:{outcome:"blocked",reasons:[{code:"CATEGORY_NOT_ALLOWED",text:"Fresh fish is outside this agent's allowed categories."},{code:"LEAD_TIME",text:"Delivery in under 48 hours is not covered by the mandate."}]},substitutions:[]}}};
+const DEMO=new URLSearchParams(location.search).has("demo");
 const S={mock:new URLSearchParams(location.search).has("mock"),seen:new Set(),base:false,sc:"milk"};
 const cust=()=>aimo.customer();
 const esc=v=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -90,6 +91,13 @@ function orderHtml(o){
 }
 function fillOrder(o,q,c){const L=MANDATES[c]||MANDATES["hotel-aurora"];const t=money(q.total_net);const d={...o.decision,reasons:o.decision.reasons.filter(r=>r.text!=="@OL"||q.total_net>L.o).map(r=>r.text==="@WM"?{...r,text:`Total ${t} is under the per-order limit of ${money(L.o)}.`}:r.text==="@OL"?{...r,text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}:r)};if(o.decision.outcome==="auto"&&q.total_net>L.o){d.outcome="needs_approval";d.reasons=[{code:"ORDER_OVER_LIMIT",text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}]}return{...o,decision:d,status:d.outcome==="needs_approval"&&o.status==="placed"?"pending_approval":o.status}}
 const hex=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)).join("");
+function demoBtns(out,ord){
+ out.insertAdjacentHTML("beforeend",'<div class="row"><button type="button" class="ghost" id="sim">Simulate stock-out</button><button type="button" class="ghost" id="clr">Clear</button></div>');
+ const pid=String(((ord.lines||[])[0]||{}).product_id||"");
+ const act=async(method,body,msg)=>{const t0=performance.now();const r=await aimo.api("/v1/admin/simulate",{method,admin:true,body});line({tool:"admin/simulate",status:r?"200":"failed",cls:r?"ok":"err",ms:Math.round(performance.now()-t0),why:msg,req:body,res:r})};
+ $("#sim").onclick=()=>act("POST",{product_id:pid,available_amount:0},"Simulated stock-out on "+pid);
+ $("#clr").onclick=()=>act("DELETE",undefined,"Cleared simulation");
+}
 async function run(){
  const text=$("#text").value.trim();if(!text)return;
  const sc=/school|allergen|gluten|hospital/i.test(text)?"school":/event|guests|salmon|last-minute/i.test(text)?"event":"milk";
@@ -113,6 +121,7 @@ async function run(){
   const ord=await call("place_order","POST","/v1/orders",{quote_id:q.quote_id,jws:q.jws},()=>({order_id:"o_mock_"+hex(6),quote_id:q.quote_id,customer:c,agent_id:"console",lines:q.lines,total_net:q.total_net,...fillOrder(M.order,q,c)}),
    o=>`Policy decision: ${o.decision.outcome.replace("_"," ")}. ${o.decision.reasons[0]?o.decision.reasons[0].text:""}`);
   out.insertAdjacentHTML("beforeend",orderHtml(ord));
+  if(DEMO)demoBtns(out,ord);
  }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">Run failed: ${esc(e.message)}</div>`)}
  $("#run").disabled=false;$("#live").textContent="idle";$("#live").classList.remove("on");
 }
