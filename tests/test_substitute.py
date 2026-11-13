@@ -125,3 +125,13 @@ def test_safe_alternatives_when_milk_excluded():
     ok = [p for p in catalog.search(alt.query, alt.constraints, limit=50) if allergen_safe(p, alt.constraints, ["milk"])]
     assert max(match_score(alt, p) for p in ok) >= 0.5
     assert safe_alternatives(NeedItem(query="milk", quantity=1, unit="l"), ["egg"]) == []
+
+
+@pytest.mark.parametrize("query,must", [("whipping cream", "kuohukerma"), ("butter", "voi"), ("carrots", "porkkana"), ("cucumber", "kurkku")])
+def test_top_match_is_the_product_asked(query, must):
+    from aimo import catalog
+
+    item = NeedItem(query=query, quantity=10, unit="kg")
+    found = catalog.search(query, item.constraints, limit=50)
+    top = max(found, key=lambda p: match_score(item, p))
+    assert must in top.name.lower() and match_score(item, top) >= 0.5, top.name

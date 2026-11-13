@@ -128,3 +128,11 @@ def test_uvicorn_mcp_with_web(tmp_db):
     finally:
         proc.terminate()
         proc.wait(10)
+
+
+def test_parse_summary(client):
+    r = client.post("/v1/needs/parse", json={"text": "I need 100 litres of milk by Friday", "customer": "hotel-aurora"}).json()
+    assert "milk" in r["summary"] and r["items"]
+    init(client)
+    out = rpc(client, "tools/call", {"name": "parse_request", "arguments": {"text": "100 litres of milk by Friday", "customer": "hotel-aurora"}}, id=9)
+    assert "summary" in json.dumps(out["result"]["content"])

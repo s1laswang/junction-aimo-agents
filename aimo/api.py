@@ -26,6 +26,10 @@ class GuardRoute(APIRoute):
 router = APIRouter(route_class=GuardRoute)
 
 
+class ParseResponse(Need):
+    summary: str | None = None
+
+
 class Err(Exception):
     def __init__(self, status, body):
         self.status = status
@@ -138,7 +142,7 @@ def parse_request(req: ParseRequest, agent_key=None):
     actor = f"agent:{hit[1]}" if hit and hit[0] == req.customer else "system"
     audit.record(req.customer, actor, "parse.request", req.customer, parse.describe_need(need, "en"),
                  {"text": req.text})
-    return jsonable_encoder(need)
+    return jsonable_encoder(ParseResponse(**need.model_dump(), summary=parse.describe_need(need, "en")))
 
 
 def _audit_offers(p, need, res):
@@ -251,7 +255,7 @@ def r_product(product_id: str):
     return get_product(product_id)
 
 
-@router.post("/needs/parse")
+@router.post("/needs/parse", response_model=ParseResponse)
 @_guard
 def r_parse(req: ParseRequest, x_agent_key: str | None = Header(None)):
     return parse_request(req, x_agent_key)
