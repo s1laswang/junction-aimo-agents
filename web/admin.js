@@ -22,7 +22,7 @@ if(aimo.mockMode())return;
 var a=await aimo.api("/v1/audit?customer="+encodeURIComponent(aimo.customer()),{admin:true}),e=(Array.isArray(a)?a:a&&a.events||[]).filter(function(x){return x.action==="mandate_updated"}).pop(),el=$("last");
 el.textContent="";if(!e)return;
 var k=document.createElement("a");k.href="/audit.html";k.className="mono";k.textContent="#"+e.seq;
-el.append("Last change by "+e.actor+", "+String(e.ts).replace("T"," ").slice(0,16)+" UTC, audit ");el.append(k)}
+el.append("Last change by "+e.actor+", "+new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Helsinki",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(e.ts)).replace(",","")+" Helsinki, audit ");el.append(k)}
 async function load(){
 var c=aimo.customer(),mk=aimo.mockMode(),m=mk?null:await aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true});
 aimo.mock(mk);
