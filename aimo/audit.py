@@ -25,6 +25,9 @@ VERBS = {
     "order.confirmed": "had an order confirmed by the supplier",
     "order.rejected": "had an order rejected",
     "order.blocked": "had an order blocked",
+    "order_rejected": "had an order refused at the door",
+    "parse.request": "asked for products",
+    "offers.compared": "compared offers",
     "order.expired": "had an order expire",
     "approval.approved": "approved an order",
     "approval.rejected": "rejected an order",
@@ -157,7 +160,7 @@ def narrate(events, view="buyer"):
             who += f" at {_name(e.customer)}"
         s = f"{ts.astimezone(HELSINKI):%H:%M} {who} {verb}"
         m = _money(e.detail)
-        if m:
+        if m and m.split()[0].replace(",", "") not in e.why.replace(",", ""):
             s += f" for {m}"
         s += "."
         if e.why:
