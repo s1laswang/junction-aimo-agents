@@ -209,7 +209,7 @@ function ask(list) {
     if (list.length) { inp = h("select", { "aria-label": "Approver" }, list.map(function (a) { return h("option", { value: a }, a); })); inp.value = list.indexOf(S.name) >= 0 ? S.name : list[0]; }
     else inp = h("input", { type: "text", required: true, placeholder: "Your name", "aria-label": "Approver name", autocomplete: "name", value: S.name });
     f.replaceChildren(inp);
-    d.addEventListener("close", function () { if (d.returnValue === "ok" && inp.value.trim()) { S.name = inp.value.trim(); store("aimo.approver", S.name); S.dsig = ""; render(); res(S.name); } else res(""); }, { once: true });
+    d.addEventListener("close", function () { if (d.returnValue === "ok" && inp.value.trim()) { S.name = inp.value.trim(); store("aimo.approver", S.name); S.dsig = ""; res(S.name); } else res(""); }, { once: true });
     d.returnValue = ""; d.showModal();
   });
 }
@@ -217,21 +217,21 @@ function ask(list) {
 async function decide(o, approve, note) {
   var list = await approversFor(o.customer);
   var by = S.name && (!list.length || list.indexOf(S.name) >= 0) ? S.name : await ask(list); if (!by) return;
-  var idx = S.orders.indexOf(o);
-  S.busy[o.order_id] = 1; S.orders = S.orders.filter(function (x) { return x !== o; });
+  var idx = S.orders.findIndex(function (x) { return x.order_id === o.order_id; });
+  S.busy[o.order_id] = 1; S.orders = S.orders.filter(function (x) { return x.order_id !== o.order_id; });
   if (S.sel === o.order_id) { S.sel = null; history.replaceState(null, "", location.pathname + location.search); }
   S.sig = S.dsig = ""; render(); window.scrollTo(0, 0);
   var ok;
   if (S.mock) { await new Promise(function (r) { setTimeout(r, 250); }); mockPool = mockPool.filter(function (x) { return x.order_id !== o.order_id; }); ok = true; }
   else ok = await api("/v1/approvals/" + encodeURIComponent(o.order_id), { method: "POST", body: { approve: approve, by: by, note: note } });
-  delete S.busy[o.order_id];
+  if (ok) setTimeout(function () { delete S.busy[o.order_id]; }, 4000); else delete S.busy[o.order_id];
   if (ok) {
     store("aimo.inbox.last", JSON.stringify({ approve: approve, customer: o.customer, total: o.total_net, by: by, at: new Date().toISOString() }));
     if (S.mock) mockDecided.unshift({ customer: o.customer, order_id: o.order_id, by: by, at: new Date().toISOString(), approve: approve, text: by + (approve ? " approved the order of " : " rejected the order of ") + money(o.total_net) + " EUR." + (note ? " Note: " + note + "." : "") });
     loadDecided();
     toast((approve ? "Approved " : "Rejected ") + o.customer + " " + money(o.total_net) + " EUR as " + by); render();
   } else {
-    S.orders.splice(Math.max(0, idx), 0, o); S.sel = o.order_id; location.hash = encodeURIComponent(o.order_id);
+    if (!S.orders.some(function (x) { return x.order_id === o.order_id; })) S.orders.splice(Math.max(0, idx), 0, o); S.sel = o.order_id; location.hash = encodeURIComponent(o.order_id);
     S.sig = S.dsig = ""; render();
     var e = window.aimo && window.aimo.lastError, d = e && e.detail;
     if (d && typeof d !== "string") d = d.text || d.message || d.error || JSON.stringify(d);
