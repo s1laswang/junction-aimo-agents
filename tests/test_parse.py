@@ -253,3 +253,11 @@ def test_fi_name_covers_queries():
     assert len(FI_NAME) >= 150
     assert {n for n, _ in NOUNS} >= set(FI_NAME) - {"egg"} or True
     assert FI_NAME["cucumber"] == "kurkku" and FI_NAME["milk"] == "maito"
+
+
+def test_describe_dairy_free_not_no_milk():
+    from aimo.parse import describe_need
+
+    n = one("100 l dairy-free milk for the hospital")
+    assert describe_need(n) == "100 L milk, dairy-free, deliver by Sun 15 Nov 2026"
+    assert describe_need(n, "fi") == "100 L maito, maidoton, toimitus su 15.11.2026"
