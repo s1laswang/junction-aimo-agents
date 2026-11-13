@@ -37,6 +37,8 @@ def go():
         before_n = len(c.j("GET", "/v1/orders", params={"customer": "hotel-aurora"}))
         res = drift.watch_orders("hotel-aurora", KEYS["hotel-aurora"], base, state_path=os.path.join(tempfile.mkdtemp(), "d.json"))
         after_n = len(c.j("GET", "/v1/orders", params={"customer": "hotel-aurora"}))
+        mine = [x for x in res if x["order_id"] == o["order_id"]]
+        r.check("watcher reports stockout_handled", bool(mine) and all(x.get("kind") == "stockout_handled" and x["new_order_id"] is None for x in mine), str(mine)[:120])
         r.check("watcher places no duplicate order", after_n == before_n and not any(x.get("new_order_id") for x in res), f"{before_n}->{after_n}")
     finally:
         clear_simulation(c)
