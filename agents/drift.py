@@ -226,7 +226,15 @@ def watch_orders(customer, key, url, today=None, state_path=None, client=None):
     orders = c.get("/v1/orders", params={"customer": customer}).raise_for_status().json()
     out = []
     for o in orders:
-        if o["status"] not in OPEN or o["order_id"] in done:
+        if o["order_id"] in done:
+            continue
+        if o["status"] == "pending_approval":
+            so = next((r for r in o.get("decision", {}).get("reasons", []) if r.get("code") == "STOCKOUT"), None)
+            if so:
+                out.append({"order_id": o["order_id"], "product_id": None, "kind": "stockout_handled", "before": None, "after": None,
+                            "fix": {"action": "gateway_reacted", "substitutions": o.get("substitutions", [])}, "why": so["text"], "new_order_id": None})
+            continue
+        if o["status"] not in OPEN:
             continue
         delivery = (o.get("delivery_date") or (today or date.today()) + timedelta(days=1))
         delivery = delivery if isinstance(delivery, str) else delivery.isoformat()

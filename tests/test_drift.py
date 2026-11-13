@@ -206,3 +206,21 @@ def test_watch_move_date(tmp_path):
 def test_watch_all_fine(tmp_path):
     groups = [{"offers": [offer("1", 50)]}, {"offers": [offer("9", 99)]}]
     assert drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=watch_client(groups, {})) == []
+
+
+def test_watch_reports_gateway_stockout_without_placing(tmp_path):
+    import json
+    sent = []
+
+    def handler(req):
+        if req.method == "GET":
+            return httpx.Response(200, json=[{**ORDER, "status": "pending_approval", "substitutions": [{"original_id": "1", "substitute_id": "5"}],
+                                              "decision": {"outcome": "needs_approval", "reasons": [{"code": "STOCKOUT", "text": "Milk out of stock"}]}},
+                                             {**ORDER, "order_id": "ord_3", "status": "pending_approval", "decision": {"reasons": [{"code": "AGENT_REQUESTED", "text": "x"}]}}])
+        sent.append(req.url.path)
+        return httpx.Response(200, json={"items": []})
+
+    c = httpx.Client(base_url="http://t", transport=httpx.MockTransport(handler))
+    r = drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=c)
+    assert len(r) == 1 and r[0]["kind"] == "stockout_handled" and r[0]["why"] == "Milk out of stock" and r[0]["new_order_id"] is None
+    assert sent == []
