@@ -88,7 +88,7 @@ SYNONYMS = {
 PENALTY_GROUPS = [
     ("chocolate", ["chocolate", "kaakao", "suklaa", "cocoa", "choklad"], 0.7),
     ("flavour", ["vanilla", "vanilja", "strawberry", "mansikka", "banana", "banaani", "peach", "persikka", "mango", "flavoured", "maustettu"], 0.5),
-    ("coffee", ["coffee", "kahvi", "café", "cafe", "latte", "cappuccino", "espresso", "cold brew"], 0.5),
+    ("coffee", ["coffee", "kahvi", "café", "cafe", "latte", "cappuccino", "espresso", "cold brew"], 0.7),
     ("powder", ["powder", "jauhe", "pulver"], 0.6),
     ("fermented", ["fermented", "piimä", "viili", "jogurtti", "yogurt", "yoghurt", "kefir", "filmjölk"], 0.5),
     ("cooking", ["cooking", "ruoka", "cream", "kerma", "mix", "blend", "vegetable fat", "kasvirasva"], 0.35),
@@ -121,7 +121,7 @@ def match_score(item: NeedItem, product: Product) -> float:
         if _has(name, words) and not _has(q, words):
             score *= 1 - pen
     if PORTION_RE.search(name) and "portion" not in q:
-        score *= 0.6
+        score *= 0.4
     if "milk" in qwords or "maito" in qwords:
         score *= 1.0 if product.category == MILK_CATEGORY else 0.4
     return round(max(0.0, min(1.0, score)), 3)
