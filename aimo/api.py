@@ -217,11 +217,8 @@ def get_mandate(p, customer=None):
 
 
 def put_mandate(m: Mandate):
-    from aimo import audit, mandates
+    from aimo import mandates
     out = mandates.put(m)
-    audit.record(m.customer, "human:admin", "mandate_updated", m.customer,
-                 f"Admin updated the mandate of {m.agent_id}: {m.per_order_eur:g} EUR per order, {m.per_week_eur:g} EUR per week.",
-                 {"mandate": jsonable_encoder(m)})
     return jsonable_encoder(out)
 
 
