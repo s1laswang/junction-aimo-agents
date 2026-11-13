@@ -11,7 +11,7 @@ catalog = pytest.importorskip("aimo.catalog")
 substitute = pytest.importorskip("aimo.substitute")
 
 DATA = Path(os.environ.get("AIMO_DATA_DIR", "data")) / "valio_aimo_junction26_product_data.json"
-pytestmark = pytest.mark.skipif(not DATA.exists(), reason="product data missing")
+pytestmark = pytest.mark.skipif(not (DATA.exists() and os.environ.get("AIMO_EVAL")), reason="precision eval: needs data and AIMO_EVAL=1")
 
 T = date(2026, 11, 13)
 PREPARED = r"soup|keitto|sauce|kastike|salad|salaatti|pizza|chips|crisp|pie|piirakka|cake|kakku|juice|mehu"
