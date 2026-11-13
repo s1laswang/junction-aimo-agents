@@ -79,9 +79,9 @@ var b=$("badge"),n=state.events.length;
 if(state.bad===undefined||state.bad==="pending"){b.className="badge idle";b.textContent="Verifying chain";return}
 if(state.bad){b.className="badge stop";b.innerHTML=ICON.alert+'Chain broken at #'+state.bad.at+' <a href="#e'+state.bad.at+'" id="jump">Jump to #'+state.bad.at+'</a>';
 $("jump").addEventListener("click",function(){state.open[state.bad.at]=true;render();var el=$("e"+state.bad.at);if(el)el.scrollIntoView({block:"center"})});return}
-var cp=state.cp&&state.cp.jws?", signed checkpoint #"+state.cp.seq:"";
+var cp=state.cp&&state.cp.jws?", checkpoint #"+state.cp.seq+" signed":"";
 if(state.mode==="unknown"){b.className="badge idle";b.innerHTML=ICON.alert+"Chain check inconclusive in browser, "+n+" events";return}
-b.className="badge ok";b.innerHTML=ICON.shield+(state.mode==="gateway"?"Chain verified by gateway, ":"Chain verified in your browser, ")+n+" event"+(n===1?"":"s")+cp;if(state.cp&&state.cp.hash)b.title="checkpoint "+state.cp.hash+" at "+state.cp.ts;
+b.className="badge ok";b.innerHTML=ICON.shield+(state.mode==="gateway"?"Chain verified by gateway, ":state.srv?"Chain verified in your browser and by gateway, ":"Chain verified in your browser, ")+n+" event"+(n===1?"":"s")+cp;if(state.cp&&state.cp.hash)b.title="checkpoint "+state.cp.hash+" at "+state.cp.ts;
 }
 function render(){
 var evs=filtered(),L=$("ledger");
@@ -120,7 +120,7 @@ state.events=evs;state.text=text;state.cp=data&&!Array.isArray(data)?data.checkp
 fillActions();
 var br=await verify(evs);
 if(!sv&&data&&!MODE){var v=await aimo.api("/v1/audit/verify",{headers:{"X-Admin-Key":"demo-admin"}});if(v&&typeof v.ok==="boolean")sv={ok:v.ok,bad_seq:v.broken_at||v.bad_seq}}
-state.bad=null;state.mode="browser";
+state.bad=null;state.mode="browser";state.srv=!!(sv&&sv.ok);
 if(sv&&sv.ok===false)state.bad={at:sv.bad_seq};
 else if(br){if(sv&&sv.ok)state.mode="gateway";else if(data)state.mode="unknown";else state.bad=br}
 badge();scope();render();
