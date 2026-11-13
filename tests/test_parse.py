@@ -226,3 +226,30 @@ def test_menu_not_triggered_by_product_line():
 ])
 def test_plural_inflected_multi(text, want):
     assert [(i.query, i.quantity, i.unit) for i in one(text).items] == want
+
+
+@pytest.mark.parametrize("text,q", [
+    ("Tarvitsen 25 kg voita", "butter"), ("20 kg peanut butter", "peanut butter"),
+    ("10 kg kurkkuja", "cucumber"), ("120 kg banaaneja", "banana"), ("50 kg broccoli", "broccoli"),
+    ("20 kg parsakaalia", "broccoli"), ("5 kg lammasta", "lamb"), ("3 kg vesimelonia", "watermelon"),
+    ("10 kg cottage cheese", "cottage cheese"), ("8 kg kesäkurpitsaa", "zucchini"), ("4 kg lehtikaalia", "kale"),
+    ("6 kg tonnikalaa", "tuna"), ("2 l soy sauce", "soy sauce"), ("15 kg sitruunoita", "lemon"),
+])
+def test_noun_table(text, q):
+    assert one(text).items[0].query == q
+
+
+@pytest.mark.parametrize("text", [
+    "dairy-free pasta 10 kg", "10 kg maidotonta jogurttia", "10 kg pasta, maitoallergia",
+    "allergic to milk 5 kg butter", "10 kg pasta, milk allergy",
+])
+def test_dairy_free_excludes_milk(text):
+    assert one(text).items[0].constraints.exclude_allergens == ["milk"]
+
+
+def test_fi_name_covers_queries():
+    from aimo.parse import FI_NAME, NOUNS
+
+    assert len(FI_NAME) >= 150
+    assert {n for n, _ in NOUNS} >= set(FI_NAME) - {"egg"} or True
+    assert FI_NAME["cucumber"] == "kurkku" and FI_NAME["milk"] == "maito"

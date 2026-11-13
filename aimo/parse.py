@@ -61,6 +61,58 @@ BRANDS = {
     "feelia": "Feelia", "fredman": "Fredman", "tork": "Tork", "duni": "Duni",
 }
 
+FI_NAME = {
+    "milk": "maito", "cream": "kerma", "butter": "voi", "potatoes": "peruna", "cheese": "juusto",
+    "yoghurt": "jogurtti", "egg": "kananmuna", "flour": "jauho", "sugar": "sokeri", "salt": "suola",
+    "rice": "riisi", "bread": "leipä", "beef": "naudanliha", "pork": "porsaanliha", "chicken": "kana",
+    "salmon": "lohi", "fish": "kala", "meat": "liha", "mince": "jauheliha", "tomato": "tomaatti",
+    "carrot": "porkkana", "onion": "sipuli", "apple": "omena", "juice": "mehu", "water": "vesi",
+    "coffee": "kahvi", "oil": "öljy", "chocolate": "suklaa", "oat drink": "kaurajuoma",
+    "sour cream": "kermaviili", "whipping cream": "vispikerma", "ice cream": "jäätelö",
+    "quark": "rahka", "ham": "kinkku", "peanut butter": "maapähkinävoi", "cottage cheese": "raejuusto",
+    "soy sauce": "soijakastike", "cucumber": "kurkku", "broccoli": "parsakaali", "banana": "banaani",
+    "cauliflower": "kukkakaali", "zucchini": "kesäkurpitsa", "spinach": "pinaatti", "cabbage": "kaali",
+    "beetroot": "punajuuri", "garlic": "valkosipuli", "mushroom": "sieni", "pumpkin": "kurpitsa",
+    "radish": "retiisi", "parsnip": "palsternakka", "kale": "lehtikaali", "swede": "lanttu",
+    "sprouts": "ruusukaali", "celery": "selleri", "fennel": "fenkoli", "eggplant": "munakoiso",
+    "asparagus": "parsa", "artichoke": "artisokka", "corn": "maissi", "pea": "herne", "lentil": "linssi",
+    "chickpea": "kikherne", "bean": "papu", "pepper": "pippuri", "paprika": "paprika", "chilli": "chili",
+    "ginger": "inkivääri", "turmeric": "kurkuma", "cinnamon": "kaneli", "cardamom": "kardemumma",
+    "dill": "tilli", "parsley": "persilja", "thyme": "timjami", "rosemary": "rosmariini",
+    "oregano": "oregano", "chives": "ruohosipuli", "coriander": "korianteri", "basil": "basilika",
+    "pear": "päärynä", "peach": "persikka", "plum": "luumu", "cherry": "kirsikka", "mango": "mango",
+    "pineapple": "ananas", "melon": "meloni", "watermelon": "vesimeloni", "mandarin": "mandariini",
+    "grapefruit": "greippi", "grape": "viinirypäle", "lemon": "sitruuna", "orange": "appelsiini",
+    "avocado": "avokado", "rhubarb": "raparperi", "strawberry": "mansikka", "raspberry": "vadelma",
+    "blueberry": "mustikka", "lingonberry": "puolukka", "cranberry": "karpalo",
+    "blackcurrant": "mustaherukka", "cloudberry": "lakka", "sea buckthorn": "tyrni",
+    "olive": "oliivi", "coconut": "kookos", "almond": "manteli", "hazelnut": "hasselpähkinä",
+    "peanut": "maapähkinä", "pistachio": "pistaasi", "cashew": "cashew", "pecan": "pekaanipähkinä",
+    "sesame": "seesami", "honey": "hunaja", "jam": "hillo", "marmalade": "marmeladi", "syrup": "siirappi",
+    "cocoa": "kaakao", "caramel": "karamelli", "liquorice": "lakritsi", "marzipan": "marsipaani",
+    "marshmallow": "vaahtokarkki", "gingerbread": "piparkakku", "cookie": "keksi", "waffle": "vohveli",
+    "doughnut": "munkki", "muffin": "muffinssi", "croissant": "croissant", "bagel": "bagel",
+    "baguette": "patonki", "ciabatta": "ciabatta", "crispbread": "näkkileipä", "pancake": "pannukakku",
+    "porridge": "puuro", "muesli": "mysli", "granola": "granola", "barley": "ohra", "buckwheat": "tattari",
+    "semolina": "mannasuurimo", "bulgur": "bulgur", "couscous": "couscous", "quinoa": "kvinoa",
+    "yeast": "hiiva", "starch": "tärkkelys", "pasta": "pasta", "spaghetti": "spagetti",
+    "macaroni": "makaroni", "penne": "penne", "noodle": "nuudeli", "lasagne": "lasagne", "pizza": "pizza",
+    "tortilla": "tortilla", "salad": "salaatti", "lettuce": "salaatti", "soup": "keitto",
+    "sauce": "kastike", "ketchup": "ketsuppi", "mayonnaise": "majoneesi", "mustard": "sinappi",
+    "dressing": "salaattikastike", "vinegar": "etikka", "salsa": "salsa", "pesto": "pesto",
+    "hummus": "hummus", "tofu": "tofu", "margarine": "margariini", "buttermilk": "piimä", "kefir": "kefir",
+    "feta": "feta", "halloumi": "halloumi", "gouda": "gouda", "edam": "edam", "emmental": "emmental",
+    "brie": "brie", "parmesan": "parmesan", "ricotta": "ricotta", "mozzarella": "mozzarella",
+    "mascarpone": "mascarpone", "tuna": "tonnikala", "shrimp": "katkarapu", "cod": "turska",
+    "pike-perch": "kuha", "whitefish": "siika", "perch": "ahven", "vendace": "muikku", "herring": "silli",
+    "trout": "kirjolohi", "sausage": "makkara", "frankfurter": "nakki", "bacon": "pekoni",
+    "salami": "salami", "chorizo": "chorizo", "pepperoni": "pepperoni", "prosciutto": "prosciutto",
+    "turkey": "kalkkuna", "lamb": "karitsa", "veal": "vasikka", "reindeer": "poro", "liver": "maksa",
+    "meatball": "lihapyörykkä", "nugget": "nugget", "fish finger": "kalapuikko", "burger": "hampurilainen",
+    "beer": "olut", "wine": "viini", "lemonade": "limonaadi", "tea": "tee", "chips": "sipsi",
+    "tenderloin": "sisäfilee", "entrecote": "entrecote",
+}
+
 NOUNS = [
     ("oat drink", r"oat\s+(?:milk|drink)|kaura(?:juoma|maito)\w*"),
     ("sour cream", r"sour\s+cream|kermaviili\w*"),
@@ -115,6 +167,34 @@ NOUNS = [
     ("mushroom", r"mushroom\w*|\bsien(?:i|iä|et|ten)\b"),
     ("pepper", r"pepper|\bpippuri\w*"),
 ]
+_SPECIAL_FI = {
+    "lamb": r"\bkarits\w*|\blampaan\w*|\blammas\w*", "veal": r"\bvasik\w*", "reindeer": r"\bpor(?:o|oa|on|oja|onlih\w*)\b",
+    "cod": r"\btursk\w*", "egg": r"\bmun(?:a|ia|ien|at)\b", "pike-perch": r"\bkuha\w*", "fish finger": r"\bkalapuik\w*",
+    "burger": r"\bhampurilais\w*|\bburger\w*", "pepper": r"\bpippur\w*", "chilli": r"\bchili\w*",
+}
+
+
+def _fi_rx(w):
+    if len(w) <= 4:
+        return rf"\b{w}(?:a|ä|n|ta|tä|lla|llä|ksi|ssa|ssä|hin|en|ja|jä|t)?\b"
+    stem = w[:-1] if w[-1] in "aeiouyäö" else w
+    stem = re.sub(r"(k|p|t)\1", r"\1{1,2}", stem)
+    return rf"\b{stem}\w*"
+
+
+def _en_rx(w):
+    w = w.replace("-", r"[\s-]?").replace(" ", r"\s+")
+    return rf"\b{w[:-1]}(?:y|ies)\b" if w.endswith("y") else rf"\b{w}(?:s|es)?\b"
+
+
+_have = {n for n, _ in NOUNS}
+_multi, _single = [], []
+for _n, _fi in FI_NAME.items():
+    if _n in _have:
+        continue
+    _p = _en_rx(_n) + "|" + _SPECIAL_FI.get(_n, _fi_rx(_fi))
+    (_multi if (" " in _n) else _single).append((_n, _p))
+NOUNS = _multi + NOUNS + _single
 NOUNS = [(n, re.compile(p, re.I)) for n, p in NOUNS]
 
 STOP = set(
@@ -221,7 +301,7 @@ def _constraints(seg):
     p, seg = _find_price(seg)
     c.max_unit_price = p
     pats = [
-        ("lactose_free", r"lactos?e?[\s-]*fr?e{1,2}\b|\bno\s+lactose|\blaktoos\w*?t(?:on|om)\w*"),
+        ("lactose_free", r"lactos?e?[\s-]*fr?e{1,2}\b|\blactose[\s-]*intoleran\w*|\blaktoosi[\s-]*intoleran\w*|\bno\s+lactose|\blaktoos\w*?t(?:on|om)\w*"),
         ("gluten_free", r"glut[eo]n[\s-]*fr?e{1,2}\b|\bno\s+gluten|\bgluteen\w*?t(?:on|om)\w*"),
     ]
     for key, pat in pats:
@@ -229,11 +309,15 @@ def _constraints(seg):
             setattr(c, key, True)
             seg = re.sub(pat, " ", seg, flags=re.I)
     for name, stems in ALLERGENS.items():
-        en = rf"(?:\bno|\bwithout|\bfree\s+(?:of|from)|\bilman)\s+(?:{stems})|\b(?:{stems})[\s-]*free\b"
+        en = rf"(?:\bno|\bwithout|\bfree\s+(?:of|from)|\bilman)\s+(?:{stems})|\b(?:{stems})[\s-]*free\b|\b(?:{stems})[\s-]*allerg\w*|\ballergic\s+to\s+(?:{stems})"
         fi_stem = FI_ALLERGEN_STEMS[name]
         fi = rf"\b{fi_stem}\w*?t(?:on|om|ön|öm)\w*|\bmaidot\w*" if name == "milk" else rf"\b{fi_stem}\w*?t(?:on|om|ön|öm)\w*"
         if name == "nuts":
             fi = r"\bpähkinät(?:ön|töm)\w*|\bmaapähkinät(?:ön|töm)\w*"
+        if name == "milk":
+            fi += r"|\bmai[dt]o\w*?allerg\w*|\bmaidoton\w*"
+        elif name in FI_ALLERGEN_STEMS:
+            fi += rf"|\b{FI_ALLERGEN_STEMS[name]}\w*?allerg\w*"
         for pat in (en, fi):
             if re.search(pat, seg, re.I):
                 if name not in c.exclude_allergens:
@@ -430,15 +514,6 @@ def parse_need(text: str, customer: str, today: date | None = None) -> Need:
     return _menu_parse(text, customer, today) or _llm_parse(text, customer, today) or _rule_parse(text, customer, today)
 
 
-FI_NAME = {
-    "milk": "maito", "cream": "kerma", "butter": "voi", "potatoes": "peruna", "cheese": "juusto",
-    "yoghurt": "jogurtti", "egg": "kananmuna", "flour": "jauho", "sugar": "sokeri", "salt": "suola",
-    "rice": "riisi", "bread": "leipä", "beef": "naudanliha", "mince": "jauheliha", "pork": "porsaanliha", "chicken": "kana",
-    "salmon": "lohi", "fish": "kala", "meat": "liha", "tomato": "tomaatti", "carrot": "porkkana",
-    "onion": "sipuli", "apple": "omena", "juice": "mehu", "water": "vesi", "coffee": "kahvi",
-    "oil": "öljy", "chocolate": "suklaa", "oat drink": "kaurajuoma", "sour cream": "kermaviili",
-    "whipping cream": "vispikerma", "ice cream": "jäätelö", "quark": "rahka", "ham": "kinkku",
-}
 FI_ALLERGEN = {
     "nuts": "pähkinä", "egg": "muna", "milk": "maito", "soy": "soija", "fish": "kala",
     "celery": "selleri", "mustard": "sinappi", "sesame": "seesami", "shellfish": "äyriäiset", "wheat": "vehnä",
