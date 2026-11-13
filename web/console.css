@@ -77,7 +77,7 @@ td:first-child{min-width:220px}
 td.n .note,td.dt{white-space:nowrap}
 .ln.aud .tool{color:var(--ink-3);font-weight:400}.ln.aud .why{color:var(--ink-3)}.ln.aud .st{display:none}td details{margin-top:2px}td summary{cursor:pointer;color:var(--ink-3)}
 .trace>li.run{border-top:1px solid var(--rule-2)}.trace>li.run:first-child{border-top:0}
-.run summary{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:6px 0;cursor:pointer;font-size:12px;color:var(--ink-2)}
+.run>details>summary{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:6px 0;cursor:pointer;font-size:12px;color:var(--ink-2)}
 .run .rn{font-weight:600;color:var(--ink)}.run .ro{font-weight:500}.run .ro.auto{color:var(--ok)}.run .ro.needs_approval{color:var(--warn)}.run .ro.blocked{color:var(--stop)}.run .rnote{color:var(--valio)}
 .rb{list-style:none;margin:0;padding:0}
 .au{padding:1px 0 1px 16px;font-size:12px;color:var(--ink-3)}.au code{font:11px var(--mono)}
