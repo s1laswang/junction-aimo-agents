@@ -183,3 +183,35 @@ def reallocate(item: NeedItem, allocated: list[Offer], fresh_offers: list[Offer]
     if shortfall > 0:
         changes.append(f"shortfall {shortfall:g} {item.unit}")
     return out, shortfall, changes
+
+
+def options(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetime | None = None) -> list[dict]:
+    now = _now(now)
+    alloc, short = allocate(item, offers, deliver_by, now)
+    if short <= 1e-9:
+        return []
+    u = item.unit
+    covered = round(item.quantity - short, 6)
+    out = []
+    if covered > 0:
+        out.append({"kind": "partial", "date": deliver_by, "covered": covered, "shortfall": short,
+                    "why": f"{covered:g} {u} of {item.quantity:g} {u} by {deliver_by}, {short:g} {u} short"})
+    later = sorted({o.available_date for o in offers if o.available_date and o.available_date > deliver_by})
+    late = next((d for d in later if allocate(item, offers, d, now)[1] <= 1e-9), None)
+    if late:
+        n = (late - deliver_by).days
+        out.append({"kind": "late", "date": late, "days_late": n,
+                    "why": f"all {item.quantity:g} {u} available by {late}, {n} days after {deliver_by}"})
+    if covered > 0:
+        used: dict = {}
+        for a in alloc:
+            used[_key(a)] = used.get(_key(a), 0) + a.units_needed
+        pool = [o.model_copy(update={"available_amount": o.available_amount - used.get(_key(o), 0)})
+                for o in offers if o.available_date and o.available_date > deliver_by]
+        rest = item.model_copy(update={"quantity": short})
+        d = next((d for d in later if fill(rest, pool, d, now)[1] <= 1e-9), None)
+        if d:
+            n = (d - deliver_by).days
+            out.append({"kind": "split", "date": d, "on_time": covered, "later": short, "days_late": n,
+                        "why": f"{covered:g} {u} by {deliver_by}, remaining {short:g} {u} on {d}, {n} days late"})
+    return out
