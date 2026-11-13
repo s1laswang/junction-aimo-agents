@@ -39,3 +39,24 @@ def test_price_lines():
     lines, gross, valid = offers.price_lines("hotel-aurora", D, [QuoteRequestLine(product_id=top.product_id, quantity=10)])
     assert lines[0].line_total_net == round(10 * top.unit_price_net, 2)
     assert gross > lines[0].line_total_net and valid.tzinfo
+
+
+def test_alternatives_and_options():
+    offers.clear_simulation()
+    g = offers.get_offers(milk()).items[0]
+    alts = g.alternatives
+    assert 1 <= len(alts) <= 5
+    ids = [g.offers[0].product_id] + [a.product_id for a in alts]
+    assert len(set(ids)) == len(ids)
+    for a in alts:
+        assert a.tier and a.notes and a.total_net > 0
+        assert "maitorahka" not in a.product.name.lower() and "kahvi" not in a.product.name.lower()
+    assert g.options == []
+    top = g.offers[0].product_id
+    offers.simulate(SimulateStock(product_id=top, available_amount=300))
+    try:
+        g2 = offers.get_offers(milk()).items[0]
+        if g2.shortfall > 0:
+            assert g2.options
+    finally:
+        offers.clear_simulation()
