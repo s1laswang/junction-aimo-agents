@@ -73,3 +73,14 @@ main{max-width:none;padding:0}
 a{color:#000}
 .grp,.row{break-inside:avoid}
 }
+.how{margin:-4px 0 12px;font-size:12px;color:var(--ink-2)}
+.how summary{cursor:pointer;color:var(--valio);width:max-content}
+.how p{margin:4px 0 0;max-width:640px}
+@media print{.how{display:none}}
+.legend{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:-4px 0 12px}
+.legend:before{content:"Agents";font:500 11px var(--sans);color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;margin-right:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;font:500 12px var(--sans);color:var(--ink-2);background:var(--sheet);border:1px solid var(--rule-2);border-radius:4px;cursor:pointer}
+.chip:hover{background:var(--well)}
+.chip[aria-pressed="true"]{border-color:var(--valio);color:var(--valio);background:rgba(31,78,140,.06)}
+.chip .n{font:11px var(--mono);color:var(--ink-3)}
+@media print{.legend{display:none}}

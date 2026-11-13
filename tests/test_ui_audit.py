@@ -31,7 +31,7 @@ def test_hash_recipe_matches_python(tmp_path, monkeypatch):
     from aimo import audit
 
     monkeypatch.setenv("AIMO_DB", str(tmp_path / "a.db"))
-    audit.record("hotel-aurora", "agent:buyer", "quote.issued", "q1", "Laktoositon maito, kevytmaito 1 l.", {"quote_id": "q1", "item": "Valio Eilaä ääripää jälkiruoka", "total_gross": 1240})
+    audit.record("hotel-aurora", "agent:buyer", "quote.issued", "q1", "Laktoositon maito, kevytmaito 1 l.", {"quote_id": "q1", "item": "Valio Eilaä ääripää jälkiruoka", "total_gross": 1240.0, "unit": 12.5})
     audit.record("hotel-aurora", "agent:buyer", "order.placed", "o1", "Under the 2,000 EUR per-order limit.", {"order_id": "o1", "quote_id": "q1", "n": {"b": [1, 2], "a": None}})
     audit.record("hospital-tays", "human:päivi", "approval.approved", "o2", "Checked allergens – ok.")
     evs = json.loads(json.dumps([e.model_dump(mode="json") for e in audit.events()]))
@@ -58,3 +58,9 @@ def test_hash_recipe_matches_python(tmp_path, monkeypatch):
         b.close()
     srv.shutdown()
     assert bad["at"] == 2
+
+
+def test_agents_legend_wired():
+    h = (WEB / "audit.html").read_text()
+    j = (WEB / "audit.js").read_text()
+    assert 'id="legend"' in h and "function legend" in j and 'class="chip"' in j
