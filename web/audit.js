@@ -79,7 +79,7 @@ var b=$("badge"),n=state.events.length;
 if(state.bad===undefined||state.bad==="pending"){b.className="badge idle";b.textContent="Verifying chain";return}
 if(state.bad){b.className="badge stop";b.innerHTML=ICON.alert+'Chain broken at #'+state.bad.at+' <a href="#e'+state.bad.at+'" id="jump">Jump to #'+state.bad.at+'</a>';
 $("jump").addEventListener("click",function(){state.open[state.bad.at]=true;render();var el=$("e"+state.bad.at);if(el)el.scrollIntoView({block:"center"})});return}
-b.className="badge ok";b.innerHTML=ICON.shield+"Chain verified, "+n+" event"+(n===1?"":"s");
+b.className="badge ok";var cp=state.cp&&state.cp.jws?", signed checkpoint #"+state.cp.seq:"";b.innerHTML=ICON.shield+"Chain verified, "+n+" event"+(n===1?"":"s")+cp;if(state.cp&&state.cp.hash)b.title="checkpoint "+state.cp.hash+" at "+state.cp.ts;
 }
 function render(){
 var evs=filtered(),L=$("ledger");
@@ -114,9 +114,10 @@ if(!MODE)data=await aimo.api("/v1/audit",{headers:{"X-Admin-Key":"demo-admin"}})
 var evs,text="";
 if(data){evs=Array.isArray(data)?data:(data.events||data.trail||[]);text=Array.isArray(data)?"":(data.text||"");aimo.mock(false)}
 else{evs=await buildMock(MODE==="broken");aimo.mock(true)}
-state.events=evs;state.text=text;
+state.events=evs;state.text=text;state.cp=data&&!Array.isArray(data)?data.checkpoint:null;var sv=data&&!Array.isArray(data)?data.verified:null;
 fillActions();
 state.bad=await verify(evs);
+if(sv&&typeof sv.ok==='boolean')state.bad=sv.ok?null:{at:sv.bad_seq};
 badge();scope();render();
 }
 function scope(){var c=$("f-customer").value,o=$("f-order").value.trim(),v=filtered().length,n=state.events.length;$("scope").textContent=(c||"all customers")+(o?" / "+o:"")+" \u00b7 showing "+v+" of "+n+" events"}
