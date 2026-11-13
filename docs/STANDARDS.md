@@ -21,7 +21,14 @@ One command (needs this repo):
 python -m aimo.quotes verify "$JWS" http://localhost:8080/.well-known/jwks.json
 ```
 
-It prints `OK q_... customer=... total_gross=... valid_until=...` and exits 0. On failure it prints the error code (for example `BAD_SIGNATURE`) and exits 1. An expired quote adds `(EXPIRED)`.
+Real output from a quote on a booted server:
+
+```
+$ python -m aimo.quotes verify "$JWS" http://localhost:8123/.well-known/jwks.json
+OK q_73e19c560ce1 customer=hotel-aurora agent=buyer-aurora lines=1 total_gross=1770.00 EUR delivery=2026-11-16 valid_until=2026-11-15T17:00:00+02:00
+```
+
+Format: `OK q_... customer=... total_gross=... valid_until=...` and exits 0. On failure it prints the error code (a tampered token gives `BAD_SIGNATURE: Quote signature is invalid.`) and exits 1. An expired quote adds `(EXPIRED)`.
 
 Or from any Python with `joserfc` and `httpx`:
 
