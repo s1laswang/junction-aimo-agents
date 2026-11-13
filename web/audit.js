@@ -35,16 +35,16 @@ return null;
 
 window.aimoAudit={verify:verify,hashOf:hashOf};
 var MOCK_RAW=[
-["agent:buyer-aurora","parse_request","need:n1","Read the request as 2000 L lactose-free milk, delivery by Monday 17 Nov.",{raw_text:"2000 litres lactose-free milk by Monday"},"ord_7f3a"],
-["agent:buyer-aurora","get_offers","need:n1","Found 4 lactose-free milk offers; the cheapest in stock covers 2000 L at 1.12 EUR/L.",{offers:4,best:"410008"},"ord_7f3a"],
-["agent:buyer-aurora","request_quote","quote:q_91c2","Signed a quote for 2000 L at 2,240.00 EUR net, valid until the 14:00 order cutoff.",{total_net:2240,valid_until:"2026-11-14T14:00:00Z"},"ord_7f3a"],
-["system","policy_check","order:ord_7f3a","Order total 2,240.00 EUR is above the 2,000 EUR per-order limit, so a human must approve.",{limit:2000,total:2240,outcome:"needs_approval"},"ord_7f3a"],
+["agent:buyer-aurora","parse_request","need:n1","Read the request as 2500 L lactose-free milk, delivery by Monday 17 Nov.",{raw_text:"2500 litres lactose-free milk by Monday"},"ord_7f3a"],
+["agent:buyer-aurora","get_offers","need:n1","Found 4 lactose-free milk offers; the cheapest in stock covers 2500 L at 1.12 EUR/L.",{offers:4,best:"410008"},"ord_7f3a"],
+["agent:buyer-aurora","request_quote","quote:q_91c2","Signed a quote for 2500 L at 2,800.00 EUR net, valid until the 14:00 order cutoff.",{total_net:2800,valid_until:"2026-11-14T14:00:00Z"},"ord_7f3a"],
+["system","policy_check","order:ord_7f3a","Order total 2,800.00 EUR is above the 2,500 EUR per-order limit, so a human must approve.",{limit:2500,total:2800,outcome:"needs_approval"},"ord_7f3a"],
 ["agent:buyer-aurora","place_order","order:ord_7f3a","Placed the order against the signed quote; held for approval.",{quote_id:"q_91c2",status:"pending_approval"},"ord_7f3a"],
 ["human:kitchen-manager","approve_order","order:ord_7f3a","Approved: the milk is for Monday breakfast service.",{approve:true,note:"ok for Monday"},"ord_7f3a"],
 ["system","order_placed","order:ord_7f3a","Order passed to fulfilment and confirmed for delivery on 17 Nov.",{status:"confirmed"},"ord_7f3a"],
 ["agent:seller-valio","stock_alert","product:410008","Stock for lactose-free milk 1 L fell below the weekly average; offering oat drink as an alternative.",{available:620},null],
 ["agent:buyer-aurora","get_offers","need:n2","Found 3 offers for 40 kg unsalted butter; cheapest in stock 7.40 EUR/kg.",{offers:3},"ord_8b21"],
-["system","policy_check","order:ord_8b21","Order is within the 2,000 EUR limit and all allergen rules; no approval needed.",{outcome:"auto"},"ord_8b21"],
+["system","policy_check","order:ord_8b21","Order is within the 2,500 EUR limit and all allergen rules; no approval needed.",{outcome:"auto"},"ord_8b21"],
 ["agent:buyer-aurora","place_order","order:ord_8b21","Placed the order automatically within the mandate.",{status:"placed"},"ord_8b21"]
 ];
 async function buildMock(broken){
@@ -79,6 +79,7 @@ return state.events.filter(function(e){return (!c||e.customer===c)&&(!o||orderOf
 function badge(){
 $("how-n").textContent=state.events.length;
 var b=$("badge"),n=state.events.length;
+if(state.off){b.className="badge idle";b.innerHTML=ICON.alert+"Not checked, "+aimo.offline().toLowerCase();return}
 if(state.bad===undefined||state.bad==="pending"){b.className="badge idle";b.textContent="Verifying chain";return}
 if(state.bad){b.className="badge stop";b.innerHTML=ICON.alert+'Chain broken at #'+state.bad.at+' <a href="#e'+state.bad.at+'" id="jump">Jump to #'+state.bad.at+'</a>';
 $("jump").addEventListener("click",function(){state.open[state.bad.at]=true;render();var el=$("e"+state.bad.at);if(el)el.scrollIntoView({block:"center"})});return}
@@ -105,6 +106,7 @@ $("legend").innerHTML='<button type="button" class="chip" data-id="" aria-presse
 function render(){
 legend();
 var evs=filtered(),L=$("ledger");
+if(state.off){aimo.offline(L);$("plain").hidden=true;L.hidden=false;legend();return}
 $("plain").hidden=state.view!=="text";L.hidden=state.view==="text";
 $("v-ledger").setAttribute("aria-pressed",state.view==="ledger");$("v-text").setAttribute("aria-pressed",state.view==="text");
 if(state.view==="text")scopedText(evs);
@@ -130,12 +132,13 @@ sel.innerHTML='<option value="">all</option>'+acts.map(function(a){return '<opti
 sel.value=acts.indexOf(cur)<0?"":cur;
 }
 async function load(){
-state.bad="pending";badge();
+state.off=false;state.bad="pending";badge();
 var data=null;
 if(!MODE)data=await aimo.api("/v1/audit",{headers:{"X-Admin-Key":"demo-admin"}});
 var evs,text="";
 if(data){evs=Array.isArray(data)?data:(data.events||data.trail||[]);text=Array.isArray(data)?"":(data.text||"");aimo.mock(false)}
-else{evs=await buildMock(MODE==="broken");aimo.mock(true)}
+else if(MODE){evs=await buildMock(MODE==="broken");aimo.mock(true)}
+else{state.off=true;state.events=[];state.bad=null;state.cp=null;badge();scope();render();$("receipt").hidden=true;return}
 state.q2o={};evs.forEach(function(e){var d=e.detail||{};if(d.order_id&&d.quote_id)state.q2o[d.quote_id]=d.order_id});state.events=evs;state.text=text;state.cp=data&&!Array.isArray(data)?data.checkpoint:null;var sv=data&&!Array.isArray(data)?data.verified:null;
 fillActions();
 var br=await verify(evs);
@@ -145,7 +148,7 @@ if(sv&&sv.ok===false)state.bad={at:sv.bad_seq};
 else if(br){if(sv&&sv.ok)state.mode="gateway";else if(data)state.mode="unknown";else state.bad=br}
 badge();scope();render();state.live=!!data;receipt(data);
 }
-var MOCK_ORDER={order_id:"ord_7f3a",quote_id:"q_91c2",customer:"hotel-aurora",agent_id:"buyer-aurora",total_net:2240,status:"confirmed",delivery_date:"2026-11-17",decision:{outcome:"needs_approval",reasons:[{code:"per_order_limit",text:"Order total 2,240.00 EUR is above the 2,000 EUR per-order limit."}]},substitutions:[{original_id:"410008",substitute_id:"410112",reason:"Same lactose-free 1 L milk in a different pack, in stock for the full quantity."}],lines:[]};
+var MOCK_ORDER={order_id:"ord_7f3a",quote_id:"q_91c2",customer:"hotel-aurora",agent_id:"buyer-aurora",total_net:2800,status:"confirmed",delivery_date:"2026-11-17",decision:{outcome:"needs_approval",reasons:[{code:"per_order_limit",text:"Order total 2,800.00 EUR is above the 2,500 EUR per-order limit."}]},substitutions:[{original_id:"410008",substitute_id:"410112",reason:"Same lactose-free 1 L milk in a different pack, in stock for the full quantity."}],lines:[]};
 var TAG={confirmed:"ok",placed:"ok",approved:"ok",pending_approval:"warn",draft:"neutral",rejected:"stop",blocked:"stop",expired:"stop"};
 function eur(v){return Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+" EUR"}
 function row(k,v){return '<div class="rc-k">'+k+'</div><div class="rc-v">'+v+'</div>'}
@@ -164,7 +167,7 @@ var out={auto:"Placed automatically within the mandate",needs_approval:"Needed h
 var h='<div class="panel-head"><h2>Order receipt <span class="mono muted">'+esc(o.order_id)+'</span></h2><span class="tag '+(TAG[o.status]||"neutral")+'">'+esc(String(o.status).replace(/_/g," "))+'</span></div><div class="rc">';
 h+=row("Customer",esc(o.customer))+row("Buyer agent",'<span class="mono">'+esc(o.agent_id)+'</span>')+row("Total net",'<span class="mono">'+eur(o.total_net)+'</span>')+row("Delivery",o.delivery_date?'<span class="mono">'+esc(String(o.delivery_date).slice(0,10))+'</span>':'<span class="muted">not set</span>');
 h+=row("Decision",esc(out)+(dec.reasons&&dec.reasons.length?'<ul>'+dec.reasons.map(function(r){return '<li>'+esc(r.text||r.code)+'</li>'}).join("")+'</ul>':""));
-h+=row("Approval",ap?esc(/reject/.test(ap.action)?"Rejected":"Approved")+" by <span class=\"mono\">"+esc(ap.actor.replace(/^human:/,""))+"</span> at <span class=\"mono\">"+esc(ap.ts.slice(0,10)+" "+tm(ap.ts)+" Helsinki")+"</span>"+(ap.why?'<div class="muted small">'+esc(ap.why)+'</div>':''):'<span class="muted">'+(dec.outcome==="needs_approval"?"Awaiting a human decision":"No human approval required")+'</span>');
+h+=row("Approval",ap?esc(/reject/.test(ap.action)?"Rejected":"Approved")+" by <span class=\"mono\">"+esc(ap.actor.replace(/^human:/,""))+"</span> at <span class=\"mono\">"+esc(ap.ts.slice(0,10)+" "+tm(ap.ts)+" Helsinki")+"</span>"+(ap.why&&!/^(approved|rejected) by /i.test(ap.why)?'<div class="muted small">'+esc(ap.why)+'</div>':''):'<span class="muted">'+(dec.outcome==="needs_approval"?"Awaiting a human decision":"No human approval required")+'</span>');
 var subs=o.substitutions||[];
 h+=row("Substitutions",subs.length?'<ul>'+subs.map(function(x){return '<li><span class="mono">'+esc(x.original_id)+'</span> &rarr; <span class="mono">'+esc(x.substitute_id)+'</span>: '+esc(x.reason)+'</li>'}).join("")+'</ul>':'<span class="muted">none</span>');
 h+=row("Quote",'<span class="mono">'+esc(o.quote_id)+'</span> '+(red?'<span class="tag ok">signature verified at placement</span>':'<span class="tag neutral">not yet redeemed</span>'));
