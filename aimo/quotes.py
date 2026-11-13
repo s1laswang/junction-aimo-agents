@@ -57,6 +57,9 @@ def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, cu
         q, t = (l["quantity"], l["line_total_net"]) if isinstance(l, dict) else (l.quantity, l.line_total_net)
         if q <= 0 or t < 0:
             raise QuoteError("INVALID_QUOTE", "Quote line quantity must be positive.")
+    d = delivery_date.date() if isinstance(delivery_date, datetime) else delivery_date
+    if d < datetime.now(HELSINKI).date():
+        raise QuoteError("INVALID_QUOTE", "Delivery date is in the past.")
     if valid_until.tzinfo is None:
         valid_until = valid_until.replace(tzinfo=timezone.utc)
     quote = Quote(

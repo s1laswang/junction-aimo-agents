@@ -171,3 +171,12 @@ def test_invalid_quote_not_issued(qty, total, gross):
     assert e.value.code == "INVALID_QUOTE"
     with pytest.raises(quotes.QuoteError):
         quotes.issue("hotel-aurora", "a1", [], date(2026, 11, 16), until, 5.0)
+
+
+def test_past_delivery_date_not_issued():
+    line = QuoteLine(product_id="p1", quantity=1, unit_price_net=1.0, line_total_net=1.0)
+    until = datetime.now(timezone.utc) + timedelta(hours=2)
+    with pytest.raises(quotes.QuoteError) as e:
+        quotes.issue("hotel-aurora", "a1", [line], date(2020, 1, 1), until, 1.24)
+    assert e.value.code == "INVALID_QUOTE"
+    assert quotes.issue("hotel-aurora", "a1", [line], datetime.now(quotes.HELSINKI).date(), until, 1.24)
