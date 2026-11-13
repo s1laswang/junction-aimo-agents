@@ -66,6 +66,7 @@ class Offer(BaseModel):
     co2_per_kg: float | None = None
     match_score: float = 0.0
     tier: Tier | None = None
+    substitute_for: str | None = None
     notes: list[str] = Field(default_factory=list)
 
 
@@ -81,10 +82,12 @@ class OffersResponse(BaseModel):
 
 class QuoteLine(BaseModel):
     product_id: str
+    name: str | None = None
     quantity: float
     sales_unit: str | None = None
     unit_price_net: float
     line_total_net: float
+    substitute_for: str | None = None
 
 
 class Quote(BaseModel):
@@ -104,6 +107,7 @@ class Quote(BaseModel):
 class QuoteRequestLine(BaseModel):
     product_id: str
     quantity: float
+    substitute_for: str | None = None
 
 
 class QuoteRequest(BaseModel):
@@ -147,6 +151,8 @@ class Order(BaseModel):
 class PlaceOrderRequest(BaseModel):
     quote_id: str
     jws: str
+    ask_human: bool = False
+    note: str | None = None
 
 
 class ApprovalDecision(BaseModel):
