@@ -34,6 +34,9 @@ const NF=new Intl.NumberFormat("en-GB",{minimumFractionDigits:2,maximumFractionD
 const eur=v=>v==null?"-":NF.format(v);
 const money=v=>eur(v)+" EUR";
 const qty=v=>new Intl.NumberFormat("en-GB",{maximumFractionDigits:0}).format(v);
+const AVAIL=v=>v>=1e9?"in stock":qty(v);
+const lt=s=>{const d=new Date(s);if(isNaN(d))return clock();const p=n=>String(n).padStart(2,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`};
+const noteHtml=n=>{n=n||[];if(!n.length)return"";const r=n.slice(1);const sk=r.length&&r.every(x=>/skipped/i.test(x));return" - "+esc(n[0])+(r.length?`<details><summary>${sk?"+"+r.length+" skipped (cutoff passed)":"+"+r.length+" more"}</summary>${r.map(x=>"<div>"+esc(x)+"</div>").join("")}</details>`:"")};
 const day=s=>{const d=new Date(s);return isNaN(d)?String(s||""):d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})};
 const MANDATES={"hotel-aurora":{o:2000,w:8000},"hospital-tays":{o:1500,w:6000},"school-hervanta":{o:800,w:3000}};
 const clock=()=>{const d=new Date(),p=(n,l=2)=>String(n).padStart(l,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`};
@@ -41,8 +44,8 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function setMock(on){if(on)S.mock=true;aimo.mock(S.mock)}
 function line(o){
  $("#trace-empty").hidden=true;
- const li=document.createElement("li");li.className="ln"+(o.ext?" ext":"");
- li.innerHTML=`<div class="h"><span class="t">${o.t||clock()}</span><span><span class="tool">${esc(o.tool)}</span><span class="st ${o.cls||"run"}">${esc(o.status||"")}</span></span><span class="ms">${o.ms!=null?o.ms+" ms":esc(o.actor||"")}</span><span class="why">${esc(o.why||"")}</span>${o.req||o.res?`<details><summary>request / response</summary><pre>${esc(JSON.stringify({request:o.req,response:o.res},null,2))}</pre></details>`:""}</div>`;
+ const li=document.createElement("li");li.className="ln"+(o.ext?" ext":"")+(o.aud?" aud":"");
+ li.innerHTML=`<div class="h"><span class="t">${o.t||lt()}</span><span><span class="tool">${esc(o.tool)}</span><span class="st ${o.cls||"run"}">${esc(o.status||"")}</span></span><span class="ms">${o.ms!=null?o.ms+" ms":esc(o.actor||"")}</span><span class="why">${esc(o.why||"")}</span>${o.req||(o.res&&Object.keys(o.res).length)?`<details><summary>request / response</summary><pre>${esc(JSON.stringify({request:o.req,response:o.res},null,2))}</pre></details>`:""}</div>`;
  $("#trace").prepend(li);return li;
 }
 function upd(li,o){
@@ -55,15 +58,19 @@ async function call(tool,method,path,body,mock,why){
  const t0=performance.now();let res=null,real=false;
  if(!S.mock){
   res=await aimo.api(path,{method,body});real=res!=null;
-  if(!real){setMock(true);S.fell=true}
+  if(!real){S.pend=true}
  }
- if(!real){await sleep(200+Math.random()*400);res=mock()}
+ if(S.pend){S.pend=false}
+ let err=null;
+ if(!real&&!S.mock){try{const r=await fetch(path,{method,headers:{"Content-Type":"application/json","X-Agent-Key":localStorage.getItem("aimo.agentKey")||"demo-"+cust()},body:body?JSON.stringify(body):undefined});if(r.status>=400&&r.status<500&&r.status!==404){const e=await r.json().catch(()=>null);if(e&&e.code)err={status:r.status,...e}}}catch(e){}}
+ if(err){S.mock=S.fell?S.mock:false;upd(li,{cls:"err",status:String(err.status),ms:Math.round(performance.now()-t0),why:err.code+": "+err.text,req:body,res:err});const x=new Error(err.code+": "+err.text);throw x}
+ if(!real){setMock(true);S.fell=true;await sleep(200+Math.random()*400);res=mock()}
  const ms=Math.round(performance.now()-t0);
  upd(li,{cls:"ok",status:real?"200":"mock",ms,why:why(res),req:body,res});
  return res;
 }
 const tierRank={best:4,better:3,good:2,exact:1};
-function best(offers){return [...offers].sort((a,b)=>(tierRank[b.tier]||0)-(tierRank[a.tier]||0)||b.match_score-a.match_score)[0]}
+function best(offers){const ok=offers.filter(o=>!o.closing_time||new Date(o.closing_time)>Date.now());return [...(ok.length?ok:offers)].sort((a,b)=>(tierRank[b.tier]||0)-(tierRank[a.tier]||0)||b.match_score-a.match_score)[0]}
 function consChips(c){
  const o=[];if(c.lactose_free)o.push("lactose-free");if(c.gluten_free)o.push("gluten-free");
  (c.exclude_allergens||[]).forEach(a=>o.push("no "+a));(c.labels||[]).forEach(l=>o.push(l));
@@ -78,9 +85,10 @@ function offersHtml(need,off){
  return`<div class="sec"><h3>Offers</h3>`+off.items.map((g,i)=>{
   const ni=need.items[i]||g.need_item||{};
   const pick=best(g.offers||[]);
-  const rows=(g.offers||[]).map(o=>`<tr class="${o===pick?"pick":""}"><td>${esc(o.product.name)}${o===pick?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${(o.notes||[]).length?" - "+esc(o.notes.join("; ")):""}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${qty(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg??"-"}</td><td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td></tr>`).join("");
-  const sf=g.shortfall>0?`<tr class="short"><td colspan="9">Shortfall: ${g.shortfall} units not available by the delivery date.</td></tr>`:"";
-  return`<div class="tw"><div class="note" style="margin:6px 0 2px">${esc(ni.query||"")} - ${esc(ni.quantity||"")} ${esc(ni.unit||"")}</div><table><thead><tr><th>Product</th><th>Brand</th><th class="n">Units</th><th class="n">Unit EUR</th><th class="n">Total EUR</th><th class="n">Available</th><th class="n">Reliab.</th><th class="n">CO2/kg</th><th>Tier</th></tr></thead><tbody>${rows}${sf}</tbody></table></div>`}).join("")+`</div>`;
+  const ht=(g.offers||[]).some(o=>o.tier);
+  const rows=(g.offers||[]).map(o=>`<tr class="${o===pick?"pick":""}"><td>${esc(o.product.name)}${o===pick?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${noteHtml(o.notes)}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${AVAIL(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg!=null?NF.format(o.co2_per_kg):"-"}</td>${ht?`<td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td>`:""}</tr>`).join("");
+  const sf=g.shortfall>0?`<tr class="short"><td colspan="${ht?9:8}">Shortfall: ${g.shortfall} units not available by the delivery date.</td></tr>`:"";
+  return`<div class="tw"><div class="note" style="margin:6px 0 2px">${esc(ni.query||"")} - ${esc(ni.quantity||"")} ${esc(ni.unit||"")}</div><table><thead><tr><th>Product</th><th>Brand</th><th class="n">Units</th><th class="n">Unit EUR</th><th class="n">Total EUR</th><th class="n">Available</th><th class="n">Reliab.</th><th class="n">CO2/kg</th>${ht?"<th>Tier</th>":""}</tr></thead><tbody>${rows}${(g.offers||[]).length?"":`<tr class="short"><td colspan="9">No offers found for this item.</td></tr>`}${sf}</tbody></table></div>`}).join("")+`</div>`;
 }
 function quoteHtml(q){
  return`<div class="sec quote"><h3>Signed quote</h3><div class="kv"><span class="mono">${esc(q.quote_id)}</span><span>Total <b class="mono">${money(q.total_net)}</b></span><span>Valid until <b class="mono">${esc(q.valid_until)}</b></span><span class="tag ok">signed Ed25519</span><span class="jws" title="${esc(q.jws)}">${esc(q.jws.slice(0,28))}...</span><button class="ghost" type="button" id="copy">Copy</button></div></div>`;
@@ -129,7 +137,7 @@ async function poll(){
  if(!S.mock){
   const j=await aimo.api("/v1/audit?customer="+encodeURIComponent(cust()));
   if(j){const ev=Array.isArray(j)?j:(j.events||[]);
-   ev.sort((a,b)=>a.seq-b.seq).forEach(e=>{const k=cust()+e.seq;if(S.seen.has(k))return;S.seen.add(k);if(S.base)line({t:(e.ts||"").slice(11,23)||clock(),tool:e.action,status:"audit",cls:"ok",actor:e.actor,why:e.why,res:e.detail,ext:!/console/.test(e.actor||"")})});
+   ev.sort((a,b)=>a.seq-b.seq).forEach(e=>{const k=cust()+e.seq;if(S.seen.has(k))return;S.seen.add(k);if(S.base)line({t:lt(e.ts),aud:1,tool:e.action,status:"audit",cls:"ok",actor:e.actor,why:e.why,res:e.detail,ext:!/console/.test(e.actor||"")})});
    S.base=true}
  }
  setTimeout(poll,2000);

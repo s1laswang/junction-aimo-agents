@@ -27,13 +27,13 @@ We built the thing in the middle. A gateway any agent can talk to.
 
 Here is the agent. I paste the line. It turns it into a real need: milk, 1,000 litres, lactose-free, Monday.
 
-Now it asks us for offers. These are real products from the Valio data, with real price and real stock. Not all milk is lactose-free, so we filter on what the product data actually declares. Each offer shows why it ranked where it did. Price, stock on Monday, delivery reliability, CO2.
+Now it asks us for offers. These are real products from the Valio data, with real price and real stock. Not all milk is lactose-free, so we filter on what the product data actually declares. Each offer shows why it ranked where it did. Price, availability on Monday, delivery reliability, CO2.
 
-One pack is not enough for 1,000 litres, so it splits the order across products. You can see the numbers add up.
+It found one product it can buy for Monday, 1.40 euro a litre. Four other lactose-free milks it skipped, and it tells you why: their order cutoff already passed. [splitting across products only if the offers screen shows it]
 
 We sign the quote. Price and stock locked, valid until the order cutoff. Nobody can change a number after that.
 
-Now it places the order. [N] euros. Over the hotel's limit for one order. So it does not just go through. It lands in the approval inbox.
+Now it places the order. 1,400 euros. That is inside the hotel's limit, so it goes through on its own, with the reason written down. Same request from the school is over the school's limit. That one stops and lands in the approval inbox.
 
 **Controls (1:40)**
 
@@ -45,7 +45,7 @@ And every step is in an audit trail, written in normal words, hash-chained so yo
 
 **Exceptions (2:15)**
 
-Now the bad day. Supplier stock drops mid-week. The agent does not fail. It finds a substitute that still fits the rules, or it tells the human it cannot, with the reason. For the hospital, a substitute that adds an allergen is never offered. [N of 6 scenarios pass, from the test run]
+Now the bad day. Supplier stock drops mid-week. The agent does not fail. It finds a substitute that still fits the rules, or it tells the human it cannot, with the reason. For the hospital, a substitute that adds an allergen is never offered. [scenario pass count: only say it after the final run, today it is 1 of 8]
 
 **Open (2:40)**
 

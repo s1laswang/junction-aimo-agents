@@ -30,6 +30,7 @@ var MOCK = [
     created_at: iso(-3 * 6e4), updated_at: iso(-3 * 6e4), delivery_date: day(1), valid_until: iso(5.5 * 36e5) }
 ];
 
+var APPR = { "hotel-aurora": ["Laura Virtanen", "Mikko Heikkinen"], "hospital-tays": ["Helena Korhonen", "Antti Lahtinen"], "school-hervanta": ["Sari Nieminen"] };
 var $ = function (s) { return document.querySelector(s); };
 var ICON = {
   warn: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
@@ -53,7 +54,7 @@ function left(iso) { var ms = Date.parse(iso) - Date.now(); if (ms <= 0) return 
 function dday(s) { return new Date(s + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }); }
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
 
-var S = { orders: [], sel: null, mock: false, loaded: false, online: true, busy: {}, name: store("aimo.approver") || "", approvers: [], sig: "", dsig: "" };
+var S = { orders: [], sel: null, mock: false, loaded: false, online: true, busy: {}, name: store("aimo.approver") || "", sig: "", dsig: "" };
 var mockPool = MOCK.slice();
 var wide = window.matchMedia("(min-width:900px)");
 var ADMIN = { "X-Admin-Key": store("aimo.adminKey") || "demo-admin" };
@@ -66,15 +67,17 @@ function api(path, opts) {
 function visible() { var c = window.aimo && window.aimo.customer(); return S.orders.filter(function (o) { return !c || o.customer === c; }); }
 function cur() { var v = visible(); return v.filter(function (o) { return o.order_id === S.sel; })[0] || (wide.matches ? v[0] : null) || null; }
 
-function loadMandate() {
-  if (S.mock) { S.approvers = ["Anna Virtanen", "Mikko Laine"]; return; }
-  api("/v1/mandate").then(function (m) { S.approvers = (m && m.approvers) || []; });
+var apprCache = {};
+function approversFor(c) {
+  if (S.mock) return Promise.resolve(APPR[c] || []);
+  if (apprCache[c]) return Promise.resolve(apprCache[c]);
+  return api("/v1/mandate?customer=" + encodeURIComponent(c)).then(function (m) { var a = (m && m.approvers) || []; if (a.length) apprCache[c] = a; return a; });
 }
 
 function poll() {
   var p = S.mock ? Promise.resolve(mockPool.slice()) : api("/v1/approvals");
   p.then(function (d) {
-    if (!S.loaded && !Array.isArray(d)) { S.mock = true; S.approvers = ["Anna Virtanen", "Mikko Laine"]; if (window.aimo) window.aimo.mock(true); d = mockPool.slice(); }
+    if (!S.loaded && !Array.isArray(d)) { S.mock = true; if (window.aimo) window.aimo.mock(true); d = mockPool.slice(); }
     if (Array.isArray(d)) { S.online = true; S.orders = d.filter(function (o) { return !S.busy[o.order_id]; }); }
     else S.online = false;
     S.loaded = true; render();
@@ -83,10 +86,11 @@ function poll() {
 
 function reasonIcon(r) { return icon(/allerg/i.test(r.code) ? "allergen" : "warn"); }
 function reasons(o) { return h("ul", { class: "why" }, ((o.decision && o.decision.reasons) || []).map(function (r) { return h("li", null, reasonIcon(r), h("span", null, r.text)); })); }
+function nameOf(o, id) { var l = o.lines.filter(function (x) { return x.product_id === id && x.name; })[0]; return l ? h("span", null, " " + l.name) : null; }
 function subs(o, full) {
   if (!o.substitutions || !o.substitutions.length) return null;
   return h("ul", { class: "subs" }, o.substitutions.map(function (s) {
-    return h("li", null, h("span", { class: "mono" }, s.original_id), icon("arrow"), h("span", { class: "mono" }, s.substitute_id),
+    return h("li", null, h("span", { class: "mono" }, s.original_id), icon("arrow"), h("span", { class: "mono" }, s.substitute_id), nameOf(o, s.substitute_id),
       s.reason ? h("span", { class: "sr" }, s.reason) : null);
   }));
 }
@@ -174,10 +178,10 @@ function toast(msg, err) {
   if (!err) toastT = setTimeout(function () { t.hidden = true; }, 5000);
 }
 
-function ask() {
+function ask(list) {
   return new Promise(function (res) {
     var d = $("#whoDlg"), f = $("#whoField"), inp;
-    if (S.approvers.length) { inp = h("select", { "aria-label": "Approver" }, S.approvers.map(function (a) { return h("option", { value: a }, a); })); inp.value = S.approvers.indexOf(S.name) >= 0 ? S.name : S.approvers[0]; }
+    if (list.length) { inp = h("select", { "aria-label": "Approver" }, list.map(function (a) { return h("option", { value: a }, a); })); inp.value = list.indexOf(S.name) >= 0 ? S.name : list[0]; }
     else inp = h("input", { type: "text", required: true, placeholder: "Your name", "aria-label": "Approver name", autocomplete: "name", value: S.name });
     f.replaceChildren(inp);
     d.addEventListener("close", function () { if (d.returnValue === "ok" && inp.value.trim()) { S.name = inp.value.trim(); store("aimo.approver", S.name); S.dsig = ""; render(); res(S.name); } else res(""); }, { once: true });
@@ -186,7 +190,8 @@ function ask() {
 }
 
 async function decide(o, approve, note) {
-  var by = S.name || await ask(); if (!by) return;
+  var list = await approversFor(o.customer);
+  var by = S.name && (!list.length || list.indexOf(S.name) >= 0) ? S.name : await ask(list); if (!by) return;
   var idx = S.orders.indexOf(o);
   S.busy[o.order_id] = 1; S.orders = S.orders.filter(function (x) { return x !== o; });
   if (S.sel === o.order_id) { S.sel = null; history.replaceState(null, "", location.pathname + location.search); }
@@ -209,11 +214,11 @@ async function decide(o, approve, note) {
 
 function route() { S.sel = decodeURIComponent(location.hash.slice(1)) || null; render(); }
 window.addEventListener("hashchange", route);
-window.addEventListener("customer", function () { S.sig = S.dsig = ""; loadMandate(); render(); });
+window.addEventListener("customer", function () { S.sig = S.dsig = ""; render(); });
 wide.addEventListener("change", function () { S.sig = S.dsig = ""; render(); });
-$("#who").addEventListener("click", ask);
-if (/[?&]mock=1/.test(location.search)) { S.mock = true; S.approvers = ["Anna Virtanen", "Mikko Laine"]; if (window.aimo) window.aimo.mock(true); }
+$("#who").addEventListener("click", function () { var o = cur(); (o ? approversFor(o.customer) : Promise.resolve([])).then(ask); });
+if (/[?&]mock=1/.test(location.search)) { S.mock = true; if (window.aimo) window.aimo.mock(true); }
 S.sel = decodeURIComponent(location.hash.slice(1)) || null;
-loadMandate(); poll(); setInterval(poll, 3000); setInterval(tick, 20000);
+poll(); setInterval(poll, 3000); setInterval(tick, 20000);
 window.__inbox = S;
 })();

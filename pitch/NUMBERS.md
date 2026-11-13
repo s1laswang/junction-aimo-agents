@@ -35,14 +35,23 @@ Caveats to say out loud if asked: lactose-free is the supplier's declared claim,
 |---|---|
 | 20,000 kitchens, 25,000 products | AIMO.md challenge text |
 
-## From our running system (NOT FOUND until measured after 04:00)
+## From our running system (measured 2026-11-14, dev at merge of sh-ui/gateway, local, no LLM key, rule parser)
 
-| Claim | Status | How to measure |
-|---|---|---|
-| Latency per step (parse, offers, quote, order) | NOT FOUND [MEASURE] | time each REST call against uvicorn on a warm cache, 10 runs, report median |
-| Scenarios passing of 6 | NOT FOUND [MEASURE] | `pytest -q scenarios/` or the scenarios runner, copy the real pass line |
-| Orders auto vs needs approval vs blocked | NOT FOUND [MEASURE] | count `decision.outcome` across the scenario run |
-| Offers returned for the milk request | NOT FOUND [MEASURE] | `POST /v1/offers` on the parsed milk need |
-| Total euro value of the milk order | NOT FOUND [MEASURE] | from the Quote in the demo run |
-| Audit events written per order | NOT FOUND [MEASURE] | `GET /v1/audit?order_id=` count |
-| Tests passing | NOT FOUND [MEASURE] | `pytest -q` on dev |
+Command: `.venv/bin/uvicorn aimo.app:app --port 8124` then `python -m pitch.measure_live --url http://localhost:8124`.
+
+| Customer | mandate ms | parse ms | offers ms | quote ms | order ms | approvals ms | audit ms | offers | total net | outcome | reasons | audit events |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hotel-aurora | 15 | 65 | 5525 | 20 | 30 | 7 | 5 | 1 | 1400.0 | auto | WITHIN_MANDATE | 5 |
+| hospital-tays | 5 | 3 | 278 | 8 | 25 | 5 | 5 | 1 | 1400.0 | auto | WITHIN_MANDATE | 5 |
+| school-hervanta | 5 | 3 | 218 | 9 | 18 | 4 | 5 | 1 | 1400.0 | needs_approval | OVER_ORDER_LIMIT | 3 |
+
+- Milk request: auto 2, needs_approval 1, blocked 0 of 3 customers. Median step latency 8 ms over 21 calls.
+- First offers call is 5,525 ms because it is cold (fetches Valio). Later calls 218 and 278 ms from cache. Say "about 5 s cold, a fraction of a second warm", not "8 ms".
+- 1,000 L milk = 1,400.0 EUR net (1.40 EUR per L, Valio Eila 3 % milk 1 l lactose-free). Hotel mandate per order is 2,500 EUR, so hotel goes through on its own.
+- Offers returned: 1, with 4 more lactose-free milks skipped and the reason written in the notes (order cutoff 2026-11-12T15:00 already passed).
+- Stock number in the offer is 9999999999. That is the mock's sentinel, never say it as stock.
+- Hotel needs_approval does not happen for the plain milk request. Use school-hervanta or a larger order for the approval scene.
+- Scenarios, `python scenarios/run_all.py --base http://localhost:8124`: 1 of 8 passing (only s7_drift). Failing: s0 (409 on approval), s1 (jws verify), s2 and s3 (recipe gives 1 line), s4, s5, s6. This is dev as it stands, not final. Re-run before the pitch.
+- `pytest -q` on dev: 185 passed, 1 failed (tests/test_mcp_parity.py), 3 skipped, 10 xfailed.
+
+Still NOT FOUND: scenarios passing after fixes, latency with an LLM key, milk order value once more than one offer comes back.

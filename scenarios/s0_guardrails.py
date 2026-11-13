@@ -12,7 +12,7 @@ def go():
     need = c.parse(f"I need 1000 litres of lactose-free milk by {day}", "hotel-aurora")
     picks = best_picks_covering(c.offers(need)["items"][0])
     q = c.quote(picks, day)
-    big = [{**p, "quantity": p["quantity"] * 1000} for p in picks]
+    big = [{**p, "quantity": p["quantity"] * 2} for p in picks]
     qb = c.quote(big, day)
     r.check("over-limit quote exceeds mandate", qb["total_net"] > m["per_order_eur"], f"{qb['total_net']}")
     o = c.order(qb)

@@ -131,16 +131,34 @@ def get_product(product_id):
     return jsonable_encoder(pr)
 
 
-def parse_request(req: ParseRequest):
-    from aimo import parse
-    return jsonable_encoder(parse.parse_need(req.text, req.customer))
+def parse_request(req: ParseRequest, agent_key=None):
+    from aimo import audit, parse
+    need = parse.parse_need(req.text, req.customer)
+    hit = agent_from_key(agent_key)
+    actor = f"agent:{hit[1]}" if hit and hit[0] == req.customer else "system"
+    audit.record(req.customer, actor, "parse.request", req.customer, parse.describe_need(need, "en"),
+                 {"text": req.text})
+    return jsonable_encoder(need)
+
+
+def _audit_offers(p, need, res):
+    from aimo import audit, parse
+    n = sum(len(g.offers) for g in res.items)
+    short = sum(g.shortfall for g in res.items)
+    best = [min(g.offers, key=lambda o: o.total_net) for g in res.items if g.offers]
+    tail = ", ".join(f"{o.product.name} {o.total_net:.2f} EUR net" for o in best) or "no offer"
+    audit.record(need.customer, f"agent:{p.agent_id}" if p.agent_id else "system", "offers.compared", need.customer,
+                 f"Compared {n} offers for {parse.describe_need(need, 'en')}, best: {tail}, shortfall {short:g}.",
+                 {"offers": n, "shortfall": short})
 
 
 def get_offers(p, need: Need):
     from aimo import mandates, offers
     own(p, need.customer)
     mandate = p.mandate if p.mandate else mandates.get(need.customer)
-    return jsonable_encoder(offers.get_offers(need, mandate))
+    res = offers.get_offers(need, mandate)
+    _audit_offers(p, need, res)
+    return jsonable_encoder(res)
 
 
 def request_quote(p, req: QuoteRequest):
@@ -199,11 +217,8 @@ def get_mandate(p, customer=None):
 
 
 def put_mandate(m: Mandate):
-    from aimo import audit, mandates
+    from aimo import mandates
     out = mandates.put(m)
-    audit.record(m.customer, "human:admin", "mandate_updated", m.customer,
-                 f"Admin updated the mandate of {m.agent_id}: {m.per_order_eur:g} EUR per order, {m.per_week_eur:g} EUR per week.",
-                 {"mandate": jsonable_encoder(m)})
     return jsonable_encoder(out)
 
 
@@ -238,8 +253,8 @@ def r_product(product_id: str):
 
 @router.post("/needs/parse")
 @_guard
-def r_parse(req: ParseRequest):
-    return parse_request(req)
+def r_parse(req: ParseRequest, x_agent_key: str | None = Header(None)):
+    return parse_request(req, x_agent_key)
 
 
 @router.post("/offers")

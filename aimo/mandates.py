@@ -55,9 +55,8 @@ def _keys():
 def _con():
     con = db.connect()
     con.execute("create table if not exists mandates (customer text, agent_id text, body text, primary key (customer, agent_id))")
-    if not con.execute("select 1 from mandates limit 1").fetchone():
-        con.executemany("insert into mandates values (?,?,?)", [(m.customer, m.agent_id, m.model_dump_json()) for m in _MANDATES])
-        con.commit()
+    con.executemany("insert or ignore into mandates values (?,?,?)", [(m.customer, m.agent_id, m.model_dump_json()) for m in _MANDATES])
+    con.commit()
     return con
 
 

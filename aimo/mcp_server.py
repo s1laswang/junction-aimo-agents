@@ -25,7 +25,7 @@ def _headers(ctx):
 def _keys(ctx):
     h = _headers(ctx)
     if h is None:
-        return os.environ.get("AIMO_AGENT_KEY"), None
+        return os.environ.get("AIMO_AGENT_KEY"), os.environ.get("AIMO_STDIO_ADMIN_KEY")
     return h.get("x-agent-key"), h.get("x-admin-key")
 
 
@@ -33,7 +33,7 @@ def _run(ctx, auth, fn, *a):
     try:
         agent_key, admin_key = _keys(ctx)
         if auth == "none":
-            return fn(*a)
+            return fn(*a, agent_key) if fn is api.parse_request else fn(*a)
         if auth == "agent":
             p = api.resolve_agent(agent_key)
         elif auth == "admin":

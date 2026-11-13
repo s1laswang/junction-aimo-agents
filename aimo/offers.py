@@ -46,10 +46,11 @@ def _availability(customer: str, day: date, ids) -> dict[str, dict]:
     return out
 
 
-def _units(product: Product, quantity: float, unit: str) -> float:
+def _units(product: Product, quantity: float, unit: str) -> float | None:
     allocate = _mod("allocate")
-    u = allocate.units_for(product, quantity, unit) if allocate else None
-    return u if u is not None else float(-(-quantity // 1))
+    if allocate:
+        return allocate.units_for(product, quantity, unit)
+    return float(-(-quantity // 1))
 
 
 def _priced(customer: str, day: date, item: NeedItem, products: list[Product], scores: dict[str, float]) -> list[Offer]:
@@ -65,6 +66,8 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
         net = pr["catalogPrice"]["value"]
         gross = (pr.get("priceWithTax") or {}).get("value", net)
         units = _units(p, item.quantity, item.unit)
+        if units is None:
+            continue
         for line in av.get("scheduleLines") or []:
             blocked = av.get("salesBlock") or line.get("salesBlock")
             offers.append(Offer(
@@ -111,13 +114,38 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
             if s.product_id in used:
                 continue
             units = _units(s.product, shortfall, item.unit)
+            if units is None:
+                continue
             k = s.total_gross / s.total_net if s.total_net else 1.0
             net = round(units * s.unit_price_net, 2)
             chosen.append(s.model_copy(update={
                 "units_needed": units, "total_net": net, "total_gross": round(net * k, 2),
                 "substitute_for": original.product_id,
             }))
-    return OfferGroup(need_item=item, offers=chosen, shortfall=shortfall)
+    alts = _alternatives(item, offers, chosen, excl, subst)
+    opts = allocate.options(item, offers, need.deliver_by) if allocate and shortfall > 1e-9 else []
+    return OfferGroup(need_item=item, offers=chosen, shortfall=shortfall, alternatives=alts, options=opts)
+
+
+def _alternatives(item: NeedItem, offers: list[Offer], chosen: list[Offer], excl: list[str], subst) -> list[Offer]:
+    if not subst or not offers:
+        return []
+    used = {o.product_id for o in chosen}
+    base = chosen[0] if chosen else offers[0]
+    seen, pool = set(), []
+    for o in offers:
+        if o.product_id not in seen and (o.product_id not in used or o is base or o.product_id == base.product_id):
+            seen.add(o.product_id)
+            pool.append(o)
+    out = []
+    for _ in range(2):
+        picked = subst.rank_substitutes(item, pool, excl, original=base.product, limit=3)
+        if not picked:
+            break
+        out += picked
+        ids = {o.product_id for o in picked}
+        pool = [o for o in pool if o.product_id not in ids]
+    return out[:5]
 
 
 def get_offers(need: Need, mandate: Mandate | None = None) -> OffersResponse:

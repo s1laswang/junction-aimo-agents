@@ -50,3 +50,15 @@ def test_float_matches_js(tmp_path, monkeypatch):
     js = json.dumps({"action": e.action, "actor": e.actor, "customer": e.customer, "detail": {"n": [2, 1.5], "total": 1590}, "seq": 1, "subject": "o1", "ts": e.ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "why": "ok"}, sort_keys=True, separators=(",", ":"))
     assert e.hash == hashlib.sha256(("0" * 64 + js).encode()).hexdigest()
     assert audit.verify() == (True, None)
+
+
+def test_system_voice(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "s.db"))
+    audit.record("hotel-aurora", "system", "order.approved", "o1", "Order total 1,240.00 EUR is under the 3,000 EUR limit.", {"order_id": "o1"})
+    audit.record("hotel-aurora", "system", "order.confirmed", "o1", "Mock confirmation, delivery 2026-11-16.", {"order_id": "o1"})
+    audit.record("hotel-aurora", "agent:x", "order_rejected", "q1", "Quote belongs to another agent.", {"quote_id": "q1"})
+    lines = audit.narrate(audit.events()).splitlines()
+    assert lines[0][6:].startswith("Mandate check passed: Order total")
+    assert "Order confirmed by Valio (mock). Delivery 2026-11-16." in lines[1]
+    assert lines[2][6:].startswith("Refused: Quote belongs")
+    assert "The system" not in "".join(lines)
