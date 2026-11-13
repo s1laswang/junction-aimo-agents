@@ -130,7 +130,19 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
                 co2_per_kg=catalog.co2_per_kg(p.product_id) if catalog else None,
                 match_score=scores.get(p.product_id, 1.0),
             ))
-    offers.sort(key=lambda o: (o.available_date != day and o.available_date is not None and o.available_date > day, -o.match_score, o.total_net))
+    allocate = _mod("allocate")
+
+    def per_unit(o):
+        r = allocate._ratio(o.product, item.unit) if allocate else None
+        return o.unit_price_net / r if r else float("inf")
+
+    offers.sort(key=lambda o: (
+        bool(o.available_date and o.available_date > day),
+        0.0 if o.match_score >= 0.9 else 1.0 - o.match_score,
+        per_unit(o),
+        -(o.reliability or 0),
+        o.product_id,
+    ))
     return offers
 
 
@@ -140,17 +152,14 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
     c = item.constraints.model_copy(update={"exclude_allergens": excl})
     item = item.model_copy(update={"constraints": c})
     cands = catalog.search(item.query, c, limit=50) if catalog else []
+    dropped = 0
     if subst:
+        before = len(cands)
         cands = [p for p in cands if subst.allergen_safe(p, c, excl)]
+        dropped = before - len(cands)
     scores = {p.product_id: subst.match_score(item, p) if subst else 1.0 for p in cands}
     cands = [p for p in cands if scores[p.product_id] >= MIN_MATCH]
     offers = _priced(need.customer, need.deliver_by, item, cands, scores)
-    if subst and not offers:
-        for alt, why in subst.safe_alternatives(item, excl):
-            g = _item(need, alt, mandate)
-            if g.offers:
-                g.offers[0].notes.insert(0, f"{item.query} not allowed by allergens, swapped to {alt.query}: {why}")
-                return g.model_copy(update={"need_item": item})
     if allocate:
         chosen, shortfall = allocate.allocate(item, offers, need.deliver_by)
     else:
@@ -165,6 +174,7 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
                 o.substitute_for = chosen[0].product_id
                 o.tier = o.tier or "good"
             o.notes.insert(0, subst.tradeoff(o, chosen[0]))
+    remaining = shortfall
     if shortfall > 1e-9 and subst and offers:
         used = {o.product_id for o in chosen}
         base = chosen[0] if chosen else offers[0]
@@ -172,11 +182,23 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
         pool = [o for o in offers if o.available_date and o.available_date <= need.deliver_by and (o.product_id not in used or o.product_id == original.product_id)]
         subs = subst.rank_substitutes(item, pool, excl, original=original, limit=3)
         subs = [x for x in subs if x.product_id not in used]
-        filled, _ = allocate.allocate(item.model_copy(update={"quantity": shortfall}), subs, need.deliver_by) if allocate and subs else ([], shortfall)
+        filled, remaining = allocate.allocate(item.model_copy(update={"quantity": shortfall}), subs, need.deliver_by) if allocate and subs else ([], shortfall)
         for x in filled:
             x.substitute_for = original.product_id
             x.notes.insert(0, subst.tradeoff(x, base))
             chosen.append(x)
+    if shortfall > 1e-9 and subst:
+        for alt, why in subst.safe_alternatives(item, excl):
+            g = _item(need, alt.model_copy(update={"quantity": alt.quantity * remaining / item.quantity}), mandate)
+            if g.offers:
+                for x in g.offers:
+                    x.tier = "good"
+                    x.substitute_for = None
+                    x.notes.insert(0, f"Swap for {item.query}: {why}")
+                chosen.extend(g.offers)
+                break
+    if dropped and chosen:
+        chosen[0].notes.insert(0, f"Excluded {dropped} products containing {', '.join(excl)} (mandate)")
     alts = _alternatives(item, [o for o in offers if o.available_date and o.available_date <= need.deliver_by], chosen, excl, subst)
     opts = allocate.options(item, offers, need.deliver_by) if allocate and shortfall > 1e-9 else []
     return OfferGroup(need_item=item, offers=chosen, shortfall=shortfall, alternatives=alts, options=opts)
@@ -192,15 +214,7 @@ def _alternatives(item: NeedItem, offers: list[Offer], chosen: list[Offer], excl
         if o.product_id not in seen and (o.product_id not in used or o is base or o.product_id == base.product_id):
             seen.add(o.product_id)
             pool.append(o)
-    out = []
-    for _ in range(2):
-        picked = subst.rank_substitutes(item, pool, excl, original=base.product, limit=3)
-        if not picked:
-            break
-        out += picked
-        ids = {o.product_id for o in picked}
-        pool = [o for o in pool if o.product_id not in ids]
-    return out[:5]
+    return subst.rank_substitutes(item, pool, excl, original=base.product, limit=3)
 
 
 def get_offers(need: Need, mandate: Mandate | None = None) -> OffersResponse:
