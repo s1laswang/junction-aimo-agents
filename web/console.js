@@ -1,10 +1,11 @@
 (function(){
 const $=s=>document.querySelector(s);
 const TEXTS={
+hospital:"We need 100 litres of lactose-free milk and 50 kg of bread by Monday.",
 milk:"I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
 school:"Weekly school lunch: 200 kg of gluten-free pasta and 80 litres of oat drink, no nuts, no egg, delivered by Thursday.",
 event:"Last-minute event for 120 guests on Friday: 60 kg of salmon fillet, 40 litres of cream and 25 kg of butter."};
-const CUST={milk:"hotel-aurora",school:"school-hervanta",event:"hotel-aurora"};
+const CUST={hospital:"hospital-tays",milk:"hotel-aurora",school:"school-hervanta",event:"hotel-aurora"};
 const MOCKS={
 milk:{need:{customer:"",deliver_by:"2026-11-16",raw_text:"",items:[{query:"lactose-free milk",quantity:1000,unit:"l",constraints:{lactose_free:true,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}}]},
  offers:[{need_item:0,offers:[
@@ -35,7 +36,7 @@ const NF=new Intl.NumberFormat("en-GB",{minimumFractionDigits:2,maximumFractionD
 const eur=v=>v==null?"-":NF.format(v);
 const money=v=>eur(v)+" EUR";
 const qty=v=>new Intl.NumberFormat("en-GB",{maximumFractionDigits:0}).format(v);
-const AVAIL=v=>v>=1e9?"in stock":qty(v);
+const AVAIL=v=>v>=999999?"in stock":qty(v);
 const lt=s=>{const d=new Date(s);if(isNaN(d))return clock();const p=n=>String(n).padStart(2,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`};
 const short=s=>s.length>70?s.slice(0,67)+"...":s;
 const noteHtml=n=>{n=(n||[]).filter(x=>!/skipped/i.test(x));return n.length?" - "+esc(short(n[0]))+(n.length>1?` (+${n.length-1})`:""):""};
@@ -105,9 +106,10 @@ function consChips(c){
  if(c.origin)o.push("origin "+c.origin);if(c.max_unit_price!=null)o.push("max "+money(c.max_unit_price));(c.brands||[]).forEach(b=>o.push(b));
  return o.map(x=>`<span class="cons">${esc(x)}</span>`).join(" ");
 }
-function needHtml(n){
+function mandHtml(m){if(!m)return"";const ex=(m.exclude_allergens||[]).length?"excludes "+m.exclude_allergens.join(", "):"no allergen exclusions";return`<div class="note" style="margin-top:6px">Mandate: ${esc(ex)} &middot; per order ${money(m.per_order_eur)} &middot; per week ${money(m.per_week_eur)} &middot; substitutions ${esc(m.substitutions)}</div>`}
+function needHtml(n,m){
  return`<div class="sec"><h3>Parsed need</h3><div class="kv"><span>Deliver by <b class="mono">${esc(n.deliver_by)}</b></span><span>Customer <b class="mono">${esc(n.customer)}</b></span></div>`+
- n.items.map(i=>`<div class="kv" style="margin-top:6px"><b>${esc(i.query)}</b><span class="mono">${esc(i.quantity)} ${esc(i.unit)}</span>${consChips(i.constraints||{})}</div>`).join("")+`</div>`;
+ n.items.map(i=>`<div class="kv" style="margin-top:6px"><b>${esc(i.query)}</b><span class="mono">${esc(i.quantity)} ${esc(i.unit)}</span>${consChips(i.constraints||{})}</div>`).join("")+mandHtml(m)+`</div>`;
 }
 function offersHtml(need,off){
  return`<div class="sec"><h3>Offers</h3>`+off.items.map((g,i)=>{
@@ -115,8 +117,10 @@ function offersHtml(need,off){
   const pick=best(g.offers||[]);
   const ht=(g.offers||[]).some(o=>o.tier);
   const rows=(g.offers||[]).map(o=>`<tr class="${o===pick?"pick":""}"><td>${esc(o.product.name)}${o===pick?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${noteHtml(o.notes)}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${AVAIL(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg!=null?NF.format(o.co2_per_kg):"-"}</td>${ht?`<td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td>`:""}</tr>`).join("");
+  const al=[...new Set((g.offers||[]).flatMap(o=>o.notes||[]).concat(g.notes||[]).filter(x=>/allerg/i.test(x)))];
+  const alh=al.length?`<div class="note" style="color:var(--warn);margin:2px 0">${al.map(esc).join("<br>")}</div>`:"";
   const sf=g.shortfall>0?`<tr class="short"><td colspan="${ht?9:8}">Shortfall: ${g.shortfall} units not available by the delivery date.</td></tr>`:"";
-  return`<div class="tw"><div class="note" style="margin:6px 0 2px">${esc(ni.query||"")} - ${esc(ni.quantity||"")} ${esc(ni.unit||"")}</div><table><thead><tr><th>Product</th><th>Brand</th><th class="n">Units</th><th class="n">Unit EUR</th><th class="n">Total EUR</th><th class="n">Available</th><th class="n">Reliab.</th><th class="n">CO2/kg</th>${ht?"<th>Tier</th>":""}</tr></thead><tbody>${rows}${(g.offers||[]).length?"":`<tr class="short"><td colspan="9">No offers found for this item.</td></tr>`}${sf}</tbody></table></div>`}).join("")+`</div>`;
+  return`<div class="tw"><div class="note" style="margin:6px 0 2px">${esc(ni.query||"")} - ${esc(ni.quantity||"")} ${esc(ni.unit||"")}</div>${alh}<table><thead><tr><th>Product</th><th>Brand</th><th class="n">Units</th><th class="n">Unit EUR</th><th class="n">Total EUR</th><th class="n">Available</th><th class="n">Reliab.</th><th class="n">CO2/kg</th>${ht?"<th>Tier</th>":""}</tr></thead><tbody>${rows}${(g.offers||[]).length?"":`<tr class="short"><td colspan="9">No offers found for this item.</td></tr>`}${sf}</tbody></table></div>`}).join("")+`</div>`;
 }
 function quoteHtml(q){
  return`<div class="sec quote"><h3>Signed quote</h3><div class="kv"><span class="mono">${esc(q.quote_id)}</span><span>Total <b class="mono">${money(q.total_net)}</b></span><span>Valid until <b class="mono">${esc(q.valid_until)}</b></span><span class="tag ok">signed Ed25519</span><span class="jws" title="${esc(q.jws)}">${esc(q.jws.slice(0,28))}...</span><button class="ghost" type="button" id="copy">Copy</button></div></div>`;
@@ -145,7 +149,8 @@ async function run(note){
  try{
   const need=await call("parse_request","POST","/v1/needs/parse",{text,customer:c},()=>({...M.need,customer:c,raw_text:text}),
    n=>`Read the request as ${n.items.length} item(s) to deliver by ${n.deliver_by}.`);
-  out.insertAdjacentHTML("beforeend",needHtml(need));
+  const mand=S.mock?{customer:c,per_order_eur:MANDATES[c].o,per_week_eur:MANDATES[c].w,exclude_allergens:[],substitutions:"within_prefs"}:await aimo.api("/v1/mandate");
+  out.insertAdjacentHTML("beforeend",needHtml(need,mand));
   const off=await call("get_offers","POST","/v1/offers",need,()=>({items:M.offers.map(g=>({need_item:need.items[g.need_item],offers:g.offers,shortfall:g.shortfall}))}),
    o=>`Found ${o.items.reduce((a,g)=>a+(g.offers||[]).length,0)} offer(s); ${o.items.filter(g=>g.shortfall>0).length?"some stock is short":"stock covers every item"}.`);
   out.insertAdjacentHTML("beforeend",offersHtml(need,off));
