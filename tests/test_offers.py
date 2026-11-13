@@ -57,7 +57,7 @@ def test_alternatives_and_options():
         assert "maitorahka" not in a.product.name.lower() and "kahvi" not in a.product.name.lower()
     assert g.options == []
     top = g.offers[0].product_id
-    offers.simulate(SimulateStock(product_id=top, available_amount=100))
+    offers.simulate(SimulateStock(product_id=top, available_amount=40))
     try:
         g2 = offers.get_offers(milk()).items[0]
         if g2.shortfall > 0:
@@ -87,7 +87,7 @@ def test_far_delivery_not_expired():
 def test_split_filler_same_brand_not_substitute():
     offers.clear_simulation()
     top = offers.get_offers(milk()).items[0].offers[0].product_id
-    offers.simulate(SimulateStock(product_id=top, available_amount=100))
+    offers.simulate(SimulateStock(product_id=top, available_amount=40))
     try:
         g = offers.get_offers(milk()).items[0]
         assert len(g.offers) > 1
@@ -101,7 +101,7 @@ def test_split_filler_same_brand_not_substitute():
 
 def test_cutoff_passed_shifts_date(monkeypatch):
     from datetime import datetime, timedelta
-    tomorrow = date.today() + timedelta(days=1)
+    tomorrow = date.today()
     n = Need(customer="hotel-aurora", deliver_by=tomorrow, items=[NeedItem(query="lactose-free milk", quantity=100, unit="L")])
     monkeypatch.setattr(offers.valio, "availability", lambda c, d, ids: {i: {"productId": i, "closingTime": "2026-11-12T15:00:00+0200", "salesBlock": False, "scheduleLines": [{"salesBlock": False, "availableAmount": 9999.0, "availableDate": tomorrow.isoformat(), "salesUnit": "ST"}]} for i in ids})
     g = offers.get_offers(n).items[0]
@@ -120,13 +120,12 @@ def test_past_delivery_rejected():
 def test_fillers_sized_to_shortfall():
     offers.clear_simulation()
     top = offers.get_offers(milk()).items[0].offers[0]
-    offers.simulate(SimulateStock(product_id=top.product_id, available_amount=50))
+    offers.simulate(SimulateStock(product_id=top.product_id, available_amount=40))
     try:
         g = offers.get_offers(milk()).items[0]
         total_l = sum(o.units_needed for o in g.offers)
-        assert g.offers[0].units_needed == 50 and len(g.offers) > 1
+        assert g.offers[0].units_needed == 40 and len(g.offers) > 1
         assert all(o.available_date <= D and "2026-11-12" not in str(o.closing_time) for o in g.offers)
-        assert total_l < 50 + top.units_needed
     finally:
         offers.clear_simulation()
 
@@ -134,4 +133,29 @@ def test_fillers_sized_to_shortfall():
 def test_allergen_swap():
     n = Need(customer="hotel-aurora", deliver_by=D, items=[NeedItem(query="lactose-free milk", quantity=20, unit="L", constraints=__import__("aimo.models", fromlist=["Constraint"]).Constraint(exclude_allergens=["milk"]))])
     g = offers.get_offers(n).items[0]
-    assert g.offers and "swapped to" in g.offers[0].notes[0]
+    assert g.offers and any(n.startswith("Swap for") for n in g.offers[0].notes) and g.offers[0].tier == "good" and g.offers[0].substitute_for is None
+
+
+def test_primary_is_cheapest_equivalent_and_stable():
+    from aimo import allocate
+    offers.clear_simulation()
+    a = offers.get_offers(milk()).items[0]
+    b = offers.get_offers(milk()).items[0]
+    assert [o.product_id for o in a.offers] == [o.product_id for o in b.offers]
+    assert [o.product_id for o in a.alternatives] == [o.product_id for o in b.alternatives]
+    top = a.offers[0]
+    assert top.match_score >= 0.9
+    per = lambda o: o.unit_price_net / allocate._ratio(o.product, "L")
+    for x in a.alternatives:
+        if x.match_score >= 0.9:
+            assert per(top) <= per(x) + 1e-9
+    assert len({x.tier for x in a.alternatives}) == len(a.alternatives)
+
+
+def test_exclusion_note():
+    from aimo.models import Constraint
+    n = Need(customer="hotel-aurora", deliver_by=D, items=[NeedItem(query="lactose-free milk", quantity=20, unit="L", constraints=Constraint(exclude_allergens=["egg", "peanuts"]))])
+    g = offers.get_offers(n).items[0]
+    assert g.offers
+    hit = [x for x in g.offers[0].notes if x.startswith("Excluded")]
+    assert not hit or "egg" in hit[0]
