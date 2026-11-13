@@ -22,7 +22,7 @@ def go():
     q = c.quote([{"product_id": bad, "quantity": 1}], day)
     o = c.order(q)
     r.check("violating order blocked", o["decision"]["outcome"] == "blocked" and o["status"] == "blocked", str(o["decision"]))
-    r.check("block has a reason", any(x.get("text") for x in o["decision"]["reasons"]))
+    r.check("block reason is ALLERGEN_CONFLICT with text", any(x.get("code") == "ALLERGEN_CONFLICT" and x.get("text") for x in o["decision"]["reasons"]), str(o["decision"]["reasons"]))
 
 
 r.guard(go)
