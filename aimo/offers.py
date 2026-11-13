@@ -1,4 +1,5 @@
 import importlib
+from zoneinfo import ZoneInfo
 from datetime import date, datetime, time, timedelta, timezone
 
 from . import valio
@@ -7,6 +8,7 @@ from .models import (
     QuoteLine, QuoteRequestLine, SimulateStock,
 )
 
+HEL = ZoneInfo("Europe/Helsinki")
 _overrides: dict[str, SimulateStock] = {}
 MIN_MATCH = 0.5
 
@@ -20,6 +22,32 @@ def _mod(name: str):
 
 def simulate(s: SimulateStock) -> None:
     _overrides[str(s.product_id)] = s
+    from aimo import orders
+    react = getattr(orders, "react_stockout", None)
+    if react:
+        react(str(s.product_id))
+
+
+def fresh_offers(customer: str, day: date, product_ids) -> list[Offer]:
+    catalog = _mod("catalog")
+    seen, out = set(), []
+    for pid in product_ids:
+        p = catalog.get(pid)
+        if not p:
+            continue
+        pool = [p] + [c for c in catalog.search(p.name, limit=10) if c.product_id != pid]
+        for o in _priced(customer, day, NeedItem(query=p.name, quantity=1, unit=p.sales_unit or "ST"), pool, {}):
+            if (o.product_id, o.available_date) not in seen:
+                seen.add((o.product_id, o.available_date))
+                out.append(o)
+    return out
+
+
+def cutoff(closing_time: str, available_date, day: date) -> datetime:
+    clock = datetime.fromisoformat(closing_time).astimezone(HEL).timetz().replace(tzinfo=None)
+    if isinstance(available_date, str):
+        available_date = date.fromisoformat(available_date)
+    return datetime.combine((available_date or day) - timedelta(days=1), clock, HEL)
 
 
 def clear_simulation() -> None:
@@ -70,6 +98,21 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
             continue
         for line in av.get("scheduleLines") or []:
             blocked = av.get("salesBlock") or line.get("salesBlock")
+            ct, notes = av.get("closingTime"), []
+            adate = line.get("availableDate")
+            if ct:
+                co = cutoff(ct, adate, day)
+                notes.append(f"cutoff computed from Valio closing time {co:%H:%M}, day before delivery")
+                if co <= datetime.now(HEL):
+                    new = date.fromisoformat(adate) if adate else day
+                    for _ in range(14):
+                        new += timedelta(days=1)
+                        co = cutoff(ct, new, day)
+                        if co > datetime.now(HEL):
+                            break
+                    notes.insert(0, f"cutoff passed for {adate or day}, earliest delivery {new}")
+                    adate = new.isoformat()
+                ct = co.isoformat()
             offers.append(Offer(
                 product_id=p.product_id,
                 product=p,
@@ -79,14 +122,15 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
                 total_gross=round(units * gross, 2),
                 currency=pr.get("currency") or "EUR",
                 available_amount=line.get("availableAmount") or 0.0,
-                available_date=line.get("availableDate"),
-                closing_time=av.get("closingTime"),
+                available_date=adate,
+                closing_time=ct,
+                notes=notes,
                 sales_block="blocked" if blocked else None,
                 reliability=catalog.reliability(p.product_id) if catalog else None,
                 co2_per_kg=catalog.co2_per_kg(p.product_id) if catalog else None,
                 match_score=scores.get(p.product_id, 1.0),
             ))
-    offers.sort(key=lambda o: (-o.match_score, o.total_net))
+    offers.sort(key=lambda o: (o.available_date != day and o.available_date is not None and o.available_date > day, -o.match_score, o.total_net))
     return offers
 
 
@@ -106,10 +150,19 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
     else:
         chosen = [o for o in offers if o.available_amount > 0 and not o.sales_block][:1]
         shortfall = 0.0 if chosen else item.quantity
+    if subst and len(chosen) > 1:
+        brands = {b.lower() for b in c.brands}
+        for o in chosen[1:]:
+            if o.product_id == chosen[0].product_id:
+                continue
+            if o.match_score < chosen[0].match_score or (brands and (o.product.brand or "").lower() not in brands):
+                o.substitute_for = chosen[0].product_id
+                o.tier = o.tier or "good"
+            o.notes.insert(0, subst.tradeoff(o, chosen[0]))
     if shortfall > 1e-9 and subst and offers:
         used = {o.product_id for o in chosen}
         original = (chosen[0] if chosen else offers[0]).product
-        pool = [o for o in offers if o.product_id not in used or o.product_id == original.product_id]
+        pool = [o for o in offers if o.available_date and o.available_date <= need.deliver_by and (o.product_id not in used or o.product_id == original.product_id)]
         for s in subst.rank_substitutes(item, pool, excl, original=original, limit=3):
             if s.product_id in used:
                 continue
@@ -122,7 +175,7 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
                 "units_needed": units, "total_net": net, "total_gross": round(net * k, 2),
                 "substitute_for": original.product_id,
             }))
-    alts = _alternatives(item, offers, chosen, excl, subst)
+    alts = _alternatives(item, [o for o in offers if o.available_date and o.available_date <= need.deliver_by], chosen, excl, subst)
     opts = allocate.options(item, offers, need.deliver_by) if allocate and shortfall > 1e-9 else []
     return OfferGroup(need_item=item, offers=chosen, shortfall=shortfall, alternatives=alts, options=opts)
 
@@ -178,8 +231,9 @@ def price_lines(customer: str, delivery_date: date, lines: list[QuoteRequestLine
             line_total_net=round(l.quantity * net, 2),
             substitute_for=l.substitute_for,
         ))
-        ct = (avail.get(l.product_id) or {}).get("closingTime")
-        if ct:
-            closes.append(datetime.fromisoformat(ct))
+        a = avail.get(l.product_id) or {}
+        if a.get("closingTime"):
+            sl = (a.get("scheduleLines") or [{}])[0]
+            closes.append(cutoff(a["closingTime"], sl.get("availableDate"), delivery_date))
     valid = min(closes) if closes else _local_noon(delivery_date - timedelta(days=1))
     return out, round(gross, 2), valid
