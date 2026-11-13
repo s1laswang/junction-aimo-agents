@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from aimo.parse import parse_need
+from precision_cases import HOLDOUT
 
 catalog = pytest.importorskip("aimo.catalog")
 substitute = pytest.importorskip("aimo.substitute")
@@ -16,18 +17,7 @@ pytestmark = pytest.mark.skipif(not (DATA.exists() and os.environ.get("AIMO_EVAL
 T = date(2026, 11, 13)
 PREPARED = r"soup|keitto|sauce|kastike|salad|salaatti|pizza|chips|crisp|pie|piirakka|cake|kakku|juice|mehu"
 
-CASES = [
-    ("150 kg onions for Tuesday", [(r"onion|sipuli", PREPARED + r"|ring|rengas|fried|paistettu|pickle|marin")]),
-    ("Tarvitsen 25 kg voita", [(r"butter|voi\b|voi ", r"cookie|keksi|bun|pulla|peanut|maapähkinä|sauce|kastike|croissant")]),
-    ("60 kg minced beef", [(r"beef|nauta|jauheliha|mince", r"patty|pihvi|pizza|pasta|soup|keitto|sauce|kastike|liver|maksa")]),
-    ("300 eggs for Friday", [(r"\begg|muna", r"plant|salad|salaatti|noodle|nuudeli|mayo|majoneesi|chocolate|suklaa|pasta|plant")]),
-    ("100 l lactose-free cream", [(r"cream|kerma", r"sour|kermaviili|ice|jäätelö|cheese|juusto|sauce|kastike|soup|keitto|coconut|kookos")]),
-    ("40 kg cucumbers", [(r"cucumber|kurkku", r"pickle|suolakurkku|hapan|relish|salad|salaatti|sauce|kastike")]),
-    ("Tarvitsen 80 kg kaurahiutaleita", [(r"oat|kaura", r"bar|patukka|cookie|keksi|biscuit|drink|juoma|chocolate|suklaa")]),
-    ("50 kg lactose free yoghurt", [(r"yogh?urt|jogurt", r"ice|jäätelö|oat|soy|kaura|soija|chocolate|suklaa|cake|kakku")]),
-    ("70 kg broccoli", [(r"broccoli|parsakaali", PREPARED)]),
-    ("120 kg bananas", [(r"banana|banaani", r"chips|bar|patukka|bread|leipä|cake|kakku|milk|maito|yogh?urt|jogurt|smoothie|" + PREPARED)]),
-]
+CASES = HOLDOUT
 
 
 KNOWN_MISSES = {
