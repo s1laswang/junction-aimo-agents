@@ -89,7 +89,9 @@ def set_status(order_id, status, actor="system", why=None):
     o.updated_at = _now()
     _save(con, o)
     con.commit()
-    audit.record(o.customer, actor, f"order.{status}", o.order_id, why or f"Order moved to {status}.", {"order_id": o.order_id, "quote_id": o.quote_id, "total_net": o.total_net})
+    reasons = [x.model_dump() for x in o.decision.reasons]
+    why = why or "; ".join(x["text"] for x in reasons) or f"Order moved to {status}."
+    audit.record(o.customer, actor, f"order.{status}", o.order_id, why, {"order_id": o.order_id, "quote_id": o.quote_id, "total_net": o.total_net, "reasons": reasons})
     if status == "placed":
         return _confirm(con, r["delivery_date"], o)
     return o
@@ -126,7 +128,7 @@ def place(customer, agent_id, req: PlaceOrderRequest):
     try:
         quote = quotes.redeem(req.quote_id, req.jws, customer, agent_id)
     except quotes.QuoteError as e:
-        audit.record(customer, f"agent:{agent_id}", "order_rejected", req.quote_id, getattr(e, "text", str(e)), {"quote_id": req.quote_id, "code": getattr(e, "code", None)})
+        audit.record(customer, f"agent:{agent_id}", "order.rejected", req.quote_id, getattr(e, "text", str(e)), {"quote_id": req.quote_id, "code": getattr(e, "code", None)})
         raise
     con = _con()
     r = con.execute("select * from orders where idem=?", (quote.quote_id,)).fetchone()
@@ -136,6 +138,7 @@ def place(customer, agent_id, req: PlaceOrderRequest):
     o = Order(
         order_id="ord_" + uuid.uuid4().hex[:12], quote_id=quote.quote_id, customer=customer,
         agent_id=agent_id, lines=quote.lines, total_net=quote.total_net, status="draft",
+        delivery_date=quote.delivery_date, valid_until=quote.valid_until,
         decision=Decision(outcome="needs_approval"), created_at=now, updated_at=now,
     )
     con.execute(
@@ -160,5 +163,5 @@ def place(customer, agent_id, req: PlaceOrderRequest):
         return set_status(o.order_id, "blocked", "system", why)
     if out == "needs_approval":
         return set_status(o.order_id, "pending_approval", "system", why)
-    set_status(o.order_id, "approved", "system", why)
+    set_status(o.order_id, "approved", "system", "Within mandate: " + why)
     return set_status(o.order_id, "placed", "system", "Placed automatically within mandate.")
