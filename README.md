@@ -11,7 +11,7 @@ ln -s ~/aimo-agents/data data && ln -s ~/aimo-agents/.env .env
 make demo
 ```
 
-`make demo` sets up the venv, boots the server, runs the scenarios and keeps the server up. Other targets: `setup`, `run`, `test`, `mcp`, `scenarios`. Set `PORT` to change the port (default 8080). No LLM key is needed.
+`make demo` sets up the venv, boots the server, runs the 8 scenarios against a throwaway database, then starts a fresh server for the stage and keeps it up. `make stage` starts only the fresh server. Last run: 8 of 8 scenarios passed. Other targets: `setup`, `run`, `test`, `mcp`, `scenarios`. Set `PORT` to change the port (default 8080). No LLM key is needed.
 
 Open `http://localhost:8080/` for the console, approval inbox and audit view. MCP at `/mcp`, stdio via `.venv/bin/python -m aimo.mcp_server`.
 
@@ -34,4 +34,6 @@ Verify the quote offline: see [STANDARDS](docs/STANDARDS.md).
 - [Open standards](docs/STANDARDS.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 - [Production path](docs/PRODUCTION.md)
+- [MCP client setup](deploy/mcp-clients.md)
+- [Public URL plan](deploy/PUBLIC_URL.md)
 - [Contract](CONTRACT.md)

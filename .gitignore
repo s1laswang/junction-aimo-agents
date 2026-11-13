@@ -6,3 +6,4 @@ var/
 .DS_Store
 .venv
 var-demo.log
+var-scen.log
