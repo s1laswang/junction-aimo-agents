@@ -44,6 +44,12 @@ def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=
     def add(bucket, code, text):
         bucket.append(Reason(code=code, text=text))
 
+    if total <= 0:
+        add(blocked, "INVALID_QUOTE", f"Quote total {_eur(total)} is not positive")
+    for l in quote.lines:
+        if l.quantity <= 0:
+            add(blocked, "INVALID_QUOTE", f"Quote line {l.product_id} has quantity {l.quantity:g}, which is not positive")
+
     ids = [l.product_id for l in quote.lines] + [s.substitute_id for s in substitutions]
     for pid in dict.fromkeys(ids):
         p = products.get(pid)

@@ -127,3 +127,13 @@ def test_brand_prefix_and_note_only_on_auto():
     assert d.outcome == "needs_approval" and "NON_PREFERRED_BRAND" not in codes(d)
     s = [Substitution(original_id="2", substitute_id="5", reason="x")]
     assert decide(quote(10.0, pid="2"), m, {**PRODUCTS, "5": v}, substitutions=s, now=NOW).outcome == "auto"
+
+
+def test_invalid_quote_blocked():
+    m = mandates.get("hotel-aurora")
+    assert decide(quote(0.0), m, PRODUCTS, now=NOW).outcome == "blocked"
+    assert "INVALID_QUOTE" in codes(decide(quote(-5.0), m, PRODUCTS, now=NOW))
+    q = quote(10.0)
+    q.lines[0].quantity = 0
+    d = decide(q, m, PRODUCTS, now=NOW)
+    assert d.outcome == "blocked" and "INVALID_QUOTE" in codes(d)
