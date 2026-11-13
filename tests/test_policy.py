@@ -79,6 +79,8 @@ def test_unknown_product_and_traces():
     trace = Product(product_id="3", name="Bar", brand="Valio", allergens=["may:AP"])
     d = decide(quote(10.0, pid="3"), h, {"3": trace}, now=NOW)
     assert d.outcome == "blocked" and "traces" in d.reasons[0].text
+    t2 = Product(product_id="4", name="Bar", brand="Valio", allergens=["may_contain:peanuts"])
+    assert decide(quote(10.0, pid="4"), h, {"4": t2}, now=NOW).outcome == "blocked"
 
 
 def test_put_persists_and_audits():

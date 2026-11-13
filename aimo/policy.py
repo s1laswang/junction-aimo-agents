@@ -37,8 +37,9 @@ def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=
             if banned:
                 add(ask, "UNKNOWN_PRODUCT", f"Could not check allergens for {pid}: product data missing")
             continue
-        have = {_canon(a) for a in p.allergens if not str(a).lower().startswith("may:")}
-        trace = {_canon(str(a)[4:]) for a in p.allergens if str(a).lower().startswith("may:")}
+        is_trace = lambda a: str(a).lower().startswith(("may:", "may_contain:"))
+        have = {_canon(a) for a in p.allergens if not is_trace(a)}
+        trace = {_canon(str(a).split(":", 1)[1]) for a in p.allergens if is_trace(a)}
         hit = sorted(have & banned)
         if hit:
             names = ", ".join(_LABELS.get(h, h) for h in hit)
