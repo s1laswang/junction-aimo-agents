@@ -5,3 +5,4 @@ __pycache__/
 data
 var/
 .DS_Store
+.venv
