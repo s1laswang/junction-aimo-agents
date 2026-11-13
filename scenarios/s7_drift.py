@@ -17,7 +17,7 @@ def go():
         r.check(f"{cust} standing order returned", len(res["standing_order"]["lines"]) > 0)
         r.check(f"{cust} flags have a why and a route", all(f.get("why") and f.get("route") in ("auto", "approval") for f in flags))
         subs = [f["fix"] for f in flags if f["fix"].get("action") == "substitute"]
-        r.check(f"{cust} substitutes respect mandate allergens", all(not ((allergens_of(s["product_id"]) or set()) & {x.upper() for x in excl}) for s in subs))
+        r.check(f"{cust} substitutes respect mandate allergens", all(not violates(s["product_id"], excl) for s in subs))
         r.check(f"{cust} allergen flags never auto", all(f["route"] == "approval" for f in flags if f["kind"] == "mandate"))
     st = os.path.join(tempfile.mkdtemp(), "drift.json")
     drift.check("hotel-aurora", KEYS["hotel-aurora"], base, state_path=st)

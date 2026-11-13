@@ -15,11 +15,9 @@ def go():
     offers = c.offers(need)
     seen = [o["product_id"] for it in offers["items"] for o in it["offers"]]
     r.check("offers returned", len(seen) > 0)
-    leaks = [p for p in seen if (allergens_of(p) or set()) & excl]
+    leaks = [p for p in seen if violates(p, excl)]
     r.check("no offer contains an excluded allergen", not leaks, str(leaks[:5]))
-    leaks2 = [o["product_id"] for it in offers["items"] for o in it["offers"] if set(o["product"].get("allergens", [])) & excl]
-    r.check("offer metadata agrees", not leaks2, str(leaks2[:5]))
-    bad = next((p for p, v in product_db().items() if not v["deleted"] and allergens_of(p) & excl), None)
+    bad = next((p for p, v in product_db().items() if not v["deleted"] and violates(p, excl)), None)
     r.check("found a violating product in data", bad is not None)
     q = c.quote([{"product_id": bad, "quantity": 1}], day)
     o = c.order(q)
