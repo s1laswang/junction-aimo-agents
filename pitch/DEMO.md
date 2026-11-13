@@ -1,34 +1,51 @@
 # Demo script, click by click
 
-App: `.venv/bin/uvicorn aimo.app:app --port 8080`, UI at `http://localhost:8080/`. Exact buttons marked TODO until lead-ui screens land. Replace TODO lines then.
+Server: `.venv/bin/uvicorn aimo.app:app --port 8080`. UI at `http://localhost:8080/`. Customer picker on every page (hotel-aurora, hospital-tays, school-hervanta), keys are `demo-<customer>`. Anything marked TODO waits for the lead-ui screen names.
 
-Before going on stage: server running, `data/` linked, `.env` present, browser on the console page, audit page open in a second tab, approval inbox open in a third. Seed customers: hotel-aurora, hospital-tays, school-hervanta.
+Before going on stage: server up, `data/` linked, `.env` present, three tabs open: console, approval inbox, audit. Run `python scenarios/run_all.py --base http://localhost:8080` once beforehand so the cache is warm and we know it is green. Never run a scenario for the first time on stage.
 
-## Run of show (80 s core, 2 min with extras)
+Each scene maps to a scenario file in `scenarios/` that already checks it, so what you see on stage is what the test proved.
 
-| # | Click | Say | Judge should see | Fallback |
-|---|---|---|---|---|
-| 1 | Console, customer = hotel-aurora (TODO exact control) | "This is the hotel's buying agent." | Mandate card: per order, per week, allergens | Reload page; or `curl localhost:8080/v1/mandate -H "X-Agent-Key: <key>"` |
-| 2 | Paste `I need 1,000 litres of lactose-free milk by Monday` and press Run (TODO) | "One line, like a person would write it." | Parsed need: milk, 1000 L, lactose-free, date | No LLM key: rule parser runs, same Need shape. Say nothing, it just works. |
-| 3 | Offers list appears | "Real Valio products. Price, stock Monday, reliability, CO2. Each says why it ranked." | Ranked offers with tier and notes, split across products to reach 1,000 L | If prices fail: cached responses in `var/cache` |
-| 4 | Request quote (TODO) | "Price and stock locked, signed." | Quote id, valid until, JWS | `GET /.well-known/jwks.json` to show the keys |
-| 5 | Place order (TODO) | "Over the order limit, so it stops here." | Decision = needs_approval with plain reasons | Use a larger quantity to force it |
-| 6 | Open approval inbox, click Approve (TODO) | "A human gets a sentence, not JSON." | Order moves to placed | `POST /v1/approvals/{order_id}` with `{"approve":true,"by":"momin"}` |
-| 7 | Audit tab | "Every step, in words, chained." | Event list with why, hashes | `GET /v1/audit?order_id=...` text field |
+## Scenes, one per judging criterion (about 3 min total)
 
-## Extras if time (each 20 s)
+### Scene 1, working end to end (30 pts), 80 s, s1_milk
+| Click | Say | Judge sees | Fallback |
+|---|---|---|---|
+| Console, customer hotel-aurora (TODO control) | "A hotel's buying agent." | Mandate card with the limits | `GET /v1/mandate` with `X-Agent-Key: demo-hotel-aurora` |
+| Type `I need 1000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.` Run (TODO) | "One line, like a person writes it." | Need parsed: 1000 L, lactose-free, date | No LLM key: rule parser, same output. Say nothing. |
+| Offers appear | "Real Valio products. Price, stock on Monday, why it ranked." | Offers covering 1000 L, shortfall 0, notes per offer | Cached responses in `var/cache` |
+| Request quote, then Place order (TODO) | "Price and stock locked, signed. Anyone can verify it." | Signed quote, order with a Decision and reasons | `GET /.well-known/jwks.json` |
+| Open audit tab | "Every step, in words." | Events each with a why | `GET /v1/audit?order_id=` |
 
-- Hospital: switch to hospital-tays, same request with a milk allergen rule. Shows blocked, not asked.
-- Stock-out: run the stock-out scenario in `scenarios/` (TODO name). Shows substitute or honest failure.
-- MCP: show `GET /.well-known/agent-card.json`, say "any agent can read this and start".
+### Scene 2, precise match (20 pts), 30 s, s2_need_recipe_order
+Type `We need to cook lasagne for 40 portions by Monday`. Say: "It does not ask me for a shopping list. Dish to ingredient lines, scaled to 40 portions." Judge sees: several ingredient lines (pasta, meat, ...), offers for most, one quote with a line per ingredient. Then hospital-tays, `100 litres of lactose-free milk and 50 kg of bread`: say "Allergens the hospital bans never show up in offers." (s5_allergen_safe). Fallback: scenario output lines from `python scenarios/s2_need_recipe_order.py`.
+
+### Scene 3, autonomy and controls (20 pts), 45 s, s0_guardrails + s5_allergen_safe
+1. Place a big order as hotel-aurora (quantity far above the limit). Say: "Over the per-order limit, so it does not go through." Judge sees: Decision needs_approval, plain reason, card in the approval inbox (TODO URL).
+2. Click Approve in the inbox (TODO label), note "ok". Say: "A human gets a sentence, not JSON." Order moves to placed.
+3. As hospital-tays, order a product with a banned allergen. Say: "Not asked. Blocked." Decision blocked with a reason.
+4. If time: tampered signature. Say: "Change one character in the signed quote and the order is rejected." Scenario s0 proves it. Fallback for all: audit tab shows the same story.
+
+### Scene 4, exceptions (15 pts), 40 s, s4_stockout + s3_event_substitution
+1. Place and approve a 200 L lactose-free milk order. Trigger the stock-out simulation on that product (TODO button, or admin call `simulate stockout`, see `scenarios/_common.py`).
+2. Say: "Wednesday the supplier runs out." Judge sees: order reacts (split, substitute or new date), a human is asked before anything changes, the audit has the stock-out with a why.
+3. Say: "Last-minute event, 400 portions, two days out, items short. It substitutes by recipe logic and writes down why." (s3). Clear the simulation after.
+Fallback: run `python scenarios/s4_stockout.py --base http://localhost:8080` and show the PASS lines.
+
+### Scene 5, openness and production path (15 pts), 30 s, s1 MCP check + s6 + s7
+1. Open `/.well-known/agent-card.json` and `/openapi.json`. Say: "REST and MCP. Any agent plugs in, no custom adapter."
+2. Show jwks.json: "Public keys, anyone verifies our quotes."
+3. Say: "The mock has no order endpoint, so orders are ours. In production we swap in the real system, same interface." Then proactive seller (s6): "The selling side proposes too, within each buyer's allergens and categories." Standing order drift (s7): "It flags a changed price or missing stock on a standing order, allergen changes always go to a human."
+Fallback: `python scenarios/s6_proactive_seller.py`, `s7_drift.py`.
 
 ## If something breaks
+1. App down: restart uvicorn, `make demo` if sh-deploy ships it (TODO). Backup is a screen recording, record after 07:00.
+2. Slow Valio API: "shared mock, we cache it", move on.
+3. LLM down: rule parser is the default path, do not mention it.
+4. Anything odd on screen: go to the audit tab.
 
-1. App down: `make demo` (or one command, TODO once sh-deploy ships it). Backup is a recorded screen capture, record it after 07:00.
-2. Slow API: say "this is the shared mock, we cache it", go on.
-3. LLM down: nothing to do, rule parser is the default path. Do not apologise.
-4. Anything wrong on screen: go to the audit tab, it always has the story.
+## Cut order if short on time
+Scene 5 step 3, then Scene 3 step 4, then scene 2 hospital line. Never cut the approve click or the audit tab.
 
 ## Do not
-
-Do not run a live scenario for the first time on stage. Do not click anything that calls the Valio API in a loop.
+Do not loop-call the Valio API. Do not leave a stock-out simulation on after a scene.
