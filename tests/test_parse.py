@@ -193,3 +193,20 @@ def test_describe_need_multi():
 
     n = one("200 kg potatoes and 50 l cream, no nuts, organic")
     assert describe_need(n) == "200 kg potatoes, no nuts, organic; 50 L cream, no nuts, organic; deliver by Sun 15 Nov 2026"
+
+
+def test_menu_carbonara_delegates():
+    n = parse_need("Last-minute event, we need pasta carbonara for 400 portions by 2026-11-20", "hotel-aurora", T)
+    assert len(n.items) >= 3 and n.deliver_by == date(2026, 11, 20)
+    assert {"pasta", "eggs"} <= {i.query for i in n.items}
+
+
+def test_menu_lasagne_allergen_on_every_line():
+    n = parse_need("We need to cook lasagne for 40 portions tomorrow, no nuts", "hotel-aurora", T)
+    assert len(n.items) >= 5 and n.deliver_by == date(2026, 11, 14)
+    assert all(i.constraints.exclude_allergens == ["nuts"] for i in n.items)
+
+
+def test_menu_not_triggered_by_product_line():
+    assert [i.query for i in one("20 kg lasagne sheets").items] != []
+    assert len(one("20 kg lasagne").items) == 1
