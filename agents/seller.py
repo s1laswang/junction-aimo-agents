@@ -92,7 +92,7 @@ def rank(usual_id, offers, mandate, limit=1):
     ]
 
 
-def propose(customer, key, url=URL, max_offers=3):
+def explain(customer, key, url=URL, max_offers=3):
     mandate = _call("GET", "/mandate", key, url)
     def name_of(pid):
         try:
@@ -109,8 +109,8 @@ def propose(customer, key, url=URL, max_offers=3):
     seeds = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
     deliver_by = (date.today() + timedelta(days=3)).isoformat()
     excl = mandate.get("exclude_allergens") or []
-    def run(items):
-        props = []
+    def run(items, origin):
+        props, notes = [], []
         for it in items:
             need = {
                 "customer": customer,
@@ -119,14 +119,24 @@ def propose(customer, key, url=URL, max_offers=3):
             }
             res = _call("POST", "/offers", key, url, json=need)
             for group in res.get("items", []):
-                props += rank(it["product_id"], group["offers"], mandate)
-        return props
+                got = rank(it["product_id"], group["offers"], mandate)
+                for g in got:
+                    g["origin"] = origin
+                props += got
+                base = next((o for o in group["offers"] if str(o["product_id"]) == str(it["product_id"])), None)
+                if not got and base:
+                    notes.append(f"your {it['query']} is already the best offer: {base['product']['name']} at {base['total_net']:.2f} EUR total net, no better option found")
+        return props, notes
 
-    props = run(items)
+    props, notes = run(items, "from your order history")
     if not props:
-        props = run(seeds)
+        props, _ = run(seeds, "catalog suggestion")
     props.sort(key=lambda p: -p["score"])
-    return props[:max_offers]
+    return notes, props[:max_offers]
+
+
+def propose(customer, key, url=URL, max_offers=3):
+    return explain(customer, key, url, max_offers)[1]
 
 
 def accept(proposal, key, url=URL):
@@ -136,16 +146,36 @@ def accept(proposal, key, url=URL):
     return _call("POST", "/orders", key, url, json={"quote_id": q["quote_id"], "jws": q["jws"]})
 
 
+def show(customer, key, url):
+    notes, ps = explain(customer, key, url)
+    for n in notes:
+        print("note:", n)
+    for i, p in enumerate(ps):
+        print(i, f"[{p['origin']}]", p["why"])
+    return ps
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--customer", required=True)
+    ap.add_argument("--customer")
     ap.add_argument("--key", default=None)
     ap.add_argument("--url", default=URL)
     ap.add_argument("--accept", type=int)
+    ap.add_argument("--demo", action="store_true")
     a = ap.parse_args()
+    if a.demo:
+        top = None
+        for c in KEYS:
+            print("==", c)
+            ps = show(c, KEYS[c], a.url)
+            if c == "hotel-aurora" and ps:
+                top = ps[0]
+        if top:
+            print("== accepting top hotel-aurora proposal")
+            o = accept(top, KEYS["hotel-aurora"], a.url)
+            print(o["order_id"], o["status"], json.dumps(o["decision"]))
+        raise SystemExit
     a.key = a.key or os.environ.get(a.customer.upper().replace("-", "_") + "_KEY", KEYS[a.customer])
-    ps = propose(a.customer, a.key, a.url)
-    for i, p in enumerate(ps):
-        print(i, p["why"])
+    ps = show(a.customer, a.key, a.url)
     if a.accept is not None:
         print(json.dumps(accept(ps[a.accept], a.key, a.url), indent=1))
