@@ -25,6 +25,13 @@ def _expand(a):
     return _WIDE.get(str(a).strip().lower()) or {_canon(a)}
 
 
+def _pref(p, mandate):
+    if not mandate.preferred_brands:
+        return True
+    names = [str(x).strip().lower() for x in (p.brand, p.vendor) if x] if p else []
+    return any(n.startswith(b.strip().lower()) for n in names for b in mandate.preferred_brands)
+
+
 def _eur(x):
     return f"{x:,.2f} EUR"
 
@@ -57,18 +64,23 @@ def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=
             add(blocked, "ALLERGEN_CONFLICT", f"{p.name} ({pid}) may contain traces of {names}, which {mandate.customer} excludes")
         if mandate.allowed_categories is not None and p.category not in mandate.allowed_categories:
             add(blocked, "CATEGORY_NOT_ALLOWED", f"{p.name} ({pid}) is in category {p.category}, allowed: {', '.join(mandate.allowed_categories)}")
-        if mandate.preferred_brands and p.brand not in mandate.preferred_brands:
-            add(info, "NON_PREFERRED_BRAND", f"{p.name} ({pid}) is brand {p.brand}, preferred: {', '.join(mandate.preferred_brands)}")
+        if not _pref(p, mandate):
+            add(info, "NON_PREFERRED_BRAND", f"Note: {p.name} ({pid}) is brand {p.brand}, preferred: {', '.join(mandate.preferred_brands)}")
+
+    def nm(pid):
+        p = products.get(pid)
+        return f"{p.name} ({pid})" if p else str(pid)
 
     for s in substitutions:
         sub = products.get(s.substitute_id)
+        swap = f"{nm(s.substitute_id)} in place of {nm(s.original_id)}"
         if mandate.substitutions == "never":
-            add(blocked, "SUBSTITUTION_NOT_ALLOWED", f"Substituting {s.original_id} with {s.substitute_id} is not allowed by the mandate ({s.reason})")
+            add(blocked, "SUBSTITUTION_NOT_ALLOWED", f"Substitution of {swap} is not allowed by the mandate of {mandate.customer}")
         elif mandate.substitutions == "ask":
-            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"Substituting {s.original_id} with {s.substitute_id} needs human approval ({s.reason})")
-        elif mandate.preferred_brands and (sub is None or sub.brand not in mandate.preferred_brands):
+            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"The order swaps {swap}; {mandate.customer} requires a human to approve every substitution")
+        elif not _pref(sub, mandate):
             brand = sub.brand if sub else "unknown"
-            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"Substitute {s.substitute_id} is brand {brand}, outside preferred brands {', '.join(mandate.preferred_brands)} ({s.reason})")
+            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"The order swaps {swap}; brand {brand} is outside the preferred brands {', '.join(mandate.preferred_brands)}")
 
     if total > mandate.per_order_eur:
         add(ask, "OVER_ORDER_LIMIT", f"Order total {_eur(total)} is over the {_eur(mandate.per_order_eur)} per-order limit")
@@ -80,8 +92,8 @@ def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=
         add(blocked, "PAST_CUTOFF", f"Quote was valid until {quote.valid_until:%Y-%m-%d %H:%M}, the ordering cutoff has passed")
 
     if blocked:
-        return Decision(outcome="blocked", reasons=blocked + ask + info)
+        return Decision(outcome="blocked", reasons=blocked + ask)
     if ask:
-        return Decision(outcome="needs_approval", reasons=ask + info)
+        return Decision(outcome="needs_approval", reasons=ask)
     ok = [Reason(code="WITHIN_MANDATE", text=f"Order total {_eur(total)} is under the {_eur(mandate.per_order_eur)} per-order limit and {_eur(spent_this_week + total)} of the {_eur(mandate.per_week_eur)} weekly budget")]
     return Decision(outcome="auto", reasons=ok + info)
