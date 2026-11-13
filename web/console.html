@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Console - Aimo Trade Gateway</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<header class="hdr">
+  <a class="brand" href="/">Aimo Trade Gateway</a>
+  <nav aria-label="Primary">
+    <a href="console.html" aria-current="page">Console</a>
+    <a href="inbox.html">Approvals</a>
+    <a href="audit.html">Audit</a>
+    <a href="index.html">Mandates</a>
+  </nav>
+  <span class="grow"></span>
+  <span id="mock-tag" class="tag warn" hidden>mock data</span>
+  <label class="cust"><span class="sr">Customer</span>
+    <select id="customer">
+      <option>hotel-aurora</option><option>hospital-tays</option><option>school-hervanta</option>
+    </select>
+  </label>
+</header>
+<main class="grid">
+  <section class="left">
+    <form id="req" class="panel">
+      <label class="lbl" for="text">Request</label>
+      <textarea id="text" rows="3">I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.</textarea>
+      <div class="row">
+        <div class="chips" id="scenarios">
+          <button type="button" class="chip" data-s="milk">Lactose-free milk</button>
+          <button type="button" class="chip" data-s="school">Allergen-safe school swap</button>
+          <button type="button" class="chip" data-s="event">Last-minute event</button>
+        </div>
+        <span class="grow"></span>
+        <button id="run" class="primary" type="submit">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+          <span>Run</span>
+        </button>
+      </div>
+    </form>
+    <div id="result" aria-live="polite">
+      <div class="empty panel">Run a request to see the parsed need, offers, signed quote and decision.</div>
+    </div>
+  </section>
+  <aside class="right">
+    <div class="panel trace-panel">
+      <div class="ph"><h2>Agent trace</h2><span id="live" class="live">idle</span></div>
+      <ol id="trace" class="trace"></ol>
+      <div id="trace-empty" class="muted pad">No calls yet. External agents appear here too.</div>
+    </div>
+  </aside>
+</main>
+<script src="/shell.js" defer onerror="void 0"></script>
+<script src="console.js" defer></script>
+</body>
+</html>
