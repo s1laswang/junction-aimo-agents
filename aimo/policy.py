@@ -34,11 +34,19 @@ def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=
     for pid in dict.fromkeys(ids):
         p = products.get(pid)
         if p is None:
+            if banned:
+                add(ask, "UNKNOWN_PRODUCT", f"Could not check allergens for {pid}: product data missing")
             continue
-        hit = sorted({_canon(a) for a in p.allergens} & banned)
+        have = {_canon(a) for a in p.allergens if not str(a).lower().startswith("may:")}
+        trace = {_canon(str(a)[4:]) for a in p.allergens if str(a).lower().startswith("may:")}
+        hit = sorted(have & banned)
         if hit:
             names = ", ".join(_LABELS.get(h, h) for h in hit)
             add(blocked, "ALLERGEN_CONFLICT", f"{p.name} ({pid}) contains {names}, which {mandate.customer} excludes")
+        tr = sorted((trace & banned) - set(hit))
+        if tr:
+            names = ", ".join(_LABELS.get(h, h) for h in tr)
+            add(blocked, "ALLERGEN_CONFLICT", f"{p.name} ({pid}) may contain traces of {names}, which {mandate.customer} excludes")
         if mandate.allowed_categories is not None and p.category not in mandate.allowed_categories:
             add(blocked, "CATEGORY_NOT_ALLOWED", f"{p.name} ({pid}) is in category {p.category}, allowed: {', '.join(mandate.allowed_categories)}")
         if mandate.preferred_brands and p.brand not in mandate.preferred_brands:
