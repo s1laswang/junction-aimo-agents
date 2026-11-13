@@ -4,6 +4,7 @@ const TEXTS={
 milk:"I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
 school:"Weekly school lunch: 200 kg of gluten-free pasta and 80 litres of oat drink, no nuts, no egg, delivered by Thursday.",
 event:"Last-minute event for 120 guests on Friday: 60 kg of salmon fillet, 40 litres of cream and 25 kg of butter."};
+const CUST={milk:"hotel-aurora",school:"school-hervanta",event:"hotel-aurora"};
 const MOCKS={
 milk:{need:{customer:"",deliver_by:"2026-11-16",raw_text:"",items:[{query:"lactose-free milk",quantity:1000,unit:"l",constraints:{lactose_free:true,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}}]},
  offers:[{need_item:0,offers:[
@@ -90,7 +91,8 @@ async function call(tool,method,path,body,mock,why){
  let err=null;
  if(!real&&!S.mock){try{const r=await fetch(path,{method,headers:{"Content-Type":"application/json","X-Agent-Key":localStorage.getItem("aimo.agentKey")||"demo-"+cust()},body:body?JSON.stringify(body):undefined});if(r.status>=400&&r.status<500&&r.status!==404){const e=await r.json().catch(()=>null);if(e&&e.code)err={status:r.status,...e}}}catch(e){}}
  if(err){S.mock=S.fell?S.mock:false;upd(li,{cls:"err",status:String(err.status),ms:Math.round(performance.now()-t0),why:err.code+": "+err.text,req:body,res:err});const x=new Error(err.code+": "+err.text);throw x}
- if(!real){setMock(true);S.fell=true;await sleep(200+Math.random()*400);res=mock()}
+ if(!real&&!S.mock){upd(li,{cls:"err",status:"offline",ms:Math.round(performance.now()-t0),why:"Gateway offline: "+path+" did not answer. No data shown.",req:body,res:null});throw new Error("Gateway offline")}
+ if(!real){setMock(true);await sleep(200+Math.random()*400);res=mock()}
  const ms=Math.round(performance.now()-t0);
  upd(li,{cls:"ok",status:real?"200":"mock",ms,why:why(res),req:body,res});
  return res;
@@ -161,7 +163,7 @@ async function run(note){
   out.insertAdjacentHTML("beforeend",orderHtml(ord));
   rn.out=ord.decision.outcome.replace("_"," ");rn.cls=ord.decision.outcome;rn.total=ord.total_net;rn.end=Date.now();sumRun(rn);
   if(DEMO)demoBtns(out,ord,picks);
- }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">Run failed: ${esc(e.message)}</div>`);rn.out="failed";rn.cls="blocked";rn.end=Date.now();sumRun(rn)}
+ }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">${e.message==="Gateway offline"?"Gateway offline. The API did not answer, so no prices are shown. Start the app and run again.":"Run failed: "+esc(e.message)}</div>`);rn.out="failed";rn.cls="blocked";rn.end=Date.now();sumRun(rn)}
  $("#run").disabled=false;$("#live").textContent="idle";$("#live").classList.remove("on");
 }
 async function poll(){
@@ -175,7 +177,7 @@ async function poll(){
 }
 function init(){
  window.addEventListener("customer",()=>{S.base=false});
- $("#scenarios").onclick=e=>{const b=e.target.closest("[data-s]");if(b){$("#text").value=TEXTS[b.dataset.s];$("#text").focus()}};
+ $("#scenarios").onclick=e=>{const b=e.target.closest("[data-s]");if(!b)return;const s=b.dataset.s;$("#text").value=TEXTS[s];if(CUST[s]&&aimo.customer()!==CUST[s]){aimo.setCustomer(CUST[s]);const sel=document.getElementById("customer");if(sel)sel.value=CUST[s]}$("#text").focus()};
  $("#req").onsubmit=e=>{e.preventDefault();run()};
  setMock(S.mock);poll();
 }
