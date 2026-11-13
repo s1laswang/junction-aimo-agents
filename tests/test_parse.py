@@ -102,3 +102,79 @@ def test_gibberish_never_raises():
 def test_llm_off_without_env(monkeypatch):
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     assert one("5 kg butter").items[0].query == "butter"
+
+
+def test_allergen_global():
+    n = one("40 kg gluten-free pasta and 20 l whipping cream, no nuts")
+    assert all(i.constraints.exclude_allergens == ["nuts"] for i in n.items)
+    assert n.items[0].constraints.gluten_free is True and n.items[1].constraints.gluten_free is None
+
+
+def test_trailing_modifier_all_items():
+    n = one("200 kg perunoita ja 50 litraa kermaa perjantaiksi, luomu")
+    assert [i.query for i in n.items] == ["potatoes", "cream"]
+    assert all(i.constraints.labels == ["organic"] for i in n.items)
+    assert n.deliver_by == date(2026, 11, 20)
+
+
+def test_trailing_modifier_en_mixed():
+    n = one("100 kg butter and 20 kg cheese by Monday, Finnish, lactose-free")
+    assert all(i.constraints.origin == "fi" and i.constraints.lactose_free for i in n.items)
+
+
+def test_approx_tonne():
+    i = one("approx. 1 tonne of potatoes").items[0]
+    assert (i.query, i.quantity, i.unit) == ("potatoes", 1000.0, "kg")
+
+
+def test_tilde_attached_unit():
+    i = one("~1000l milk").items[0]
+    assert (i.quantity, i.unit) == (1000.0, "L")
+
+
+def test_pallet_unknown_stays_pcs():
+    i = one("a pallet of milk").items[0]
+    assert (i.query, i.quantity, i.unit) == ("milk", 1.0, "pcs")
+
+
+def test_typo_lactos_free():
+    assert one("100 l lactos free milk").items[0].constraints.lactose_free is True
+    assert one("100 kg gluton free flour").items[0].constraints.gluten_free is True
+
+
+def test_mixed_fi_en():
+    n = one("Tarvitsen 100 l lactose-free milk huomenna")
+    i = n.items[0]
+    assert i.query == "milk" and i.constraints.lactose_free and n.deliver_by == date(2026, 11, 14)
+
+
+def test_asap():
+    assert one("need 20 kg butter ASAP").deliver_by == date(2026, 11, 14)
+    assert one("20 kg voita heti").deliver_by == date(2026, 11, 14)
+
+
+def test_end_of_week():
+    assert one("30 l cream by end of week").deliver_by == date(2026, 11, 20)
+    assert parse_need("30 l cream by end of week", "x", date(2026, 11, 11)).deliver_by == date(2026, 11, 13)
+
+
+def test_nbsp_thousands_and_price():
+    i = one("1 000 l milk under 1,5 EUR").items[0]
+    assert i.quantity == 1000.0 and i.constraints.max_unit_price == 1.5
+
+
+def test_llm_bad_json_falls_back(monkeypatch):
+    from agents import llm
+
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "chat", lambda s, u: "not json")
+    assert one("5 kg butter").items[0].query == "butter"
+
+
+def test_llm_allergens_global(monkeypatch):
+    from agents import llm
+
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "chat", lambda s, u: '{"deliver_by":"2026-11-16","items":[{"query":"milk","quantity":5,"unit":"L","constraints":{"exclude_allergens":["nuts"]}},{"query":"cream","quantity":2,"unit":"L"}]}')
+    n = one("whatever")
+    assert [i.constraints.exclude_allergens for i in n.items] == [["nuts"], ["nuts"]]

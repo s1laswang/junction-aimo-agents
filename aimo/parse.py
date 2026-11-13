@@ -11,7 +11,7 @@ UNITS = {
     "L": r"litres?|liters?|litraa|litran|litroja|litra|ltr|l",
     "kg": r"kilograms?|kilogrammaa|kilos?|kiloa|kilon|kg",
     "g": r"grams?|grammaa|gramma|g",
-    "pcs": r"pieces?|pcs|pc|kpl|kappaletta|kappale|units?",
+    "pcs": r"pieces?|pcs|pc|kpl|kappaletta|kappale|units?|pallets?|lavaa|lava|pal",
     "packs": r"packages?|packs?|pkt|pakettia|paketti|paketit|boxes|box|cases?|laatikkoa|laatikko",
     "ml": r"millilitres?|milliliters?|ml",
     "dl": r"decilitres?|deciliters?|dl",
@@ -120,7 +120,7 @@ STOP = set(
     "i we need needs want would like please of the a an some by for to deliver delivered delivery "
     "on until before and with find me us our get order buy have it that is are be at in from "
     "tarvitsen tarvitsemme haluan haluaisin tilaan tilata ja sekä ennen mennessä toimitus toimita "
-    "meille minulle noin tai että kiitos option options requirements meets".split()
+    "meille minulle noin tai approx approximately about around circa ca asap että kiitos option options requirements meets".split()
 )
 
 
@@ -166,6 +166,12 @@ def _find_date(text, today):
             return (d if y != today.year or (m.lastindex and m.lastindex >= 3 and m[3]) else _fix_year(d, today)), t[: m.start()] + " " + t[m.end():]
         except ValueError:
             pass
+    m = re.search(r"\basap\b|\bas\s+soon\s+as\s+possible\b|\bmahdollisimman\s+pian\b|\bheti\b|\burgent\b", t, re.I)
+    if m:
+        return today + timedelta(1), t[: m.start()] + " " + t[m.end():]
+    m = re.search(r"\b(?:by\s+)?(?:the\s+)?end\s+of\s+(?:the\s+)?week\b|\bviikon\s+loppuun(?:\s+mennessä)?", t, re.I)
+    if m:
+        return today + timedelta((4 - today.weekday()) % 7 or 7), t[: m.start()] + " " + t[m.end():]
     m = re.search(r"\bday after tomorrow\b|\bylihuomen\w*", t, re.I)
     if m:
         return today + timedelta(2), t[: m.start()] + " " + t[m.end():]
@@ -214,8 +220,8 @@ def _constraints(seg):
     p, seg = _find_price(seg)
     c.max_unit_price = p
     pats = [
-        ("lactose_free", r"lactose[\s-]*free|\bno\s+lactose|\blaktoosit(?:on|om|t)\w*|\blaktoositon\w*"),
-        ("gluten_free", r"gluten[\s-]*free|\bno\s+gluten|\bgluteenit(?:on|om)\w*|\bgluteeniton\w*"),
+        ("lactose_free", r"lactos?e?[\s-]*fr?e{1,2}\b|\bno\s+lactose|\blaktoos\w*?t(?:on|om)\w*"),
+        ("gluten_free", r"glut[eo]n[\s-]*fr?e{1,2}\b|\bno\s+gluten|\bgluteen\w*?t(?:on|om)\w*"),
     ]
     for key, pat in pats:
         if re.search(pat, seg, re.I):
@@ -264,10 +270,48 @@ def _unit(m):
     return None
 
 
+def _merge(c, g, allergens_only=False):
+    for a in g.exclude_allergens:
+        if a not in c.exclude_allergens:
+            c.exclude_allergens.append(a)
+    if allergens_only:
+        return
+    for l in g.labels:
+        if l not in c.labels:
+            c.labels.append(l)
+    for b in g.brands:
+        if b not in c.brands:
+            c.brands.append(b)
+    c.origin = c.origin or g.origin
+    c.lactose_free = c.lactose_free or g.lactose_free
+    c.gluten_free = c.gluten_free or g.gluten_free
+    if c.max_unit_price is None:
+        c.max_unit_price = g.max_unit_price
+
+
 def _rule_parse(text, customer, today):
     d, rest = _find_date(text, today)
     deliver = d or today + timedelta(2)
     price, rest = _find_price(rest)
+    rest = re.sub(r"\b(?:a|an|one|yksi)\s+(?=(?:pallets?|tonnes?|tons?|lava)\b)", "1 ", rest, flags=re.I)
+    full_c, _ = _constraints(rest)
+    tail_c = None
+    while True:
+        commas = list(re.finditer(r",\s+", rest))
+        if not commas:
+            break
+        last = commas[-1]
+        tail = rest[last.end():]
+        if QTY.search(tail):
+            break
+        tc, cl = _constraints(tail)
+        if _noun(cl) is not None:
+            break
+        if tail_c is None:
+            tail_c = tc
+        else:
+            _merge(tail_c, tc)
+        rest = rest[: last.start()]
     rest_all = rest
     matches = []
     for m in QTY.finditer(rest):
@@ -293,6 +337,9 @@ def _rule_parse(text, customer, today):
         seg = rest_all if single else after
         c, _ = _constraints(seg)
         c.max_unit_price = price
+        _merge(c, full_c, allergens_only=True)
+        if tail_c:
+            _merge(c, tail_c)
         _, cleaned_after = _constraints(after)
         q = _noun(cleaned_after)
         if q is None or (q not in {n_ for n_, _ in NOUNS} and not single):
@@ -307,29 +354,39 @@ def _rule_parse(text, customer, today):
     if not items:
         c, cleaned = _constraints(rest_all)
         c.max_unit_price = price
+        _merge(c, full_c, allergens_only=True)
+        if tail_c:
+            _merge(c, tail_c)
         q = _noun(cleaned) or text.strip()[:60] or "product"
         items.append(NeedItem(query=q, quantity=1.0, unit="pcs", constraints=c))
     return Need(customer=customer, deliver_by=deliver, items=items, raw_text=text)
 
 
 def _llm_parse(text, customer, today):
-    if not os.environ.get("LLM_BASE_URL"):
-        return None
     try:
         from agents import llm
 
-        raw = llm.complete_json(
-            "Extract a purchasing need as JSON with keys deliver_by (YYYY-MM-DD) and items "
-            "[{query (short English noun), quantity (number), unit (L|kg|g|pcs|packs), constraints "
-            "{lactose_free, gluten_free, exclude_allergens, labels, origin, max_unit_price, brands}}]. "
-            f"Today is {today.isoformat()}. Text: {text}"
+        if not llm.available():
+            return None
+        raw = llm.chat(
+            "Extract a purchasing need. Reply with only JSON: {\"deliver_by\": \"YYYY-MM-DD\", \"items\": "
+            "[{\"query\": short English noun, \"quantity\": number, \"unit\": \"L|kg|g|pcs|packs\", "
+            "\"constraints\": {\"lactose_free\": bool|null, \"gluten_free\": bool|null, "
+            "\"exclude_allergens\": [str], \"labels\": [str], \"origin\": str|null, "
+            "\"max_unit_price\": number|null, \"brands\": [str]}}]}. "
+            "Allergen exclusions apply to every item. Today is " + today.isoformat() + ".",
+            text,
         )
-        data = json.loads(raw) if isinstance(raw, str) else raw
+        raw = re.sub(r"^```(?:json)?|```$", "", raw.strip()).strip()
+        data = json.loads(raw)
         data["customer"] = customer
         data["raw_text"] = text
         need = Need.model_validate(data)
-        if not need.items or any(i.quantity <= 0 or not i.query for i in need.items):
+        if not need.items or any(i.quantity <= 0 or not i.query.strip() or i.unit not in ("L", "kg", "g", "pcs", "packs") for i in need.items):
             return None
+        allergens = {a for i in need.items for a in i.constraints.exclude_allergens}
+        for i in need.items:
+            i.constraints.exclude_allergens = sorted(allergens)
         return need
     except Exception:
         return None
