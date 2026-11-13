@@ -1,6 +1,6 @@
 # Demo script, click by click
 
-Server: `.venv/bin/uvicorn aimo.app:app --port 8080`. UI at `http://localhost:8080/`. Customer picker on every page (hotel-aurora, hospital-tays, school-hervanta), keys are `demo-<customer>`. Anything marked TODO waits for the lead-ui screen names.
+Server: `.venv/bin/uvicorn aimo.app:app --port 8080`. UI at `http://localhost:8080/`. Customer picker on every page (hotel-aurora, hospital-tays, school-hervanta), keys are `demo-<customer>`. Inbox labels are confirmed by ui-inbox (branch ui-inbox/inbox, may shift slightly). Console labels still TODO.
 
 Before going on stage: server up, `data/` linked, `.env` present, three tabs open: console, approval inbox, audit. Run `python scenarios/run_all.py --base http://localhost:8080` once beforehand so the cache is warm and we know it is green. Never run a scenario for the first time on stage.
 
@@ -21,8 +21,8 @@ Each scene maps to a scenario file in `scenarios/` that already checks it, so wh
 Type `We need to cook lasagne for 40 portions by Monday`. Say: "It does not ask me for a shopping list. Dish to ingredient lines, scaled to 40 portions." Judge sees: several ingredient lines (pasta, meat, ...), offers for most, one quote with a line per ingredient. Then hospital-tays, `100 litres of lactose-free milk and 50 kg of bread`: say "Allergens the hospital bans never show up in offers." (s5_allergen_safe). Fallback: scenario output lines from `python scenarios/s2_need_recipe_order.py`.
 
 ### Scene 3, autonomy and controls (20 pts), 45 s, s0_guardrails + s5_allergen_safe
-1. Place a big order as hotel-aurora (quantity far above the limit). Say: "Over the per-order limit, so it does not go through." Judge sees: Decision needs_approval, plain reason, card in the approval inbox (TODO URL).
-2. Click Approve in the inbox (TODO label), note "ok". Say: "A human gets a sentence, not JSON." Order moves to placed.
+1. Place a big order as hotel-aurora (quantity far above the limit). Say: "Over the per-order limit, so it does not go through." Judge sees: Decision needs_approval, plain reason, card in the approval inbox, `/inbox.html` (nav link "Approvals"), which refreshes itself every 3 seconds. The card shows the net total and sentences like "Over per-order limit 2,000 EUR by 339.96 EUR".
+2. Click the button "Approve <total> EUR" in the inbox. First click opens "Who is approving?", pick the name, press Continue. Toast says "Approved <customer> <total> EUR as <name>". (Reject needs a typed reason, field "Reason for rejecting (required)".) Say: "A human gets a sentence, not JSON." Order moves to placed.
 3. As hospital-tays, order a product with a banned allergen. Say: "Not asked. Blocked." Decision blocked with a reason.
 4. If time: tampered signature. Say: "Change one character in the signed quote and the order is rejected." Scenario s0 proves it. Fallback for all: audit tab shows the same story.
 
