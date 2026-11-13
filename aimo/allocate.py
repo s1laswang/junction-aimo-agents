@@ -74,32 +74,38 @@ def _closed(closing: str, now: datetime):
     return t <= now
 
 
-def fill(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetime | None = None):
+def _why(o: Offer, item: NeedItem, deliver_by: date, now: datetime):
+    if o.sales_block:
+        return f"sales blocked: {o.sales_block}", None
+    if o.available_date is None:
+        return "availability date unknown", None
+    if o.available_date > deliver_by:
+        return f"available {o.available_date}, after deliver_by {deliver_by}", None
+    if o.closing_time and _closed(o.closing_time, now):
+        return f"order cutoff {o.closing_time} already passed", None
+    if o.available_amount <= 0:
+        return "no stock", None
+    r = _ratio(o.product, item.unit)
+    if r is None:
+        return f"cannot convert {item.unit} to {o.product.sales_unit}", None
+    return None, r
+
+
+def _now(now):
     now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+    return now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now
+
+
+def fill(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetime | None = None):
+    now = _now(now)
     remaining = item.quantity
     out: list[Offer] = []
     skipped: list[str] = []
     for o in offers:
         tag = f"{o.product.name} ({o.product_id})"
-        why = None
         if remaining <= 1e-9:
             break
-        if o.sales_block:
-            why = f"sales blocked: {o.sales_block}"
-        elif o.available_date is None:
-            why = "availability date unknown"
-        elif o.available_date > deliver_by:
-            why = f"available {o.available_date}, after deliver_by {deliver_by}"
-        elif o.closing_time and _closed(o.closing_time, now):
-            why = f"order cutoff {o.closing_time} already passed"
-        elif o.available_amount <= 0:
-            why = "no stock"
-        else:
-            r = _ratio(o.product, item.unit)
-            if r is None:
-                why = f"cannot convert {item.unit} to {o.product.sales_unit}"
+        why, r = _why(o, item, deliver_by, now)
         if why:
             skipped.append(f"skipped {tag}: {why}")
             continue
@@ -123,3 +129,57 @@ def allocate(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetim
     if out:
         out[0].notes.extend(skipped)
     return out, shortfall
+
+
+def _key(o: Offer):
+    return o.product_id, o.available_date
+
+
+def reallocate(item: NeedItem, allocated: list[Offer], fresh_offers: list[Offer], deliver_by: date, now: datetime | None = None) -> tuple[list[Offer], float, list[str]]:
+    now = _now(now)
+    fresh = {_key(o): o for o in fresh_offers}
+    changes: list[str] = []
+    kept: dict = {}
+    used: dict = {}
+    covered = 0.0
+    for p in allocated:
+        f = fresh.get(_key(p))
+        why, r = (None, None)
+        if f is None:
+            why = "no longer offered"
+        else:
+            why, r = _why(f, item, deliver_by, now)
+        if why:
+            changes.append(f"{p.product_id}: {p.units_needed:g} -> 0 units, {why}")
+            continue
+        n = min(p.units_needed, math.floor(f.available_amount))
+        if n < p.units_needed:
+            changes.append(f"{p.product_id}: {p.units_needed:g} -> {n:g} units, stock dropped")
+        if n <= 0:
+            continue
+        a = f.model_copy(deep=True)
+        a.units_needed = float(n)
+        a.total_net = round(n * a.unit_price_net, 2)
+        a.total_gross = round(a.total_net * (f.total_gross / f.total_net if f.total_net else 1.0), 2)
+        kept[_key(p)] = a
+        used[_key(p)] = n
+        covered += n * r
+    pool = []
+    for o in fresh_offers:
+        left = o.available_amount - used.get(_key(o), 0)
+        pool.append(o.model_copy(update={"available_amount": left}))
+    rest = item.model_copy(update={"quantity": max(0.0, round(item.quantity - covered, 6))})
+    new, shortfall, skipped = fill(rest, pool, deliver_by, now) if rest.quantity > 1e-9 else ([], 0.0, [])
+    for n in new:
+        changes.append(f"+{n.units_needed:g} from {n.product_id} delivered {n.available_date}")
+        if _key(n) in kept:
+            k = kept[_key(n)]
+            k.units_needed += n.units_needed
+            k.total_net = round(k.units_needed * k.unit_price_net, 2)
+            k.total_gross = round(k.total_net * (n.total_gross / n.total_net if n.total_net else 1.0), 2)
+        else:
+            kept[_key(n)] = n
+    out = list(kept.values())
+    if shortfall > 0:
+        changes.append(f"shortfall {shortfall:g} {item.unit}")
+    return out, shortfall, changes
