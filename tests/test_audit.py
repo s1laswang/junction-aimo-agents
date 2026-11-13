@@ -72,3 +72,21 @@ def test_human_approval_not_doubled(tmp_path, monkeypatch):
     assert len(audit.events(order_id="o1")) == 3
     lines = audit.narrate(audit.events(order_id="o1")).splitlines()
     assert len(lines) == 2 and "Placed after human approval." in lines[1]
+
+
+def test_verify_checkpoint_cli(tmp_path, monkeypatch, capsys):
+    import json
+
+    from aimo import keys
+
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "c.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    e = audit.record("hotel-aurora", "system", "order.placed", "o1", "ok")
+    cp = audit.checkpoint()
+    f = tmp_path / "jwks.json"
+    f.write_text(json.dumps(keys.jwks()))
+    assert audit.main(["x", "verify-checkpoint", cp["jws"], str(f)]) == 0
+    assert f"OK seq=1 hash={e.hash}" in capsys.readouterr().out
+    assert audit.main(["x", "verify-checkpoint", cp["jws"]]) == 0
+    assert audit.main(["x", "verify-checkpoint", cp["jws"][:-4] + "AAAA"]) == 1
+    assert "BAD_SIGNATURE" in capsys.readouterr().out
