@@ -13,16 +13,33 @@ We use existing standards so any agent or tool can plug in without our SDK.
 
 ## Verify a quote yourself
 
+Quotes are JWS compact, alg `EdDSA` (Ed25519). The `kid` is the RFC 7638 thumbprint of the key listed in `/.well-known/jwks.json`.
+
+One command (needs this repo):
+
+```
+python -m aimo.quotes verify "$JWS" http://localhost:8080/.well-known/jwks.json
+```
+
+Real output from a quote on a booted server:
+
+```
+$ python -m aimo.quotes verify "$JWS" http://localhost:8123/.well-known/jwks.json
+OK q_73e19c560ce1 customer=hotel-aurora agent=buyer-aurora lines=1 total_gross=1770.00 EUR delivery=2026-11-16 valid_until=2026-11-15T17:00:00+02:00
+```
+
+Format: `OK q_... customer=... total_gross=... valid_until=...` and exits 0. On failure it prints the error code (a tampered token gives `BAD_SIGNATURE: Quote signature is invalid.`) and exits 1. An expired quote adds `(EXPIRED)`.
+
+Or from any Python with `joserfc` and `httpx`:
+
 ```python
 import httpx
 from joserfc import jws
 from joserfc.jwk import KeySet
 
-base = "http://localhost:8080"
-keys = KeySet.import_key_set(httpx.get(f"{base}/.well-known/jwks.json").json())
-quote = {"jws": "<quote.jws from request_quote>"}
-obj = jws.deserialize_compact(quote["jws"], keys)
+keys = KeySet.import_key_set(httpx.get("http://localhost:8080/.well-known/jwks.json").json())
+obj = jws.deserialize_compact(quote["jws"], keys, algorithms=["EdDSA"])
 print(obj.payload)
 ```
 
-TODO-VERIFY: run this snippet against real dev and fix imports and key set loading.
+Pin the algorithm yourself. joserfc rejects EdDSA unless you pass `algorithms=["EdDSA"]`. A SecurityWarning about RFC 9864 is harmless.
