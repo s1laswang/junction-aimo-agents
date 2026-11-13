@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-from aimo import mandates
+import pytest
+
+from aimo import audit, mandates
 from aimo.models import Product, Quote, QuoteLine, Substitution
 from aimo.policy import decide
 
@@ -9,6 +11,11 @@ MILK = Product(product_id="464073", name="Valio whole milk 1 l lactose free UHT"
 NUT = Product(product_id="1", name="Peanut butter", brand="X", category="1", allergens=["AP"])
 OAT = Product(product_id="2", name="Oat drink", brand="Other", category="10400", allergens=[])
 PRODUCTS = {p.product_id: p for p in (MILK, NUT, OAT)}
+
+
+@pytest.fixture(autouse=True)
+def tmpdb(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "t.db"))
 
 
 def quote(total, pid="464073", valid=NOW + timedelta(hours=5)):
@@ -62,3 +69,33 @@ def test_category_and_cutoff():
     assert "CATEGORY_NOT_ALLOWED" in codes(decide(quote(10.0), m, PRODUCTS, now=NOW))
     d = decide(quote(10.0, valid=NOW - timedelta(minutes=1)), mandates.get("hotel-aurora"), PRODUCTS, now=NOW)
     assert d.outcome == "blocked" and "PAST_CUTOFF" in codes(d)
+
+
+def test_unknown_product_and_traces():
+    h = mandates.get("hospital-tays")
+    d = decide(quote(10.0, pid="999"), h, PRODUCTS, now=NOW)
+    assert d.outcome == "needs_approval" and codes(d) == ["UNKNOWN_PRODUCT"]
+    assert decide(quote(10.0, pid="999"), mandates.get("hotel-aurora"), PRODUCTS, now=NOW).outcome == "auto"
+    trace = Product(product_id="3", name="Bar", brand="Valio", allergens=["may:AP"])
+    d = decide(quote(10.0, pid="3"), h, {"3": trace}, now=NOW)
+    assert d.outcome == "blocked" and "traces" in d.reasons[0].text
+    t2 = Product(product_id="4", name="Bar", brand="Valio", allergens=["may_contain:peanuts"])
+    assert decide(quote(10.0, pid="4"), h, {"4": t2}, now=NOW).outcome == "blocked"
+
+
+def test_put_persists_and_audits():
+    m = mandates.get("hotel-aurora").model_copy(update={"per_order_eur": 5000.0})
+    mandates.put(m)
+    assert mandates.get("hotel-aurora").per_order_eur == 5000.0
+    assert len(mandates.all()) == 3
+    ev = audit.events(customer="hotel-aurora")[-1]
+    assert ev.action == "mandate_updated" and "per_order_eur" in ev.why and "->" in ev.why
+
+
+def test_demo_limits_from_measured_milk_price():
+    net_per_l = 1.64
+    hotel, school = mandates.get("hotel-aurora"), mandates.get("school-hervanta")
+    assert decide(quote(1000 * net_per_l), hotel, PRODUCTS, now=NOW).outcome == "auto"
+    assert decide(quote(2000 * net_per_l), hotel, PRODUCTS, now=NOW).outcome == "needs_approval"
+    assert decide(quote(200 * net_per_l), school, PRODUCTS, now=NOW).outcome == "auto"
+    assert decide(quote(500 * net_per_l), school, PRODUCTS, now=NOW).outcome == "needs_approval"
