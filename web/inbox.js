@@ -7,9 +7,9 @@ var MOCK = [
     lines: [
       { product_id: "P-100234", quantity: 1000, sales_unit: "L", unit_price_net: 1.42, line_total_net: 1420 },
       { product_id: "P-100871", quantity: 40, sales_unit: "KG", unit_price_net: 14.5, line_total_net: 580 },
-      { product_id: "P-204410", quantity: 12, sales_unit: "CS", unit_price_net: 28.33, line_total_net: 339.96 } ],
-    total_net: 2339.96, substitutions: [],
-    decision: { outcome: "needs_approval", reasons: [{ code: "per_order_limit", text: "Over per-order limit 2,000 EUR by 339.96 EUR" }] },
+      { product_id: "P-204410", quantity: 12, sales_unit: "CS", unit_price_net: 54.17, line_total_net: 650.04 } ],
+    total_net: 2650.04, substitutions: [],
+    decision: { outcome: "needs_approval", reasons: [{ code: "OVER_ORDER_LIMIT", text: "Order total 2,650.04 EUR is over the 2,500.00 EUR per-order limit" }] },
     created_at: iso(-12 * 6e4), updated_at: iso(-12 * 6e4), delivery_date: day(3), valid_until: iso(3.2 * 36e5) },
   { order_id: "ord_2b8c10", quote_id: "q_20261114_0043", customer: "school-hervanta", agent_id: "hervanta-buyer-1", status: "pending_approval",
     lines: [
@@ -17,7 +17,7 @@ var MOCK = [
       { product_id: "P-300552", quantity: 25, sales_unit: "KG", unit_price_net: 3.9, line_total_net: 97.5 } ],
     total_net: 469.5,
     substitutions: [{ original_id: "P-300077", substitute_id: "P-300118", reason: "Original out of stock for the requested date; same brand family, same pack size" }],
-    decision: { outcome: "needs_approval", reasons: [{ code: "substitution", text: "1 product substituted and the mandate asks to be consulted first" }] },
+    decision: { outcome: "needs_approval", reasons: [{ code: "SUBSTITUTION_NEEDS_APPROVAL", text: "Substituting P-300077 with P-300118 needs human approval (Original out of stock for the requested date; same brand family, same pack size)" }, { code: "NON_PREFERRED_BRAND", text: "Voipavut 500g (P-300118) is brand Pride, preferred: Valio" }] },
     created_at: iso(-47 * 6e4), updated_at: iso(-47 * 6e4), delivery_date: day(2), valid_until: iso(0.6 * 36e5) },
   { order_id: "ord_91d4e7", quote_id: "q_20261114_0044", customer: "hospital-tays", agent_id: "tays-buyer-1", status: "pending_approval",
     lines: [
@@ -25,8 +25,8 @@ var MOCK = [
     total_net: 830,
     substitutions: [{ original_id: "P-410455", substitute_id: "P-410902", reason: "Gluten-free requirement kept, price within 5 percent" }],
     decision: { outcome: "needs_approval", reasons: [
-      { code: "allergen_flag", text: "Substitute lists traces of celery; this kitchen excludes celery" },
-      { code: "substitution", text: "1 product substituted" } ] },
+      { code: "UNKNOWN_PRODUCT", text: "Could not check allergens for P-410902: product data missing" },
+      { code: "SUBSTITUTION_NEEDS_APPROVAL", text: "Substituting P-410455 with P-410902 needs human approval (Gluten-free requirement kept, price within 5 percent)" } ] },
     created_at: iso(-3 * 6e4), updated_at: iso(-3 * 6e4), delivery_date: day(1), valid_until: iso(5.5 * 36e5) }
 ];
 
@@ -80,12 +80,17 @@ function poll() {
     if (!S.loaded && !Array.isArray(d)) { S.mock = true; if (window.aimo) window.aimo.mock(true); d = mockPool.slice(); }
     if (Array.isArray(d)) { S.online = true; S.orders = d.filter(function (o) { return !S.busy[o.order_id]; }); }
     else S.online = false;
-    S.loaded = true; render();
+    S.loaded = true; render(); if (!(dTick++ % 4)) loadDecided();
   });
 }
 
-function reasonIcon(r) { return icon(/allerg/i.test(r.code) ? "allergen" : "warn"); }
-function reasons(o) { return h("ul", { class: "why" }, ((o.decision && o.decision.reasons) || []).map(function (r) { return h("li", null, reasonIcon(r), h("span", null, r.text)); })); }
+function level(r) { return r.level || (r.code === "NON_PREFERRED_BRAND" ? "info" : "approval"); }
+function reasonIcon(r) { return icon(/allerg|unknown/i.test(r.code) ? "allergen" : "warn"); }
+function reasons(o) {
+  var all = (o.decision && o.decision.reasons) || [], hot = all.filter(function (r) { return level(r) !== "info"; }), cool = all.filter(function (r) { return level(r) === "info"; });
+  return [hot.length ? h("ul", { class: "why" }, hot.map(function (r) { return h("li", null, reasonIcon(r), h("span", null, r.text)); })) : null,
+    cool.length ? h("ul", { class: "note" }, cool.map(function (r) { return h("li", null, r.text); })) : null];
+}
 function nameOf(o, id) { var l = o.lines.filter(function (x) { return x.product_id === id && x.name; })[0]; return l ? h("span", null, " " + l.name) : null; }
 function subs(o, full) {
   if (!o.substitutions || !o.substitutions.length) return null;
@@ -109,6 +114,26 @@ function card(o, isCur) {
 function lastLine() {
   var l; try { l = JSON.parse(store("aimo.inbox.last") || "null"); } catch (e) {}
   return l ? h("div", { class: "last" }, (l.approve ? "Approved " : "Rejected ") + l.customer + " " + money(l.total) + " EUR as " + l.by + ", " + ago(l.at)) : null;
+}
+
+var decided = [], mockDecided = [], dTick = 0;
+function loadDecided() {
+  var c = window.aimo && window.aimo.customer();
+  if (S.mock) { decided = mockDecided.filter(function (e) { return !c || e.customer === c; }); renderDecided(); return; }
+  api("/v1/audit?customer=" + encodeURIComponent(c || "")).then(function (d) {
+    var ev = d && (d.events || d); if (!Array.isArray(ev)) return;
+    decided = ev.filter(function (e) { return /^approval\./.test(e.action) && /^human:/.test(e.actor) && Date.now() - Date.parse(e.ts) < 864e5; })
+      .reverse().slice(0, 8).map(function (e) { return { order_id: e.subject, text: e.why.split(" Held for approval")[0], by: e.actor.slice(6), at: e.ts, approve: /approved/.test(e.action) }; });
+    renderDecided();
+  });
+}
+function renderDecided() {
+  var box = $("#decided"), ul = $("#dlist"); box.hidden = !decided.length;
+  $("#dcount").textContent = decided.length;
+  ul.replaceChildren.apply(ul, decided.map(function (e) {
+    return h("li", null, h("span", { class: "tag " + (e.approve ? "ok" : "stop") }, e.approve ? "Approved" : "Rejected"),
+      h("span", { class: "dt" }, e.text), h("span", { class: "da" }, ago(e.at) + " / ", h("a", { href: "/audit.html?order_id=" + encodeURIComponent(e.order_id) }, "Audit trail")));
+  }));
 }
 
 function renderList() {
@@ -202,19 +227,21 @@ async function decide(o, approve, note) {
   delete S.busy[o.order_id];
   if (ok) {
     store("aimo.inbox.last", JSON.stringify({ approve: approve, customer: o.customer, total: o.total_net, by: by, at: new Date().toISOString() }));
+    if (S.mock) mockDecided.unshift({ customer: o.customer, order_id: o.order_id, by: by, at: new Date().toISOString(), approve: approve, text: by + (approve ? " approved the order of " : " rejected the order of ") + money(o.total_net) + " EUR." + (note ? " Note: " + note + "." : "") });
+    loadDecided();
     toast((approve ? "Approved " : "Rejected ") + o.customer + " " + money(o.total_net) + " EUR as " + by); render();
   } else {
     S.orders.splice(Math.max(0, idx), 0, o); S.sel = o.order_id; location.hash = encodeURIComponent(o.order_id);
     S.sig = S.dsig = ""; render();
     var e = window.aimo && window.aimo.lastError, d = e && e.detail;
-    if (d && typeof d !== "string") d = d.message || d.error || JSON.stringify(d);
+    if (d && typeof d !== "string") d = d.text || d.message || d.error || JSON.stringify(d);
     toast(!e || e.status === 0 ? "Gateway offline. The order is still waiting." : "Could not " + (approve ? "approve" : "reject") + ": " + (d || "error " + e.status) + ". The order is still waiting.", true);
   }
 }
 
 function route() { S.sel = decodeURIComponent(location.hash.slice(1)) || null; render(); }
 window.addEventListener("hashchange", route);
-window.addEventListener("customer", function () { S.sig = S.dsig = ""; render(); });
+window.addEventListener("customer", function () { S.sig = S.dsig = ""; render(); loadDecided(); });
 wide.addEventListener("change", function () { S.sig = S.dsig = ""; render(); });
 $("#who").addEventListener("click", function () { var o = cur(); (o ? approversFor(o.customer) : Promise.resolve([])).then(ask); });
 if (/[?&]mock=1/.test(location.search)) { S.mock = true; if (window.aimo) window.aimo.mock(true); }

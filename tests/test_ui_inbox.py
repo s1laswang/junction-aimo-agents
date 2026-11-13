@@ -32,3 +32,9 @@ def test_error_detail_and_audit_link():
     assert "lastError" in js and "Gateway offline" in js
     assert "/audit.html?order_id=" in js
     assert "Reason for rejecting" in js
+
+
+def test_mock_matches_real_system():
+    js = (WEB / "inbox.js").read_text()
+    assert "UNKNOWN_PRODUCT" in js and "allergen_flag" not in js
+    assert "NON_PREFERRED_BRAND" in js and "Decided today" in (WEB / "inbox.html").read_text()
