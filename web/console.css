@@ -7,6 +7,7 @@ select,textarea,button{font:inherit;color:inherit}
 main.grid{max-width:1560px;padding:12px 16px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr);gap:12px;padding:12px 16px;align-items:start}
 .left{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
 .side{position:sticky;top:56px;min-width:0}
+.trace-panel{max-height:calc(100vh - 72px);overflow:auto}
 .panel{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:12px 16px}
 .lbl,.k{font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
 textarea{width:100%;margin:4px 0 8px;background:var(--well);border:1px solid var(--rule);border-radius:4px;padding:8px;resize:vertical}
@@ -72,6 +73,12 @@ button.ghost:hover{background:var(--well)}
 .ln details{grid-column:1/-1;margin-top:2px}
 .ln summary{font-size:11px;color:var(--ink-3);cursor:pointer}
 .ln pre{margin:4px 0 0;background:var(--well);border-radius:4px;padding:6px 8px;font:11px/1.4 var(--mono);overflow:auto;max-height:200px;white-space:pre-wrap;word-break:break-all}
-@media (max-width:860px){main.grid{grid-template-columns:minmax(0,1fr);padding:8px 12px}.side{position:static}td:first-child{min-width:220px}td:first-child .note{font-size:11px}
+td:first-child{min-width:220px}
 td.n .note,td.dt{white-space:nowrap}
 .ln.aud .tool{color:var(--ink-3);font-weight:400}.ln.aud .why{color:var(--ink-3)}.ln.aud .st{display:none}td details{margin-top:2px}td summary{cursor:pointer;color:var(--ink-3)}
+.trace>li.run{border-top:1px solid var(--rule-2)}.trace>li.run:first-child{border-top:0}
+.run summary{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:6px 0;cursor:pointer;font-size:12px;color:var(--ink-2)}
+.run .rn{font-weight:600;color:var(--ink)}.run .ro{font-weight:500}.run .ro.auto{color:var(--ok)}.run .ro.needs_approval{color:var(--warn)}.run .ro.blocked{color:var(--stop)}.run .rnote{color:var(--valio)}
+.rb{list-style:none;margin:0;padding:0}
+.au{padding:1px 0 1px 16px;font-size:12px;color:var(--ink-3)}.au code{font:11px var(--mono)}
+@media (max-width:860px){main.grid{grid-template-columns:minmax(0,1fr);padding:8px 12px}.side{position:static}.trace-panel{max-height:none}}

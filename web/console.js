@@ -27,7 +27,7 @@ event:{need:{customer:"",deliver_by:"2026-11-20",raw_text:"",items:[
  {need_item:2,offers:[{product_id:"mock-610003",product:{name:"Butter 500 g",brand:"Valio",sales_unit:"PK",unit_size:{value:.5,unit:"kg"}},units_needed:50,unit_price_net:3.9,total_net:195,available_amount:50,available_date:"2026-11-19",reliability:.98,co2_per_kg:9.2,match_score:.97,tier:"exact",notes:[]}],shortfall:0}],
  order:{status:"blocked",decision:{outcome:"blocked",reasons:[{code:"CATEGORY_NOT_ALLOWED",text:"Fresh fish is outside this agent's allowed categories."},{code:"LEAD_TIME",text:"Delivery in under 48 hours is not covered by the mandate."}]},substitutions:[]}}};
 const DEMO=new URLSearchParams(location.search).has("demo");
-const S={mock:new URLSearchParams(location.search).has("mock"),seen:new Set(),base:false,sc:"milk"};
+const S={runs:[],mock:new URLSearchParams(location.search).has("mock"),seen:new Set(),base:false,sc:"milk"};
 const cust=()=>aimo.customer();
 const esc=v=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const NF=new Intl.NumberFormat("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -42,11 +42,36 @@ const MANDATES={"hotel-aurora":{o:2000,w:8000},"hospital-tays":{o:1500,w:6000},"
 const clock=()=>{const d=new Date(),p=(n,l=2)=>String(n).padStart(l,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function setMock(on){if(on)S.mock=true;aimo.mock(S.mock)}
-function line(o){
+function line(o,parent){
  $("#trace-empty").hidden=true;
  const li=document.createElement("li");li.className="ln"+(o.ext?" ext":"")+(o.aud?" aud":"");
  li.innerHTML=`<div class="h"><span class="t">${o.t||lt()}</span><span><span class="tool">${esc(o.tool)}</span><span class="st ${o.cls||"run"}">${esc(o.status||"")}</span></span><span class="ms">${o.ms!=null?o.ms+" ms":esc(o.actor||"")}</span><span class="why">${esc(o.why||"")}</span>${o.req||(o.res&&Object.keys(o.res).length)?`<details><summary>request / response</summary><pre>${esc(JSON.stringify({request:o.req,response:o.res},null,2))}</pre></details>`:""}</div>`;
- $("#trace").prepend(li);return li;
+ if(parent)parent.append(li);else $("#trace").prepend(li);return li;
+}
+const TOOLS=[[/^parse/,"parse_request"],[/^offers?/,"get_offers"],[/^quote/,"request_quote"],[/^order/,"place_order"]];
+function startRun(c,note){
+ $("#trace-empty").hidden=true;
+ S.n=(S.n||0)+1;
+ document.querySelectorAll("#trace > li.run > details").forEach(d=>d.open=false);
+ const li=document.createElement("li");li.className="run";
+ li.innerHTML=`<details open><summary></summary><ol class="rb"></ol></details>`;
+ const r={el:li,body:li.querySelector(".rb"),sum:li.querySelector("summary"),calls:{},start:Date.now(),end:null,n:S.n,c,note,tm:lt(Date.now()),out:"running"};
+ $("#trace").prepend(li);S.runs.push(r);S.run=r;sumRun(r);return r;
+}
+function sumRun(r){r.sum.innerHTML=`<span class="rn">Run ${r.n}</span><span>${esc(r.c)}</span><span class="mono">${r.tm}</span>${r.out?`<span class="ro ${esc(r.cls||"")}">${esc(r.out)}</span>`:""}${r.total!=null?`<span class="mono">${money(r.total)}</span>`:""}${r.note?`<span class="rnote">${esc(r.note)}</span>`:""}`}
+function attach(e){
+ const t=TOOLS.find(x=>x[0].test(e.action));if(!t)return false;
+ const id=e.subject||"";
+ for(const r of S.runs){
+  if(r.c!==e.customer)continue;
+  const li=r.calls[t[1]];if(!li)continue;
+  let ok;
+  if(t[1]==="request_quote")ok=r.qid&&id===r.qid;
+  else if(t[1]==="place_order")ok=(r.oid&&id===r.oid)||(r.qid&&id===r.qid);
+  else ok=!li.querySelector(".au");
+  if(ok){const d=document.createElement("div");d.className="au";d.innerHTML=`<code>${esc(e.action)}</code> ${esc(e.why||"")}`;li.append(d);return true}
+ }
+ return false;
 }
 function upd(li,o){
  const st=li.querySelector(".st");st.className="st "+o.cls;st.textContent=o.status;
@@ -54,7 +79,7 @@ function upd(li,o){
  const d=document.createElement("details");d.innerHTML=`<summary>request / response</summary><pre>${esc(JSON.stringify({request:o.req,response:o.res},null,2))}</pre>`;li.querySelector(".h").append(d);
 }
 async function call(tool,method,path,body,mock,why){
- const li=line({tool,status:"running",why:"Calling "+path+"..."});
+ const li=line({tool,status:"running",why:"Calling "+path+"..."},S.run.body);S.run.calls[tool]=li;
  const t0=performance.now();let res=null,real=false;
  if(!S.mock){
   res=await aimo.api(path,{method,body});real=res!=null;
@@ -99,18 +124,20 @@ function orderHtml(o){
 }
 function fillOrder(o,q,c){const L=MANDATES[c]||MANDATES["hotel-aurora"];const t=money(q.total_net);const d={...o.decision,reasons:o.decision.reasons.filter(r=>r.text!=="@OL"||q.total_net>L.o).map(r=>r.text==="@WM"?{...r,text:`Total ${t} is under the per-order limit of ${money(L.o)}.`}:r.text==="@OL"?{...r,text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}:r)};if(o.decision.outcome==="auto"&&q.total_net>L.o){d.outcome="needs_approval";d.reasons=[{code:"ORDER_OVER_LIMIT",text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}]}return{...o,decision:d,status:d.outcome==="needs_approval"&&o.status==="placed"?"pending_approval":o.status}}
 const hex=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)).join("");
-function demoBtns(out,ord){
+function demoBtns(out,ord,picks){
  out.insertAdjacentHTML("beforeend",'<div class="row"><button type="button" class="ghost" id="sim">Simulate stock-out</button><button type="button" class="ghost" id="clr">Clear</button></div>');
  const pid=String(((ord.lines||[])[0]||{}).product_id||"");
- const act=async(method,body,msg)=>{const t0=performance.now();const r=await aimo.api("/v1/admin/simulate",{method,admin:true,body});line({tool:"admin/simulate",status:r?"200":"failed",cls:r?"ok":"err",ms:Math.round(performance.now()-t0),why:msg,req:body,res:r})};
- $("#sim").onclick=()=>act("POST",{product_id:pid,available_amount:0},"Simulated stock-out on "+pid);
+ const act=async(method,body,msg)=>{const t0=performance.now();const r=await aimo.api("/v1/admin/simulate",{method,admin:true,body});line({tool:"admin/simulate",status:r?"200":"failed",cls:r?"ok":"err",ms:Math.round(performance.now()-t0),why:msg,req:body,res:r});return !!r};
+ const pn=(picks.find(p=>String(p.product_id)===pid)||{product:{}}).product.name||pid;
+ $("#sim").onclick=async()=>{const ok=await act("POST",{product_id:pid,available_amount:0},"Simulated stock-out on "+pn);if(ok)run("after stock-out on "+pn)};
  $("#clr").onclick=()=>act("DELETE",undefined,"Cleared simulation");
 }
-async function run(){
+async function run(note){
  const text=$("#text").value.trim();if(!text)return;
  const sc=/school|allergen|gluten|hospital/i.test(text)?"school":/event|guests|salmon|last-minute/i.test(text)?"event":"milk";
  const M=MOCKS[sc],c=cust();
  $("#run").disabled=true;$("#live").textContent="running";$("#live").classList.add("on");
+ const rn=startRun(c,note);
  const res=$("#result");res.innerHTML='<div class="panel" id="out"></div>';const out=$("#out");
  try{
   const need=await call("parse_request","POST","/v1/needs/parse",{text,customer:c},()=>({...M.need,customer:c,raw_text:text}),
@@ -124,20 +151,23 @@ async function run(){
   const qm=()=>{const ls=picks.map((p,i)=>({product_id:p.product_id,quantity:lines[i].quantity,sales_unit:p.product.sales_unit,unit_price_net:p.unit_price_net,line_total_net:+(p.unit_price_net*lines[i].quantity).toFixed(2)}));const t=+ls.reduce((a,l)=>a+l.line_total_net,0).toFixed(2);return{quote_id:"q_mock_"+hex(6),customer:c,agent_id:"console",delivery_date:need.deliver_by,lines:ls,total_net:t,total_gross:+(t*1.14).toFixed(2),currency:"EUR",issued_at:new Date().toISOString(),valid_until:new Date(Date.now()+864e5).toISOString().slice(0,16)+"Z",jws:"eyJhbGciOiJFZERTQSJ9."+hex(40)+"."+hex(64)}};
   const q=await call("request_quote","POST","/v1/quotes",{offers:lines,delivery_date:need.deliver_by},qm,
    q=>`Priced ${q.lines.length} line(s) at ${money(q.total_net)} and signed the quote.`);
+  rn.qid=q.quote_id;
   out.insertAdjacentHTML("beforeend",quoteHtml(q));
   $("#copy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(q.jws);$("#copy").textContent="Copied"};
   const ord=await call("place_order","POST","/v1/orders",{quote_id:q.quote_id,jws:q.jws},()=>({order_id:"o_mock_"+hex(6),quote_id:q.quote_id,customer:c,agent_id:"console",lines:q.lines,total_net:q.total_net,...fillOrder(M.order,q,c)}),
    o=>`Policy decision: ${o.decision.outcome.replace("_"," ")}. ${o.decision.reasons[0]?o.decision.reasons[0].text:""}`);
+  rn.oid=ord.order_id;
   out.insertAdjacentHTML("beforeend",orderHtml(ord));
-  if(DEMO)demoBtns(out,ord);
- }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">Run failed: ${esc(e.message)}</div>`)}
+  rn.out=ord.decision.outcome.replace("_"," ");rn.cls=ord.decision.outcome;rn.total=ord.total_net;rn.end=Date.now();sumRun(rn);
+  if(DEMO)demoBtns(out,ord,picks);
+ }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">Run failed: ${esc(e.message)}</div>`);rn.out="failed";rn.cls="blocked";rn.end=Date.now();sumRun(rn)}
  $("#run").disabled=false;$("#live").textContent="idle";$("#live").classList.remove("on");
 }
 async function poll(){
  if(!S.mock){
   const j=await aimo.api("/v1/audit?customer="+encodeURIComponent(cust()));
   if(j){const ev=Array.isArray(j)?j:(j.events||[]);
-   ev.sort((a,b)=>a.seq-b.seq).forEach(e=>{const k=cust()+e.seq;if(S.seen.has(k))return;S.seen.add(k);if(S.base)line({t:lt(e.ts),aud:1,tool:e.action,status:"audit",cls:"ok",actor:e.actor,why:e.why,res:e.detail,ext:!/console/.test(e.actor||"")})});
+   ev.sort((a,b)=>a.seq-b.seq).forEach(e=>{const k=cust()+e.seq;if(S.seen.has(k))return;S.seen.add(k);if(S.base&&!attach(e))line({t:lt(e.ts),aud:1,tool:e.action,status:"audit",cls:"ok",actor:e.actor,why:e.why,res:e.detail,ext:!/console/.test(e.actor||"")})});
    S.base=true}
  }
  setTimeout(poll,2000);
