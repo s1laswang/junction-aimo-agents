@@ -1,6 +1,6 @@
 # Architecture
 
-One Python process: FastAPI serves REST under `/v1`, MCP at `/mcp`, the UI at `/`, discovery under `/.well-known/`. State is in SQLite (`var/aimo.db`). Valio responses are cached in `var/cache`.
+One Python process: FastAPI serves REST under `/v1`, MCP at `/mcp`, the UI at `/`, discovery under `/.well-known/`. State is in SQLite, opened only through `aimo/db.py` (path from `AIMO_DB`, default `var/aimo.db`). Each module creates its own tables on first use. Valio responses are cached in `var/cache`.
 
 ## Flow
 
@@ -24,11 +24,18 @@ audit: every step appends a hash-chained event with a plain-language why
 
 Valio has no order endpoint, so orders live in our store (see ASSUMPTIONS).
 
+## Auth
+
+- Agents send `X-Agent-Key`. It maps to a customer, an agent id and a mandate. Calls are scoped to that customer.
+- Humans and admins send `X-Admin-Key` (env `AIMO_ADMIN_KEY`). Needed to decide approvals, change mandates and use `/v1/admin/*`.
+- Missing or bad key: 401. Wrong customer: 403. Domain errors: 409 with `code` and `text`.
+- Search, parse, discovery and `/health` need no key.
+
 ## Modules
 
 | Module | What it does | Owner |
 |---|---|---|
-| `aimo/app.py`, `models.py` | app wiring, pydantic models | lead-gateway |
+| `aimo/app.py`, `models.py`, `db.py` | app wiring, pydantic models | lead-gateway |
 | `catalog.py` | product search over the product JSON | gw-catalog |
 | `valio.py`, `offers.py` | cached Valio client, offers and ranking | gw-offers |
 | `orders.py` | order store and state machine | gw-orders |
