@@ -31,7 +31,7 @@ def _reasons(order):
 
 
 def _notify(order, event):
-    print(f"[approvals] {event} order={order.order_id} customer={order.customer} total={order.total_net:.2f}")
+    print(f"[approvals] {event} order={order.order_id} customer={order.customer} total={order.total_net:,.2f}")
 
 
 def pending(customer=None):
@@ -57,18 +57,18 @@ def decide(order_id, approve, by, note=""):
         _expire(order, f"Quote expired before {by} decided, so the order was not placed.")
         raise ApprovalError("QUOTE_EXPIRED", "The quote is no longer valid, order marked expired.")
     verb = "approved" if approve else "rejected"
-    why = f"{by} {verb} the order of {order.total_net:.2f} EUR. Note: {note or 'none'}. Held for approval because: {_reasons(order)}."
+    why = f"{by} {verb} the order of {order.total_net:,.2f} EUR. Note: {note or 'none'}. Held for approval because: {_reasons(order)}."
     detail = {"order_id": order_id, "note": note}
     actor = f"human:{by}"
+    _m("audit").record(order.customer, actor, f"approval.{verb}", order_id, why, detail)
     try:
         if approve:
-            orders.set_status(order_id, "approved", actor, why)
-            out = orders.set_status(order_id, "placed", actor, why)
+            orders.set_status(order_id, "approved", actor, f"Approved by {by}.")
+            out = orders.set_status(order_id, "placed", actor, "Placed after human approval.")
         else:
-            out = orders.set_status(order_id, "rejected", actor, why)
+            out = orders.set_status(order_id, "rejected", actor, f"Rejected by {by}.")
     except ValueError:
         raise ApprovalError("NOT_PENDING", f"Order {order_id} was already decided.")
-    _m("audit").record(order.customer, f"human:{by}", f"approval.{verb}", order_id, why, detail)
     _notify(out, verb)
     return out
 
