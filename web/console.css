@@ -74,3 +74,4 @@ button.ghost:hover{background:var(--well)}
 .ln pre{margin:4px 0 0;background:var(--well);border-radius:4px;padding:6px 8px;font:11px/1.4 var(--mono);overflow:auto;max-height:200px;white-space:pre-wrap;word-break:break-all}
 @media (max-width:860px){main.grid{grid-template-columns:minmax(0,1fr);padding:8px 12px}.side{position:static}td:first-child{min-width:220px}td:first-child .note{font-size:11px}
 td.n .note,td.dt{white-space:nowrap}
+.ln.aud .tool{color:var(--ink-3);font-weight:400}.ln.aud .why{color:var(--ink-3)}.ln.aud .st{display:none}td details{margin-top:2px}td summary{cursor:pointer;color:var(--ink-3)}
