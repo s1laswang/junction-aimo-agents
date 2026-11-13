@@ -28,13 +28,7 @@ scenarios:
 demo: setup scen stage
 
 scen:
-	@mkdir -p var; rm -f var/scen.db; \
-	AIMO_DB=var/scen.db $(PY) -m uvicorn aimo.app:app --port $(SCEN_PORT) > var-scen.log 2>&1 & \
-	pid=$$!; trap 'kill $$pid 2>/dev/null' EXIT INT TERM; \
-	ok=0; for i in $$(seq 30); do \
-	  curl -sf http://localhost:$(SCEN_PORT)/.well-known/agent-card.json >/dev/null && { ok=1; break; }; sleep 1; done; \
-	[ $$ok = 1 ] || { echo "scenario server did not start, see var-scen.log"; exit 1; }; \
-	$(MAKE) --no-print-directory scenarios PORT=$(SCEN_PORT); true
+	-$(PY) scenarios/run_all.py --base http://127.0.0.1:$(SCEN_PORT) --boot
 
 stage: setup
 	@rm -f $(DEMO_DB); mkdir -p var; \
