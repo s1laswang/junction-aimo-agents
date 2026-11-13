@@ -1,3 +1,7 @@
+import os
+import tempfile
+
+os.environ.setdefault('AIMO_DB', os.path.join(tempfile.mkdtemp(), 't.db'))
 from datetime import date
 
 import pytest
@@ -53,10 +57,53 @@ def test_alternatives_and_options():
         assert "maitorahka" not in a.product.name.lower() and "kahvi" not in a.product.name.lower()
     assert g.options == []
     top = g.offers[0].product_id
-    offers.simulate(SimulateStock(product_id=top, available_amount=300))
+    offers.simulate(SimulateStock(product_id=top, available_amount=100))
     try:
         g2 = offers.get_offers(milk()).items[0]
         if g2.shortfall > 0:
             assert g2.options
     finally:
         offers.clear_simulation()
+
+
+def test_cutoff_rule():
+    c = offers.cutoff("2026-11-12T15:00:00+0200", "2026-11-16", D)
+    assert c.isoformat() == "2026-11-15T15:00:00+02:00"
+    assert offers.cutoff("2026-11-12T15:00:00+0200", None, date(2026, 12, 1)).isoformat() == "2026-11-30T15:00:00+02:00"
+
+
+def test_far_delivery_not_expired():
+    from datetime import timedelta
+    far = date.today() + timedelta(days=5)
+    n = Need(customer="hotel-aurora", deliver_by=far, items=[NeedItem(query="lactose-free milk", quantity=100, unit="L")])
+    g = offers.get_offers(n).items[0]
+    assert g.offers and g.offers[0].notes[0].startswith("cutoff computed from Valio closing time")
+    lines, _, valid = offers.price_lines("hotel-aurora", far, [QuoteRequestLine(product_id=g.offers[0].product_id, quantity=5)])
+    assert valid.date() <= far - timedelta(days=1)
+    from datetime import datetime, timezone
+    assert valid > datetime.now(timezone.utc)
+
+
+def test_split_filler_same_brand_not_substitute():
+    offers.clear_simulation()
+    top = offers.get_offers(milk()).items[0].offers[0].product_id
+    offers.simulate(SimulateStock(product_id=top, available_amount=100))
+    try:
+        g = offers.get_offers(milk()).items[0]
+        assert len(g.offers) > 1
+        f = g.offers[1]
+        assert f.notes
+        if f.match_score >= g.offers[0].match_score:
+            assert f.substitute_for is None
+    finally:
+        offers.clear_simulation()
+
+
+def test_cutoff_passed_shifts_date(monkeypatch):
+    from datetime import datetime, timedelta
+    tomorrow = date.today() + timedelta(days=1)
+    n = Need(customer="hotel-aurora", deliver_by=tomorrow, items=[NeedItem(query="lactose-free milk", quantity=100, unit="L")])
+    monkeypatch.setattr(offers.valio, "availability", lambda c, d, ids: {i: {"productId": i, "closingTime": "2026-11-12T15:00:00+0200", "salesBlock": False, "scheduleLines": [{"salesBlock": False, "availableAmount": 9999.0, "availableDate": tomorrow.isoformat(), "salesUnit": "ST"}]} for i in ids})
+    g = offers.get_offers(n).items[0]
+    assert all(o.available_date <= tomorrow for o in g.offers + g.alternatives)
+    assert g.shortfall > 0 and g.options and g.options[0]["date"] > tomorrow

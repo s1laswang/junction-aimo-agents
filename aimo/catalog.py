@@ -54,12 +54,15 @@ SYNONYMS = [
     ["sokeri", "sugar", "socker"],
     ["suola", "salt"],
     ["öljy", "oil", "olja"],
-    ["riisi", "rice", "ris"],
+    ["riisi", "rice"],
     ["leipä", "bread", "bröd"],
     ["kahvi", "coffee", "kaffe"],
     ["vesi", "water", "vatten"],
     ["luomu", "organic", "ekologisk"],
     ["vegaani", "vegan"],
+    ["jauheliha", "minced meat", "ground meat", "mince"],
+    ["pasta", "pasta"],
+    ["rahka", "quark"],
 ]
 LABEL_ALIASES = {
     "organic": ["organic", "eco"], "luomu": ["organic", "eco"],
@@ -72,6 +75,11 @@ ORIGIN_ALIASES = {
     "netherlands": "nl", "hollanti": "nl", "france": "fr", "ranska": "fr", "italy": "it", "italia": "it",
     "spain": "es", "espanja": "es",
 }
+MODIFIER_PREFIXES = ("kahvi", "suklaa", "mansikka", "vanilja", "kaakao", "banaani", "kookos",
+                     "peruna", "kana", "liha", "kala", "riisi", "maissi", "soija", "kaura", "korppu")
+NONFOOD_PREFIXES = ("20", "30", "32", "63", "64", "67", "77", "90")
+HEAD_SUFFIXES = ("juoma",)
+WORD_RE = re.compile(r"[^\W\d_]+", re.U)
 TEMPERATURE_LABELS = {"warmTemperature", "coolTemperature", "freezeTemperature"}
 LITRE_UNITS = {"l": 1.0, "ltr": 1.0, "litre": 1.0, "litres": 1.0, "liter": 1.0, "liters": 1.0, "litra": 1.0,
                "litraa": 1.0, "dl": 0.1, "cl": 0.01, "ml": 0.001, "mlt": 0.001, "clt": 0.01}
@@ -185,8 +193,8 @@ def _read_csv(name: str, col: str) -> dict:
     return out
 
 
-def _fts_query(groups: list[list[str]]) -> str | None:
-    terms = {v for g in groups for v in g if len(v) >= 3}
+def _fts_query(groups: list[list[tuple]]) -> str | None:
+    terms = {v for g in groups for v, _, _ in g if len(v) >= 3}
     if not terms:
         return None
     return " OR ".join('"' + t.replace('"', "") + '"' for t in sorted(terms))
@@ -199,7 +207,7 @@ def _load() -> dict:
         path = _json_path()
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
-        products, raws, names_blob, blob = {}, {}, {}, {}
+        products, raws, names_blob, blob, primary = {}, {}, {}, {}, {}
         for item in items:
             if item.get("deleted"):
                 continue
@@ -209,6 +217,7 @@ def _load() -> dict:
             raws[pid] = item
             nb = " ".join(names.values()).lower()
             names_blob[pid] = nb
+            primary[pid] = WORD_RE.findall(next((names[l] for l in NAME_LANGS if l in names), "").lower())
             blob[pid] = " ".join([nb, (p.brand or "").lower(), (p.vendor or "").lower(), p.category or ""])
         stat = path.stat()
         sig = f"{stat.st_size}:{stat.st_mtime_ns}:{len(products)}"
@@ -222,24 +231,37 @@ def _load() -> dict:
             con.execute("insert or replace into catalog_meta values('sig', ?)", (sig,))
             con.commit()
         _state.update(
-            products=products, raws=raws, names=names_blob, blob=blob, con=con,
+            products=products, raws=raws, names=names_blob, blob=blob, primary=primary, con=con,
             reliability=_read_csv("valio_aimo_junction26_delivery_reliability.csv", "deliveryReliability"),
             co2=_read_csv("valio_aimo_junction26_carbon_footprint.csv", "AVG kg CO2-eq/kg"),
         )
         return _state
 
 
-def _groups(q: str) -> list[list[str]]:
+def _groups(q: str) -> list[list[tuple]]:
     q = re.sub(r"(lactose|laktos)[\s-]*free|laktoositon|laktosfri", " laktoositon ", q.lower())
+    q = re.sub(r"minced meat|ground meat", " jauheliha ", q)
     q = re.sub(r"gluten[\s-]*free|gluteeniton|glutenfri", " gluteeniton ", q)
     out = []
     for tok in re.findall(r"[\wäöåÄÖÅ%]+", q):
-        group = [tok]
+        stems = _stems(tok)
+        group = [(tok, 1.0, True)] + [(s, 0.95, False) for s in stems]
         for syn in SYNONYMS:
-            if tok in syn:
-                group = list(syn)
+            if tok in syn or any(s in syn for s in stems):
+                group = [(v, 1.0 if v == syn[0] else 0.85, v == syn[0]) for v in syn]
                 break
         out.append(group)
+    return out
+
+
+def _stems(tok: str) -> list[str]:
+    out = []
+    if tok.endswith("ies") and len(tok) > 4:
+        out.append(tok[:-3] + "y")
+    if tok.endswith("es") and len(tok) > 4:
+        out.append(tok[:-2])
+    if tok.endswith("s") and len(tok) > 3:
+        out.append(tok[:-1])
     return out
 
 
@@ -269,6 +291,24 @@ def _gluten_free(raw: dict, nb: str) -> bool:
 def _origin_code(o: str) -> str:
     o = o.strip().lower()
     return ORIGIN_ALIASES.get(o, o[:2])
+
+
+def _word_score(v: str, words: list[str], nb: str, compound: bool = True) -> float:
+    if " " in v:
+        return 3.0 if v in " ".join(words) else (0.5 if v in nb else 0.0)
+    best = 0.5 if v in nb else 0.0
+    for w in words:
+        if w == v:
+            return 3.0
+        if not compound:
+            continue
+        if w.endswith(v):
+            best = max(best, 1.5 if any(m in w[: -len(v)] for m in MODIFIER_PREFIXES) else 3.0)
+        elif w.startswith(v):
+            best = max(best, 3.0 if w[len(v):] in HEAD_SUFFIXES else 0.5)
+        elif v in w:
+            best = max(best, 0.5)
+    return best
 
 
 def _passes(pid: str, c: Constraint, s: dict) -> bool:
@@ -306,12 +346,18 @@ def search(q: str, constraints: Constraint | None = None, limit: int = 50) -> li
             cands = list(s["products"])
         scored = []
         for pid in cands:
-            blob, nb = s["blob"][pid], s["names"][pid]
+            nb = s["names"][pid]
+            words = s["primary"][pid]
             score = 0.0
+            hits = 0
             for g in groups:
-                if any(v in blob for v in g):
-                    score += 1 + (0.5 if any(v in nb for v in g) else 0)
-            if score:
+                hits += any(v in nb for v, _, _ in g)
+                score += max(_word_score(v, words, nb, c) * w for v, w, c in g)
+            if hits == len(groups):
+                score += 3
+            if (s["products"][pid].category or "").startswith(NONFOOD_PREFIXES):
+                score -= 4
+            if hits:
                 scored.append((-score, len(nb), pid))
         scored.sort()
         order = [pid for _, _, pid in scored]

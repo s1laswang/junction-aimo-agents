@@ -110,3 +110,18 @@ def test_tradeoff_public(products, offers):
     assert "vs 1 " not in line.replace("reliability 1 vs 1,", "")
     same = tradeoff(a, a)
     assert "reliability" not in same
+
+
+def test_safe_alternatives_when_milk_excluded():
+    from aimo import catalog
+    from aimo.substitute import safe_alternatives
+
+    item = NeedItem(query="milk", quantity=100, unit="l", constraints=Constraint(lactose_free=True))
+    assert not any(allergen_safe(p, item.constraints, ["milk"]) and match_score(item, p) >= 0.5 for p in catalog.search("milk", item.constraints, limit=50))
+    alts = safe_alternatives(item, ["milk"])
+    assert alts and all(why for _, why in alts)
+    alt, why = alts[0]
+    assert alt.query == "oat drink" and alt.quantity == 100 and alt.unit == "l"
+    ok = [p for p in catalog.search(alt.query, alt.constraints, limit=50) if allergen_safe(p, alt.constraints, ["milk"])]
+    assert max(match_score(alt, p) for p in ok) >= 0.5
+    assert safe_alternatives(NeedItem(query="milk", quantity=1, unit="l"), ["egg"]) == []
