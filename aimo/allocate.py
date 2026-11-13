@@ -215,3 +215,29 @@ def options(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetime
             out.append({"kind": "split", "date": d, "on_time": covered, "later": short, "days_late": n,
                         "why": f"{covered:g} {u} by {deliver_by}, remaining {short:g} {u} on {d}, {n} days late"})
     return out
+
+
+def stockout_plan(lines, fresh_offers: list[Offer], deliver_by: date, now: datetime | None = None) -> dict:
+    from .models import QuoteLine
+    now = _now(now)
+    new_lines: list = []
+    changes: list[str] = []
+    opts: list[dict] = []
+    shortfall = 0.0
+    for l in lines:
+        mine = [o for o in fresh_offers if o.product_id == l.product_id]
+        unit = l.sales_unit or (mine[0].product.sales_unit if mine else None) or "ST"
+        item = NeedItem(query=l.name or l.product_id, quantity=l.quantity, unit=unit)
+        prev = [o.model_copy(update={"units_needed": l.quantity}) for o in mine[:1]]
+        if not prev:
+            changes.append(f"{l.product_id}: {l.quantity:g} -> 0 units, no longer offered")
+        out, short, ch = reallocate(item, prev, fresh_offers, deliver_by, now)
+        changes += ch
+        if short > 1e-9:
+            shortfall += short
+            opts += [{**x, "product_id": l.product_id} for x in options(item, fresh_offers, deliver_by, now)]
+        for o in out:
+            new_lines.append(QuoteLine(product_id=o.product_id, name=o.product.name, quantity=o.units_needed,
+                                       sales_unit=o.product.sales_unit, unit_price_net=o.unit_price_net,
+                                       line_total_net=round(o.units_needed * o.unit_price_net, 2)))
+    return {"changed": bool(changes), "lines": new_lines, "shortfall": shortfall, "changes": changes, "options": opts}
