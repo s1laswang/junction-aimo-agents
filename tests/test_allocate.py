@@ -43,7 +43,7 @@ def test_units_for_litre_packs():
 
 def test_units_for_from_data_file():
     p = offer("464201", unit_size=False).product
-    assert units_for(p, 1000, "L") in (1000, None)
+    assert units_for(p, 1000, "L") == 1000
     assert units_for(offer("464073", 1).product, 5, "kg") is None
 
 
