@@ -54,10 +54,10 @@ table.ledger td.mono,table.ledger th.num,table.ledger td.num{font-family:var(--m
 table.ledger .num{text-align:right}
 table.ledger tr:last-child td{border-bottom:0}
 @media (max-width:640px){
-.top{gap:8px;padding:0 12px}
+.top{gap:8px;padding:0 8px}
 .top .brand{font-size:13px;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .top .right{gap:6px;min-width:0}
-.top select{max-width:128px}
+.top select{max-width:116px;padding:0 4px}
 .top .mocktag{display:none!important}
 .top nav{display:none}
 .top.open{flex-wrap:wrap;height:auto;min-height:44px;white-space:normal}
