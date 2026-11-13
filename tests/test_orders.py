@@ -111,3 +111,19 @@ def test_audit_reasons(env, monkeypatch):
     a, k = [e for e in ev if e[0][2] == "order.pending_approval"][0]
     assert a[4] == "over limit"
     assert (k.get("detail") or a[5])["reasons"][0]["code"] == "OVER_ORDER_LIMIT"
+
+
+def test_stockout_reopens_order(env, monkeypatch):
+    q = env["q7"] = quote("q7")
+    o = orders.place("hotel-aurora", "a1", req(q))
+    assert o.status == "confirmed"
+    new = QuoteLine(product_id="alt", name="Alt", quantity=1, unit_price_net=3, line_total_net=3)
+    stub(monkeypatch, "offers", fresh_offers=lambda c, d, ids: [])
+    stub(monkeypatch, "allocate", stockout_plan=lambda lines, fresh, day: {"changed": True, "lines": [new], "changes": ["p replaced by alt"], "shortfall": 0})
+    res = orders.react_stockout("p")
+    assert [x.order_id for x in res] == [o.order_id]
+    g = orders.get(o.order_id)
+    assert g.status == "pending_approval"
+    assert g.decision.reasons[0].code == "STOCKOUT"
+    assert g.substitutions[0].substitute_id == "alt"
+    assert g.total_net == 3

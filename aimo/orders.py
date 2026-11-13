@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from datetime import timedelta
 
@@ -10,13 +10,18 @@ from aimo.models import Decision, Order, PlaceOrderRequest, QuoteRequest, Reason
 NEXT = {
     "draft": {"pending_approval", "approved", "blocked", "expired"},
     "pending_approval": {"approved", "rejected", "expired"},
-    "approved": {"placed"},
-    "placed": {"confirmed"},
+    "approved": {"placed", "pending_approval"},
+    "placed": {"confirmed", "pending_approval"},
+    "confirmed": {"pending_approval"},
 }
 
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+def _lines(lines):
+    return [{"product_id": l.product_id, "name": l.name, "quantity": l.quantity} for l in lines]
 
 
 def _con():
@@ -147,7 +152,7 @@ def place(customer, agent_id, req: PlaceOrderRequest):
          quote.delivery_date.isoformat(), o.model_dump_json()),
     )
     con.commit()
-    detail = {"order_id": o.order_id, "quote_id": quote.quote_id, "total_net": o.total_net}
+    detail = {"order_id": o.order_id, "quote_id": quote.quote_id, "total_net": o.total_net, "lines": _lines(quote.lines)}
     audit.record(customer, f"agent:{agent_id}", "order.placed", o.order_id, "Agent submitted an order against a signed quote.", detail)
     products = {l.product_id: catalog.get(l.product_id) for l in quote.lines}
     subs = [Substitution(original_id=l.substitute_for, substitute_id=l.product_id, reason="Substitute chosen at quote time.") for l in quote.lines if l.substitute_for]
@@ -165,3 +170,31 @@ def place(customer, agent_id, req: PlaceOrderRequest):
         return set_status(o.order_id, "pending_approval", "system", why)
     set_status(o.order_id, "approved", "system", "Within mandate: " + why)
     return set_status(o.order_id, "placed", "system", "Placed automatically within mandate.")
+
+
+def react_stockout(product_id):
+    from aimo import allocate, offers
+    con = _con()
+    out = []
+    for r in con.execute("select * from orders where status in ('placed','approved','confirmed','pending_approval')").fetchall():
+        o = _order(r)
+        if all(l.product_id != product_id for l in o.lines):
+            continue
+        day = date.fromisoformat(r["delivery_date"])
+        fresh = offers.fresh_offers(o.customer, day, [l.product_id for l in o.lines])
+        plan = allocate.stockout_plan(o.lines, fresh, day)
+        if not plan["changed"]:
+            continue
+        old = {l.product_id for l in o.lines}
+        o.lines = plan["lines"]
+        o.total_net = round(sum(l.line_total_net for l in o.lines), 2)
+        o.substitutions += [Substitution(original_id=product_id, substitute_id=l.product_id, reason="Stock dropped, refilled from the next offer.") for l in o.lines if l.product_id not in old]
+        why = "Stock dropped after the order: " + "; ".join(plan["changes"]) + (f". Shortfall {plan['shortfall']:g}." if plan["shortfall"] else "")
+        o.decision = Decision(outcome="needs_approval", reasons=[Reason(code="STOCKOUT", text=why)])
+        o.status = "pending_approval"
+        o.updated_at = _now()
+        _save(con, o)
+        con.commit()
+        audit.record(o.customer, "system", "order.stockout", o.order_id, why, {"order_id": o.order_id, "quote_id": o.quote_id, "product_id": product_id, "total_net": o.total_net, "reasons": [x.model_dump() for x in o.decision.reasons], "lines": _lines(o.lines)})
+        out.append(o)
+    return out
