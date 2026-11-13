@@ -76,6 +76,7 @@ var a=$("f-actor").value,x=$("f-action").value,c=$("f-customer").value,o=$("f-or
 return state.events.filter(function(e){return (!c||e.customer===c)&&(!o||orderOf(e)===o)&&(!a||e.actor.split(":")[0]===a)&&(!x||e.action===x)});
 }
 function badge(){
+$("how-n").textContent=state.events.length;
 var b=$("badge"),n=state.events.length;
 if(state.bad===undefined||state.bad==="pending"){b.className="badge idle";b.textContent="Verifying chain";return}
 if(state.bad){b.className="badge stop";b.innerHTML=ICON.alert+'Chain broken at #'+state.bad.at+' <a href="#e'+state.bad.at+'" id="jump">Jump to #'+state.bad.at+'</a>';
@@ -84,11 +85,21 @@ var cp=state.cp&&state.cp.jws?", checkpoint #"+state.cp.seq+" signed":"";
 if(state.mode==="unknown"){b.className="badge idle";b.innerHTML=ICON.alert+"Chain check inconclusive in browser, "+n+" events";return}
 b.className="badge ok";b.innerHTML=ICON.shield+(state.mode==="gateway"?"Chain verified by gateway, ":state.srv?"Chain verified in your browser and by gateway, ":"Chain verified in your browser, ")+n+" event"+(n===1?"":"s")+cp;if(state.cp&&state.cp.hash)b.title="checkpoint "+state.cp.hash+" at "+state.cp.ts;
 }
+var tseq=0;
+async function scopedText(evs){
+var my=++tseq,pl=$("plain"),c=$("f-customer").value,o=$("f-order").value.trim();
+pl.textContent=state.live?"Loading":plainText(evs);
+if(!state.live)return;
+var d=await aimo.api("/v1/audit?"+(c?"customer="+encodeURIComponent(c)+"&":"")+(o?"order_id="+encodeURIComponent(o):""),{headers:{"X-Admin-Key":"demo-admin"}});
+if(my!==tseq)return;
+var t=d&&d.text;
+pl.textContent=t&&(evs.length||!t)?t:(evs.length?plainText(evs):"No audit events match these filters.");
+}
 function render(){
 var evs=filtered(),L=$("ledger");
 $("plain").hidden=state.view!=="text";L.hidden=state.view==="text";
 $("v-ledger").setAttribute("aria-pressed",state.view==="ledger");$("v-text").setAttribute("aria-pressed",state.view==="text");
-$("plain").textContent=state.view==="text"?(state.text||plainText(evs)):"";
+if(state.view==="text")scopedText(evs);
 if(!evs.length){L.innerHTML='<div class="empty">No audit events match these filters.</div>';return}
 var groups=[],idx={};
 evs.forEach(function(e){var k=orderOf(e)||"";if(!(k in idx)){idx[k]=groups.length;groups.push({k:k,items:[]})}groups[idx[k]].items.push(e)});
