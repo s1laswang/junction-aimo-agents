@@ -101,13 +101,13 @@ def verify(token, jwks=None):
     from joserfc.jwk import KeySet
 
     ks = KeySet.import_key_set(jwks) if jwks else None
-    key = ks if ks else keys.signing_key()
+    key = ks if ks else KeySet.import_key_set(keys.jwks())
     try:
         obj = jws.deserialize_compact(token, key, algorithms=ALGS)
     except (JoseError, ValueError, KeyError):
         raise QuoteError("BAD_SIGNATURE", "Quote signature is invalid.")
     h = obj.headers()
-    if h.get("alg") != "EdDSA" or (not jwks and h.get("kid") != keys.kid()):
+    if h.get("alg") != "EdDSA" or not h.get("kid"):
         raise QuoteError("BAD_SIGNATURE", "Quote was not signed with an accepted key.")
     try:
         return Quote(**json.loads(obj.payload), jws=token)
