@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from aimo.allocate import allocate, units_for
+from aimo.allocate import allocate, reallocate, units_for
 from aimo.models import NeedItem, Offer, Product, UnitSize
 
 FX = Path(__file__).parent / "fixtures"
@@ -100,3 +100,32 @@ def test_two_schedule_lines_same_product():
     b = offer("464201", 1).model_copy(update={"available_amount": 9999, "available_date": date(2026, 11, 17)})
     out, short = allocate(ITEM, [a, b], date(2026, 11, 17), NOW)
     assert [o.units_needed for o in out] == [400, 600] and short == 0.0
+
+
+def test_reallocate_stock_drop_refills_from_next():
+    fresh = [offer("462775", 1), offer("463380", 1), offer("464201", 1)]
+    prev, short = allocate(ITEM, fresh, D, NOW)
+    fresh[1] = fresh[1].model_copy(update={"available_amount": 300})
+    out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
+    assert {o.product_id: o.units_needed for o in out} == {"462775": 51, "463380": 300, "464201": 649}
+    assert short == 0.0
+    assert "463380: 698 -> 300 units, stock dropped" in ch
+    assert "+398 from 464201 delivered 2026-11-16" in ch
+
+
+def test_reallocate_blocked_and_shortfall():
+    fresh = [offer("462775", 1), offer("463380", 1)]
+    prev, _ = allocate(ITEM, fresh, D, NOW)
+    fresh[1] = fresh[1].model_copy(update={"sales_block": "Z"})
+    out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
+    assert [o.units_needed for o in out] == [51]
+    assert short == 949
+    assert any("463380: 698 -> 0 units, sales blocked" in c for c in ch)
+
+
+def test_reallocate_unchanged_is_noop():
+    fresh = [offer("462775", 1), offer("463380", 1), offer("464201", 1)]
+    prev, _ = allocate(ITEM, fresh, D, NOW)
+    out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
+    assert ch == [] and short == 0.0
+    assert [o.units_needed for o in out] == [51, 698, 251]

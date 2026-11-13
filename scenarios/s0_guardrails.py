@@ -12,7 +12,7 @@ def go():
     need = c.parse(f"I need 1000 litres of lactose-free milk by {day}", "hotel-aurora")
     picks = best_picks_covering(c.offers(need)["items"][0])
     q = c.quote(picks, day)
-    big = [{"product_id": p["product_id"], "quantity": p["quantity"] * 1000} for p in picks]
+    big = [{**p, "quantity": p["quantity"] * 1000} for p in picks]
     qb = c.quote(big, day)
     r.check("over-limit quote exceeds mandate", qb["total_net"] > m["per_order_eur"], f"{qb['total_net']}")
     o = c.order(qb)
@@ -23,7 +23,7 @@ def go():
     h, p, s = q["jws"].split(".")
     tam = ".".join([h, p[:-2] + ("AA" if p[-2:] != "AA" else "BB"), s])
     resp = c.call("POST", "/v1/orders", json={"quote_id": q["quote_id"], "jws": tam})
-    r.check("tampered jws rejected", resp.status_code in (400, 401, 403, 422) or resp.json().get("status") in ("rejected", "blocked"), str(resp.status_code))
+    r.check("tampered jws rejected", resp.status_code in TAMPER_STATUS and "order_id" not in resp.json(), str(resp.status_code))
 
 
 r.guard(go)
