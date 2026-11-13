@@ -62,3 +62,31 @@ def test_system_voice(tmp_path, monkeypatch):
     assert "Order confirmed by Valio (mock). Delivery 2026-11-16." in lines[1]
     assert lines[2][6:].startswith("Refused: Quote belongs")
     assert "The system" not in "".join(lines)
+
+
+def test_human_approval_not_doubled(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "h.db"))
+    audit.record("hotel-aurora", "human:Laura Virtanen", "order.approved", "o1", "x", {"order_id": "o1"})
+    audit.record("hotel-aurora", "human:Laura Virtanen", "approval.approved", "o1", "Laura Virtanen approved the order.", {"order_id": "o1"})
+    audit.record("hotel-aurora", "human:Laura Virtanen", "order.placed", "o1", "Placed after human approval.", {"order_id": "o1"})
+    assert len(audit.events(order_id="o1")) == 3
+    lines = audit.narrate(audit.events(order_id="o1")).splitlines()
+    assert len(lines) == 2 and "Placed after human approval." in lines[1]
+
+
+def test_verify_checkpoint_cli(tmp_path, monkeypatch, capsys):
+    import json
+
+    from aimo import keys
+
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "c.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    e = audit.record("hotel-aurora", "system", "order.placed", "o1", "ok")
+    cp = audit.checkpoint()
+    f = tmp_path / "jwks.json"
+    f.write_text(json.dumps(keys.jwks()))
+    assert audit.main(["x", "verify-checkpoint", cp["jws"], str(f)]) == 0
+    assert f"OK seq=1 hash={e.hash}" in capsys.readouterr().out
+    assert audit.main(["x", "verify-checkpoint", cp["jws"]]) == 0
+    assert audit.main(["x", "verify-checkpoint", cp["jws"][:-4] + "AAAA"]) == 1
+    assert "BAD_SIGNATURE" in capsys.readouterr().out

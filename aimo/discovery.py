@@ -43,7 +43,7 @@ def agent_card():
                 "note": "Select the key by the kid header and pin the algorithm to EdDSA, for example joserfc with algorithms=[\"EdDSA\"].",
             },
             "decisions": ["auto", "needs_approval", "blocked"],
-            "audit": "Every step is recorded in an append-only hash-chained log with a plain-language reason.",
+            "audit": "Every step is recorded in an append-only hash-chained log with a plain-language reason. GET /v1/audit returns verified {ok, bad_seq}, recomputed over the whole chain, and a checkpoint {seq, hash, ts, jws} whose jws is signed with the same EdDSA key as the quotes (check it against /.well-known/jwks.json).",
             "mandates": [
                 {
                     "customer": m.customer,

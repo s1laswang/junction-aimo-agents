@@ -11,6 +11,7 @@ def test_discovery(tmp_path, monkeypatch):
     assert {"place_order", "get_audit_trail", "get_product"} <= {t["name"] for t in card["tools"]}
     assert card["auth"]["agent"]["name"] == "X-Agent-Key"
     assert card["policies"]["quote_verification"]["alg"] == "EdDSA"
+    assert "checkpoint" in card["policies"]["audit"]
     assert len(card["policies"]["mandates"]) == 3
     k = c.get("/.well-known/jwks.json").json()["keys"][0]
     assert k["alg"] == "EdDSA" and k["kid"] and "d" not in k

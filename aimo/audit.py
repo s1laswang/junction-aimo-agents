@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import sys
 import warnings
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -174,6 +175,8 @@ SYSTEM = {
 def narrate(events, view="buyer"):
     lines = []
     for e in events:
+        if e.action in ("order.approved", "order.rejected") and e.actor.startswith("human"):
+            continue
         ts = e.ts if isinstance(e.ts, datetime) else datetime.fromisoformat(str(e.ts).replace("Z", "+00:00"))
         verb = VERBS.get(e.action, e.action.replace(".", " ").replace("_", " "))
         who = _who(e, view)
@@ -218,3 +221,38 @@ def checkpoint():
         algorithms=["EdDSA"],
     )
     return {**head, "jws": token}
+
+
+def verify_checkpoint(token, jwks=None):
+    from joserfc.errors import JoseError
+    from joserfc.jwk import KeySet
+
+    key = KeySet.import_key_set(jwks) if jwks else keys.signing_key()
+    try:
+        obj = jws.deserialize_compact(token, key, algorithms=["EdDSA"])
+        head = json.loads(obj.payload)
+        head["seq"], head["hash"]
+    except (JoseError, ValueError, KeyError, TypeError):
+        raise ValueError("BAD_SIGNATURE")
+    if obj.headers().get("alg") != "EdDSA" or (not jwks and obj.headers().get("kid") != keys.kid()):
+        raise ValueError("BAD_SIGNATURE")
+    return head
+
+
+def main(argv):
+    if len(argv) < 3 or argv[1] != "verify-checkpoint":
+        print("usage: python -m aimo.audit verify-checkpoint <jws> [jwks_url_or_file]")
+        return 2
+    from aimo.quotes import _load_jwks
+
+    try:
+        h = verify_checkpoint(argv[2], _load_jwks(argv[3]) if len(argv) > 3 else None)
+    except ValueError as e:
+        print(e)
+        return 1
+    print(f"OK seq={h['seq']} hash={h['hash']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
