@@ -23,7 +23,9 @@ Request from the hotel agent:
 
 Flow: `parse_request` turns it into a structured `Need`, `get_offers` returns ranked offers with price, stock, delivery date, reliability and CO2, `request_quote` returns a signed quote, `place_order` either places it or sends it to a human, depending on the mandate.
 
-TODO-VERIFY: paste real curl and a trimmed real response here.
+Real run on the seeded hotel agent (key `demo-hotel-aurora`): one offer, Valio kevytmaito 1 l laktoositon UHT at 1.56 EUR net per carton, no shortfall. `request_quote` for 1,000 cartons returns a signed quote of 1,560.00 EUR net, 1,770.00 EUR gross, valid until the Valio cutoff. `place_order` returns status `confirmed` with decision `auto` (`WITHIN_MANDATE`: under the 2,500 EUR per-order limit and the 15,000 EUR weekly budget). Over the limit, the order waits in `pending_approval` for a human.
+
+Verify the quote offline: see [STANDARDS](docs/STANDARDS.md).
 
 ## Docs
 

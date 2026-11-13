@@ -51,4 +51,10 @@ Valio has no order endpoint, so orders live in our store (see ASSUMPTIONS).
 
 The LLM is optional (`agents/llm.py`, OpenAI-compatible env vars). Without a key the rule-based parser runs.
 
-TODO-VERIFY: module list and decision rules against real code on dev.
+## Decision rules
+
+`policy.decide` returns one outcome with plain-language reasons.
+
+- `blocked`: allergen conflict (including traces), category not allowed, substitution not allowed, quote past cutoff.
+- `needs_approval`: over the per-order limit, over the weekly budget, substitution that needs approval, product data missing.
+- `auto`: otherwise (`WITHIN_MANDATE`). A non-preferred brand is noted but does not stop an order.
