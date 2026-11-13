@@ -5,13 +5,6 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-try:
-    import aimo.audit
-except ModuleNotFoundError:
-    sys.modules["aimo.audit"] = types.ModuleType("aimo.audit")
-    import aimo
-    aimo.audit = sys.modules["aimo.audit"]
-
 from aimo import orders
 from aimo.models import Decision, PlaceOrderRequest, Quote, QuoteLine, Reason
 
@@ -53,7 +46,7 @@ def env(monkeypatch):
             return Decision(outcome="needs_approval", reasons=[Reason(code="OVER_ORDER_LIMIT", text="over limit")])
         return Decision(outcome="auto", reasons=[Reason(code="WITHIN_MANDATE", text="within mandate")])
 
-    stub(monkeypatch, "quotes", redeem=redeem)
+    stub(monkeypatch, "quotes", redeem=redeem, QuoteError=QuoteError)
     stub(monkeypatch, "policy", decide=decide)
     stub(monkeypatch, "catalog", get=lambda i: None)
     stub(monkeypatch, "mandates", get=lambda c, a=None: None)
@@ -98,3 +91,12 @@ def test_expiry(env):
     o = orders.place("hotel-aurora", "a1", req(q))
     time.sleep(1.2)
     assert orders.get(o.order_id).status == "expired"
+
+
+def test_ask_human_and_substitutions(env):
+    q = env["q5"] = quote("q5")
+    q.lines[0].substitute_for = "orig"
+    o = orders.place("hotel-aurora", "a1", PlaceOrderRequest(quote_id="q5", jws="good", ask_human=True, note="check"))
+    assert o.status == "pending_approval"
+    assert o.decision.reasons[0].code == "AGENT_REQUESTED"
+    assert o.substitutions[0].original_id == "orig"

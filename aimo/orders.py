@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from datetime import timedelta
 
 from aimo import audit, db
-from aimo.models import Decision, Order, Quote, QuoteRequest, PlaceOrderRequest
+from aimo.models import Decision, Order, PlaceOrderRequest, QuoteRequest, Reason, Substitution
 
 NEXT = {
     "draft": {"pending_approval", "approved", "blocked", "expired"},
@@ -108,7 +108,7 @@ def _confirm(con, delivery_date, o):
 
 def create_quote(customer, agent_id, req: QuoteRequest):
     from aimo import offers, quotes
-    lines, total_gross, valid_until = offers.price_lines(customer, req)
+    lines, total_gross, valid_until = offers.price_lines(customer, req.delivery_date, req.offers)
     return quotes.issue(customer, agent_id, lines, req.delivery_date, valid_until, total_gross)
 
 
@@ -123,7 +123,11 @@ def spent_this_week(customer):
 
 def place(customer, agent_id, req: PlaceOrderRequest):
     from aimo import catalog, mandates, policy, quotes
-    quote = quotes.redeem(req.quote_id, req.jws, customer, agent_id)
+    try:
+        quote = quotes.redeem(req.quote_id, req.jws, customer, agent_id)
+    except quotes.QuoteError as e:
+        audit.record(customer, f"agent:{agent_id}", "order_rejected", req.quote_id, getattr(e, "text", str(e)), {"quote_id": req.quote_id, "code": getattr(e, "code", None)})
+        raise
     con = _con()
     r = con.execute("select * from orders where idem=?", (quote.quote_id,)).fetchone()
     if r:
@@ -143,7 +147,11 @@ def place(customer, agent_id, req: PlaceOrderRequest):
     detail = {"order_id": o.order_id, "quote_id": quote.quote_id, "total_net": o.total_net}
     audit.record(customer, f"agent:{agent_id}", "order.placed", o.order_id, "Agent submitted an order against a signed quote.", detail)
     products = {l.product_id: catalog.get(l.product_id) for l in quote.lines}
-    o.decision = policy.decide(quote, mandates.get(customer, agent_id), products, spent_this_week(customer))
+    subs = [Substitution(original_id=l.substitute_for, substitute_id=l.product_id, reason="Substitute chosen at quote time.") for l in quote.lines if l.substitute_for]
+    o.substitutions = subs
+    o.decision = policy.decide(quote, mandates.get(customer, agent_id), products, spent_this_week(customer), subs)
+    if req.ask_human and o.decision.outcome == "auto":
+        o.decision = Decision(outcome="needs_approval", reasons=[Reason(code="AGENT_REQUESTED", text=req.note or "The agent asked for human approval.")])
     _save(con, o)
     con.commit()
     why = "; ".join(x.text for x in o.decision.reasons) or o.decision.outcome
