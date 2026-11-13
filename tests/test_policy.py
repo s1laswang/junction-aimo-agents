@@ -90,3 +90,12 @@ def test_put_persists_and_audits():
     assert len(mandates.all()) == 3
     ev = audit.events(customer="hotel-aurora")[-1]
     assert ev.action == "mandate_updated" and "per_order_eur" in ev.why and "->" in ev.why
+
+
+def test_demo_limits_from_measured_milk_price():
+    net_per_l = 1.64
+    hotel, school = mandates.get("hotel-aurora"), mandates.get("school-hervanta")
+    assert decide(quote(1000 * net_per_l), hotel, PRODUCTS, now=NOW).outcome == "auto"
+    assert decide(quote(2000 * net_per_l), hotel, PRODUCTS, now=NOW).outcome == "needs_approval"
+    assert decide(quote(200 * net_per_l), school, PRODUCTS, now=NOW).outcome == "auto"
+    assert decide(quote(500 * net_per_l), school, PRODUCTS, now=NOW).outcome == "needs_approval"
