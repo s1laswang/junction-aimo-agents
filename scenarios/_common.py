@@ -86,11 +86,22 @@ def next_monday(today=None):
     return d + timedelta(days=(7 - d.weekday()) % 7 or 7)
 
 
+def pick_of(o, qty):
+    return {"product_id": o["product_id"], "quantity": qty, "substitute_for": o.get("substitute_for")}
+
+
+def is_substitute(o):
+    return bool(o.get("substitute_for"))
+
+
+TAMPER_STATUS = (409,)
+
+
 def picks_from(offers_resp, per_item=None):
     picks = []
     for it in offers_resp["items"]:
         for o in it["offers"][: per_item or 1]:
-            picks.append({"product_id": o["product_id"], "quantity": o["units_needed"]})
+            picks.append(pick_of(o, o["units_needed"]))
     return picks
 
 
@@ -101,7 +112,7 @@ def best_picks_covering(item, need_units=None):
         take = min(o["units_needed"], o["available_amount"])
         if take <= 0:
             continue
-        out.append({"product_id": o["product_id"], "quantity": take})
+        out.append(pick_of(o, take))
         got += take
         if got >= o["units_needed"]:
             break
