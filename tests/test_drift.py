@@ -120,3 +120,8 @@ def test_live(tmp_path):
     except httpx.TransportError:
         pytest.skip("gateway down")
     assert r["standing_order"]["lines"]
+
+
+def test_apply_holds_on_approval():
+    r = {"standing_order": {"lines": []}, "flags": [{"route": "approval", "product_id": "1", "fix": {}}]}
+    assert drift.apply(r, "k", "http://x")["status"] == "needs_approval"

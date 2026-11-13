@@ -171,17 +171,37 @@ def check(customer, key, url, today=None, state_path=None, rebaseline=False, cli
     return {"standing_order": order, "flags": flags}
 
 
+def apply(result, key, url):
+    o = result["standing_order"]
+    pending = [f for f in result["flags"] if f["route"] == "approval"]
+    if pending:
+        return {"status": "needs_approval", "flags": pending}
+    fixes = {f["product_id"]: f["fix"] for f in result["flags"]}
+    lines = []
+    for l in o["lines"]:
+        fx = fixes.get(l["product_id"], {})
+        pid = fx["product_id"] if fx.get("action") == "substitute" else l["product_id"]
+        lines.append({"product_id": pid, "quantity": fx.get("quantity", l["quantity"])})
+    c = httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=30)
+    q = c.post("/v1/quotes", json={"offers": lines, "delivery_date": o["delivery_date"]}).raise_for_status().json()
+    return c.post("/v1/orders", json={"quote_id": q["quote_id"], "jws": q["jws"]}).raise_for_status().json()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--customer", required=True, choices=list(SEEDS))
-    ap.add_argument("--key", default=os.environ.get("AIMO_AGENT_KEY", ""))
+    ap.add_argument("--key", default=os.environ.get("AIMO_AGENT_KEY"))
+    ap.add_argument("--apply", action="store_true")
     ap.add_argument("--url", default=os.environ.get("AIMO_URL", "http://127.0.0.1:8080"))
     ap.add_argument("--rebaseline", action="store_true")
     a = ap.parse_args()
+    a.key = a.key or "demo-" + a.customer
     r = check(a.customer, a.key, a.url, rebaseline=a.rebaseline)
     print(json.dumps(r, indent=1))
     for f in r["flags"]:
         print(f"[{f['route']}] {f['why']} -> {f['fix']['action']}")
+    if a.apply:
+        print(json.dumps(apply(r, a.key, a.url), indent=1))
 
 
 if __name__ == "__main__":
