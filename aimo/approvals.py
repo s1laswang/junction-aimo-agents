@@ -50,9 +50,7 @@ def pending(customer=None):
 
 
 def _expire(order, why):
-    out = _m("orders").set_status(order.order_id, "expired", "system")
-    _m("audit").record(order.customer, "system", "approval.expired", order.order_id, why, {"order_id": order.order_id})
-    return out
+    return _m("orders").set_status(order.order_id, "expired", "system", why)
 
 
 def decide(order_id, approve, by, note=""):
@@ -71,11 +69,15 @@ def decide(order_id, approve, by, note=""):
     verb = "approved" if approve else "rejected"
     why = f"{by} {verb} the order of {order.total_net:.2f} EUR. Note: {note or 'none'}. Held for approval because: {_reasons(order)}."
     detail = {"order_id": order_id, "note": note}
-    if approve:
-        orders.set_status(order_id, "approved", f"human:{by}")
-        out = orders.set_status(order_id, "placed", f"human:{by}")
-    else:
-        out = orders.set_status(order_id, "rejected", f"human:{by}")
+    actor = f"human:{by}"
+    try:
+        if approve:
+            orders.set_status(order_id, "approved", actor, why)
+            out = orders.set_status(order_id, "placed", actor, why)
+        else:
+            out = orders.set_status(order_id, "rejected", actor, why)
+    except ValueError:
+        raise ApprovalError("NOT_PENDING", f"Order {order_id} was already decided.")
     _m("audit").record(order.customer, f"human:{by}", f"approval.{verb}", order_id, why, detail)
     _notify(out, verb)
     return out
