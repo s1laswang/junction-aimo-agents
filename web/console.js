@@ -70,7 +70,7 @@ async function call(tool,method,path,body,mock,why){
  return res;
 }
 const tierRank={best:4,better:3,good:2,exact:1};
-function best(offers){return [...offers].sort((a,b)=>(tierRank[b.tier]||0)-(tierRank[a.tier]||0)||b.match_score-a.match_score)[0]}
+function best(offers){const ok=offers.filter(o=>!o.closing_time||new Date(o.closing_time)>Date.now());return [...(ok.length?ok:offers)].sort((a,b)=>(tierRank[b.tier]||0)-(tierRank[a.tier]||0)||b.match_score-a.match_score)[0]}
 function consChips(c){
  const o=[];if(c.lactose_free)o.push("lactose-free");if(c.gluten_free)o.push("gluten-free");
  (c.exclude_allergens||[]).forEach(a=>o.push("no "+a));(c.labels||[]).forEach(l=>o.push(l));
@@ -86,9 +86,9 @@ function offersHtml(need,off){
   const ni=need.items[i]||g.need_item||{};
   const pick=best(g.offers||[]);
   const ht=(g.offers||[]).some(o=>o.tier);
-  const rows=(g.offers||[]).map(o=>`<tr class="${o===pick?"pick":""}"><td>${esc(o.product.name)}${o===pick?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${noteHtml(o.notes)}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${AVAIL(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg??"-"}</td>${ht?`<td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td>`:""}</tr>`).join("");
+  const rows=(g.offers||[]).map(o=>`<tr class="${o===pick?"pick":""}"><td>${esc(o.product.name)}${o===pick?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${noteHtml(o.notes)}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${AVAIL(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg!=null?NF.format(o.co2_per_kg):"-"}</td>${ht?`<td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td>`:""}</tr>`).join("");
   const sf=g.shortfall>0?`<tr class="short"><td colspan="${ht?9:8}">Shortfall: ${g.shortfall} units not available by the delivery date.</td></tr>`:"";
-  return`<div class="tw"><div class="note" style="margin:6px 0 2px">${esc(ni.query||"")} - ${esc(ni.quantity||"")} ${esc(ni.unit||"")}</div><table><thead><tr><th>Product</th><th>Brand</th><th class="n">Units</th><th class="n">Unit EUR</th><th class="n">Total EUR</th><th class="n">Available</th><th class="n">Reliab.</th><th class="n">CO2/kg</th>${ht?"<th>Tier</th>":""}</tr></thead><tbody>${rows}${sf}</tbody></table></div>`}).join("")+`</div>`;
+  return`<div class="tw"><div class="note" style="margin:6px 0 2px">${esc(ni.query||"")} - ${esc(ni.quantity||"")} ${esc(ni.unit||"")}</div><table><thead><tr><th>Product</th><th>Brand</th><th class="n">Units</th><th class="n">Unit EUR</th><th class="n">Total EUR</th><th class="n">Available</th><th class="n">Reliab.</th><th class="n">CO2/kg</th>${ht?"<th>Tier</th>":""}</tr></thead><tbody>${rows}${(g.offers||[]).length?"":`<tr class="short"><td colspan="9">No offers found for this item.</td></tr>`}${sf}</tbody></table></div>`}).join("")+`</div>`;
 }
 function quoteHtml(q){
  return`<div class="sec quote"><h3>Signed quote</h3><div class="kv"><span class="mono">${esc(q.quote_id)}</span><span>Total <b class="mono">${money(q.total_net)}</b></span><span>Valid until <b class="mono">${esc(q.valid_until)}</b></span><span class="tag ok">signed Ed25519</span><span class="jws" title="${esc(q.jws)}">${esc(q.jws.slice(0,28))}...</span><button class="ghost" type="button" id="copy">Copy</button></div></div>`;
