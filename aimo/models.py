@@ -66,6 +66,7 @@ class Offer(BaseModel):
     co2_per_kg: float | None = None
     match_score: float = 0.0
     tier: Tier | None = None
+    substitute_for: str | None = None
     notes: list[str] = Field(default_factory=list)
 
 
@@ -73,6 +74,8 @@ class OfferGroup(BaseModel):
     need_item: NeedItem
     offers: list[Offer]
     shortfall: float = 0.0
+    alternatives: list[Offer] = Field(default_factory=list)
+    options: list[dict] = Field(default_factory=list)
 
 
 class OffersResponse(BaseModel):
@@ -81,10 +84,12 @@ class OffersResponse(BaseModel):
 
 class QuoteLine(BaseModel):
     product_id: str
+    name: str | None = None
     quantity: float
     sales_unit: str | None = None
     unit_price_net: float
     line_total_net: float
+    substitute_for: str | None = None
 
 
 class Quote(BaseModel):
@@ -104,6 +109,7 @@ class Quote(BaseModel):
 class QuoteRequestLine(BaseModel):
     product_id: str
     quantity: float
+    substitute_for: str | None = None
 
 
 class QuoteRequest(BaseModel):
@@ -140,6 +146,8 @@ class Order(BaseModel):
     status: OrderStatus
     decision: Decision
     substitutions: list[Substitution] = Field(default_factory=list)
+    delivery_date: date | None = None
+    valid_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -147,6 +155,8 @@ class Order(BaseModel):
 class PlaceOrderRequest(BaseModel):
     quote_id: str
     jws: str
+    ask_human: bool = False
+    note: str | None = None
 
 
 class ApprovalDecision(BaseModel):

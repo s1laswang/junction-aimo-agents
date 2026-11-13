@@ -37,7 +37,7 @@ Every team codes against this. Changes only through lead-gateway, announced to a
 | `web/audit.*` | ui-audit |
 | `web/admin.*`, `web/index.html`, `web/style.css`, `web/shell.js` | ui-admin |
 | `tests/` | sh-qa (each worker adds its own `tests/test_<module>.py`) |
-| `docs/JUDGING.md` | sh-qa |
+| `docs/JUDGING.md`, `pytest.ini` | sh-qa |
 | `Makefile`, `.dockerignore` | sh-deploy |
 | `Dockerfile`, `deploy/` | sh-deploy |
 | `README.md`, `docs/` | sh-docs |
@@ -139,4 +139,21 @@ catalog.search -> substitute.allergen_safe -> substitute.match_score (drop low) 
 ## Workflow
 
 - Shared venv: `ln -s ~/aimo-agents/.venv .venv` (never commit it). New dependency: ask lead-gateway.
-- Leads merge from their worktree: `git -C ~/software/junction26-valio merge --no-ff <branch>`, then `pytest -q` there must be green.
+- Leads merge from their worktree: `git -C ~/software/junction26-valio merge --no-ff <branch>`, then `python -m pytest -q` there must be green, then push: `~/.local/forceguard/git push origin dev` (origin = Momin010/junction26-valio). Workers never push. Nobody touches main.
+
+## v3 additions (23:20)
+
+- `Offer.substitute_for: product_id|None` (set when the offer replaces the asked product). `QuoteRequestLine` and `QuoteLine` carry `substitute_for` too; `QuoteLine.name` added. `orders.place` fills `Order.substitutions` from quote lines with `substitute_for` and passes them to `policy.decide`.
+- `PlaceOrderRequest {quote_id, jws, ask_human=false, note}`: `ask_human` forces `needs_approval` with reason `AGENT_REQUESTED` (note as text).
+- MCP tool arguments are the REST JSON body fields at top level (e.g. `get_offers` takes `customer, deliver_by, items, raw_text`), plus query params for GET tools. Tool result = the REST JSON.
+- `get_audit_trail` returns `AuditTrail {events, text}`.
+- Bad/tampered/used/expired jws: HTTP 409 `{code, text}` (QuoteError code), no Order created, an `order_rejected` AuditEvent is written. MCP returns the same as a tool error.
+- `GET /v1/products/{id}` -> `Product` (tool `get_product`).
+
+## v4 additions (23:50)
+
+- `OfferGroup.offers` = the allocation (what to buy, `units_needed > 0`). `OfferGroup.alternatives` = up to 5 other matching products priced for the full quantity, ranked, with `tier` and a one-line trade-off in `notes[0]`. `OfferGroup.options` = `allocate.options(...)` dicts (partial / late / split, each with `why`) when shortfall > 0.
+- `Order.delivery_date` and `Order.valid_until` (copied from the quote) for the approval inbox.
+- `Product.allergens` format (fixed): plain lowercase names for CONTAINS (`milk`, `lactose`, `gluten`, `egg`, `peanuts`...), `may_contain:<name>` for MAY_CONTAIN. Lactose-free milk legitimately contains `milk` but not `lactose`. `Constraint.exclude_allergens` uses the same names.
+- Audit actions use dots (`order.rejected`, `parse.request`, `offers.compared`), and status changes put Decision reasons in `why`.
+- Push rule: leads `git push origin dev` after each green merge. Workers never push. Never force-push.

@@ -110,7 +110,7 @@ def drift_rules(line, before, after, mandate, delivery):
         pct = round((weeks[-1] - weeks[0]) / weeks[0] * 100, 1)
         if pct >= CREEP_PCT:
             flag("qty_creep", weeks[0], weeks[-1],
-                 f"Weekly quantity of {name} grew from {weeks[0]} to {weeks[-1]} {line['unit']} (+{pct}%) over {len(weeks)} weeks without a decision.",
+                 f"Weekly quantity of {name} grew from {weeks[0]} to {weeks[-1]} {line['unit']} (+{pct}%) over {len(weeks)} weeks (seeded demo history) without a decision.",
                  {"action": "confirm_qty", "quantity": weeks[0]}, "approval")
     return flags
 
@@ -171,10 +171,10 @@ def check(customer, key, url, today=None, state_path=None, rebaseline=False, cli
     return {"standing_order": order, "flags": flags}
 
 
-def apply(result, key, url):
+def apply(result, key, url, ask_human=True):
     o = result["standing_order"]
     pending = [f for f in result["flags"] if f["route"] == "approval"]
-    if pending:
+    if pending and not ask_human:
         return {"status": "needs_approval", "flags": pending}
     fixes = {f["product_id"]: f["fix"] for f in result["flags"]}
     lines = []
@@ -184,7 +184,77 @@ def apply(result, key, url):
         lines.append({"product_id": pid, "quantity": fx.get("quantity", l["quantity"])})
     c = httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=30)
     q = c.post("/v1/quotes", json={"offers": lines, "delivery_date": o["delivery_date"]}).raise_for_status().json()
-    return c.post("/v1/orders", json={"quote_id": q["quote_id"], "jws": q["jws"]}).raise_for_status().json()
+    body = {"quote_id": q["quote_id"], "jws": q["jws"]}
+    if pending:
+        body.update(ask_human=True, note="; ".join(f["why"] for f in pending))
+    return c.post("/v1/orders", json=body).raise_for_status().json()
+
+
+OPEN = ("placed", "confirmed", "approved")
+
+
+def line_fix(line, group, delivery):
+    pid, qty = line["product_id"], line["quantity"]
+    offers = group.get("offers", [])
+    mine = next((o for o in offers if o["product_id"] == pid), None)
+    blocked = mine is None or mine.get("sales_block")
+    avail = 0 if blocked else (mine.get("available_amount") or 0)
+    late = mine.get("available_date") if mine else None
+    if not blocked and avail >= qty and not (late and late[:10] > delivery):
+        return None
+    name = line.get("name") or pid
+    subs = [o for o in offers if o.get("substitute_for") == pid]
+    keep = min(avail, qty) if not (late and late[:10] > delivery) else 0
+    if subs or keep:
+        lines = ([{"product_id": pid, "quantity": keep}] if keep else []) + [
+            {"product_id": o["product_id"], "quantity": o["units_needed"], "substitute_for": pid} for o in subs]
+        why = (f"{name} is no longer available for {delivery}: " if not keep else f"Only {keep} of {qty} of {name} available for {delivery}: ") + (
+            f"keeping {keep} and substituting {', '.join(o['product']['name'] for o in subs)}." if keep and subs else
+            f"substituting {', '.join(o['product']['name'] for o in subs)}." if subs else f"reducing to {keep}.")
+        return {"after": keep, "fix": {"action": "split" if keep and subs else "substitute" if subs else "reduce_qty", "lines": lines}, "why": why, "date": delivery}
+    if late and late[:10] > delivery:
+        return {"after": late[:10], "fix": {"action": "move_date", "date": late[:10], "lines": [{"product_id": pid, "quantity": qty}]},
+                "why": f"{name} is only available from {late[:10]}, after the {delivery} delivery; moving the date.", "date": late[:10]}
+    return {"after": 0, "fix": {"action": "none", "lines": []}, "why": f"{name} is not available for {delivery} and no substitute was found.", "date": delivery}
+
+
+def watch_orders(customer, key, url, today=None, state_path=None, client=None):
+    c = client or httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=30)
+    state_path = state_path or os.environ.get("AIMO_DRIFT_STATE", "var/drift.json")
+    state = load_state(state_path)
+    done = state.setdefault("_watched", {})
+    orders = c.get("/v1/orders", params={"customer": customer}).raise_for_status().json()
+    out = []
+    for o in orders:
+        if o["status"] not in OPEN or o["order_id"] in done:
+            continue
+        delivery = (o.get("delivery_date") or (today or date.today()) + timedelta(days=1))
+        delivery = delivery if isinstance(delivery, str) else delivery.isoformat()
+        need = {"customer": customer, "deliver_by": delivery, "items": [
+            {"query": l.get("name") or l["product_id"], "quantity": l["quantity"], "unit": l.get("sales_unit") or "", "constraints": {}} for l in o["lines"]]}
+        groups = c.post("/v1/offers", json=need).raise_for_status().json()["items"]
+        res, new_lines, dates = [], [], {delivery}
+        for l, g in zip(o["lines"], groups):
+            f = line_fix(l, g, delivery)
+            if f is None:
+                new_lines.append({"product_id": l["product_id"], "quantity": l["quantity"]})
+                continue
+            new_lines += f["fix"]["lines"]
+            dates.add(f["date"])
+            res.append({"order_id": o["order_id"], "product_id": l["product_id"], "before": l["quantity"], "after": f["after"],
+                        "fix": f["fix"], "why": f["why"], "new_order_id": None})
+        if not res:
+            continue
+        if new_lines and any(r["fix"]["action"] != "none" for r in res):
+            q = c.post("/v1/quotes", json={"offers": new_lines, "delivery_date": max(dates)}).raise_for_status().json()
+            note = f"Replaces order {o['order_id']}: " + " ".join(r["why"] for r in res)
+            new = c.post("/v1/orders", json={"quote_id": q["quote_id"], "jws": q["jws"], "ask_human": True, "note": note}).raise_for_status().json()
+            for r in res:
+                r["new_order_id"] = new["order_id"]
+            done[o["order_id"]] = new["order_id"]
+            save_state(state_path, state)
+        out += res
+    return out
 
 
 def main():
@@ -192,16 +262,21 @@ def main():
     ap.add_argument("--customer", required=True, choices=list(SEEDS))
     ap.add_argument("--key", default=os.environ.get("AIMO_AGENT_KEY"))
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--hold", action="store_true")
+    ap.add_argument("--watch", action="store_true")
     ap.add_argument("--url", default=os.environ.get("AIMO_URL", "http://127.0.0.1:8080"))
     ap.add_argument("--rebaseline", action="store_true")
     a = ap.parse_args()
     a.key = a.key or "demo-" + a.customer
+    if a.watch:
+        print(json.dumps(watch_orders(a.customer, a.key, a.url), indent=1))
+        return
     r = check(a.customer, a.key, a.url, rebaseline=a.rebaseline)
     print(json.dumps(r, indent=1))
     for f in r["flags"]:
         print(f"[{f['route']}] {f['why']} -> {f['fix']['action']}")
     if a.apply:
-        print(json.dumps(apply(r, a.key, a.url), indent=1))
+        print(json.dumps(apply(r, a.key, a.url, not a.hold), indent=1))
 
 
 if __name__ == "__main__":

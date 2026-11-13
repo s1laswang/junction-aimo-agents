@@ -32,7 +32,7 @@ def test_milk_flow(client, agent_key):
     })
     assert quote["lines"] and quote["total_net"] > 0
     jwks = client.get("/.well-known/jwks.json").json()
-    assert jws.deserialize_compact(quote["jws"], KeySet.import_key_set(jwks))
+    assert jws.deserialize_compact(quote["jws"], KeySet.import_key_set(jwks), algorithms=["EdDSA"])
 
     order = call(client, "POST", "/v1/orders", agent_key, json={"quote_id": quote["quote_id"], "jws": quote["jws"]})
     assert order["decision"]["outcome"] in ("auto", "needs_approval", "blocked")
@@ -46,6 +46,8 @@ def test_milk_flow(client, agent_key):
     audit = call(client, "GET", f"/v1/audit?order_id={order['order_id']}", agent_key)
     events = audit if isinstance(audit, list) else audit["events"]
     assert events
-    for a, b in zip(events, events[1:]):
-        assert b["prev_hash"] == a["hash"]
     assert all(e["why"] for e in events)
+    full = call(client, "GET", "/v1/audit", agent_key)
+    chain = full if isinstance(full, list) else full["events"]
+    for a, b in zip(chain, chain[1:]):
+        assert b["prev_hash"] == a["hash"]

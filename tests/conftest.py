@@ -8,13 +8,13 @@ os.environ.setdefault("AIMO_DATA_DIR", "data")
 def tmp_db(tmp_path_factory):
     p = str(tmp_path_factory.mktemp("db") / "aimo.db")
     os.environ["AIMO_DB"] = p
-    os.environ["AIMO_DB_PATH"] = p
     return p
 
 
 @pytest.fixture(scope="session")
 def client(tmp_db):
     pytest.importorskip("aimo.app")
+    pytest.importorskip("aimo.api")
     from fastapi.testclient import TestClient
     from aimo.app import app
     with TestClient(app) as c:

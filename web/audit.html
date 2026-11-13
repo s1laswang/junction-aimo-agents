@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audit trail - Aimo Trade Gateway</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/audit.css">
+</head>
+<body>
+<header class="top"><a class="brand" href="/">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html">Console</a><a href="/inbox.html">Approvals</a><a href="/audit.html" aria-current="page">Audit</a><a href="/admin.html">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
+<main>
+<div class="titlebar">
+<div><h1>Audit trail</h1><p class="muted small" id="scope"></p></div>
+<div id="badge" class="badge" role="status" aria-live="polite"></div>
+</div>
+<form class="filters" id="filters" autocomplete="off">
+<label>Customer<select id="f-customer"></select></label>
+<label>Order<input id="f-order" type="text" placeholder="order id" spellcheck="false"></label>
+<label>Actor<select id="f-actor"><option value="">all</option><option value="agent">agent</option><option value="human">human</option><option value="system">system</option></select></label>
+<label>Action<select id="f-action"><option value="">all</option></select></label>
+<div class="spacer"></div>
+<div class="seg" role="group" aria-label="View">
+<button type="button" class="btn" id="v-ledger" aria-pressed="true">Ledger</button>
+<button type="button" class="btn" id="v-text" aria-pressed="false">Plain text</button>
+</div>
+<button type="button" class="btn" id="export"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>Export JSON</button>
+</form>
+<section id="ledger" class="panel ledger-wrap"></section>
+<pre id="plain" class="panel plain" hidden></pre>
+</main>
+<script src="/shell.js"></script>
+<script src="/audit.js"></script>
+</body>
+</html>
