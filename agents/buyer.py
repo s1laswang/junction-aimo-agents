@@ -1,11 +1,14 @@
 import argparse
 import asyncio
+import contextlib
+import os
 import json
 import math
 import sys
 import time
 
-from mcp import ClientSession
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 from agents import llm
@@ -84,68 +87,82 @@ async def _call(s, name, args):
     return _data(await s.call_tool(name, args))
 
 
-async def _run(text, customer, key, url, log, poll, interval):
-    out = {"need": None, "chosen": [], "quote": None, "order": None, "log": log}
+@contextlib.asynccontextmanager
+async def _session(url, key, stdio):
+    if stdio:
+        params = StdioServerParameters(command=sys.executable, args=["-m", "aimo.mcp_server"],
+                                       env={**os.environ, "AIMO_AGENT_KEY": key})
+        async with stdio_client(params) as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                yield s
+        return
     async with create_mcp_http_client(headers={"X-Agent-Key": key}) as http:
         async with streamable_http_client(url, http_client=http) as streams:
             async with ClientSession(streams[0], streams[1]) as s:
                 await s.initialize()
-                need = await _call(s, "parse_request", {"text": text, "customer": customer})
-                out["need"] = need
-                log.append(f"Understood the request for {customer}: " + "; ".join(
-                    f"{i['quantity']:g} {i['unit']} {i['query']}" for i in need["items"]) + f", delivery by {_day(need['deliver_by'])}.")
-                try:
-                    res = await _call(s, "get_offers", need)
-                except RuntimeError:
-                    res = await _call(s, "get_offers", {"need": need})
-                chosen, lines = [], []
-                for entry in res["items"]:
-                    ni, offers = entry["need_item"], entry["offers"]
-                    log.append(f"Found {len(offers)} offers for {ni['query']}.")
-                    first = llm.choose(text, [o for o in offers if usable(o, ni, need["deliver_by"])])
-                    got, left = pick(ni, offers, need["deliver_by"], first)
-                    if not got:
-                        log.append(f"No offer for {ni['query']} is available in time and within constraints.")
-                    for c in got:
-                        o = c["offer"]
-                        rel = o.get("reliability")
-                        log.append(f"Chose {c['quantity']} x {o['product']['name']} at {o['unit_price_net']:.2f} {o['currency']} net"
-                                   + (f", delivery reliability {rel:.0%}" if rel is not None else "")
-                                   + f", available {_day(o.get('available_date'))}.")
-                    if left > 1e-6:
-                        log.append(f"Shortfall: {left:.0%} of {ni['query']} cannot be covered.")
-                    chosen += got
-                out["chosen"] = chosen
-                if not chosen:
-                    log.append("Nothing to order.")
-                    return out
-                lines = [{"product_id": c["product_id"], "quantity": c["quantity"]} for c in chosen]
-                quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(need["deliver_by"])})
-                out["quote"] = quote
-                log.append(f"Signed quote {quote['quote_id']}: {quote['total_net']:.2f} {quote['currency']} net, valid until {quote['valid_until']}.")
-                order = await _call(s, "place_order", {"quote_id": quote["quote_id"], "jws": quote["jws"]})
-                out["order"] = order
-                d = order["decision"]
-                why = " ".join(r["text"] for r in d["reasons"])
-                if d["outcome"] == "auto":
-                    log.append(f"Order {order['order_id']} placed automatically within mandate. {why}".strip())
-                elif d["outcome"] == "blocked":
-                    log.append(f"Order {order['order_id']} blocked. {why}".strip())
-                else:
-                    log.append(f"Order {order['order_id']} needs human approval. {why}".strip())
-                    for _ in range(poll):
-                        if order["status"] != "pending_approval":
-                            break
-                        await asyncio.sleep(interval)
-                        order = await _call(s, "get_order", {"order_id": order["order_id"]})
-                    out["order"] = order
-                    log.append(f"Order {order['order_id']} is now {order['status']}.")
+                yield s
+
+
+async def _run(text, customer, key, url, log, poll, interval, stdio=False):
+    out = {"need": None, "chosen": [], "quote": None, "order": None, "log": log}
+    async with _session(url, key, stdio) as s:
+        need = await _call(s, "parse_request", {"text": text, "customer": customer})
+        out["need"] = need
+        log.append(f"Understood the request for {customer}: " + "; ".join(
+            f"{i['quantity']:g} {i['unit']} {i['query']}" for i in need["items"]) + f", delivery by {_day(need['deliver_by'])}.")
+        try:
+            res = await _call(s, "get_offers", need)
+        except RuntimeError:
+            res = await _call(s, "get_offers", {"need": need})
+        chosen, lines = [], []
+        for entry in res["items"]:
+            ni, offers = entry["need_item"], entry["offers"]
+            log.append(f"Found {len(offers)} offers for {ni['query']}.")
+            first = llm.choose(text, [o for o in offers if usable(o, ni, need["deliver_by"])])
+            got, left = pick(ni, offers, need["deliver_by"], first)
+            if not got:
+                log.append(f"No offer for {ni['query']} is available in time and within constraints.")
+            for c in got:
+                o = c["offer"]
+                rel = o.get("reliability")
+                log.append(f"Chose {c['quantity']} x {o['product']['name']} at {o['unit_price_net']:.2f} {o['currency']} net"
+                           + (f", delivery reliability {rel:.0%}" if rel is not None else "")
+                           + f", available {_day(o.get('available_date'))}.")
+            if left > 1e-6:
+                log.append(f"Shortfall: {left:.0%} of {ni['query']} cannot be covered.")
+            chosen += got
+        out["chosen"] = chosen
+        if not chosen:
+            log.append("Nothing to order.")
+            return out
+        lines = [{"product_id": c["product_id"], "quantity": c["quantity"]} for c in chosen]
+        quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(need["deliver_by"])})
+        out["quote"] = quote
+        log.append(f"Signed quote {quote['quote_id']}: {quote['total_net']:.2f} {quote['currency']} net, valid until {quote['valid_until']}.")
+        order = await _call(s, "place_order", {"quote_id": quote["quote_id"], "jws": quote["jws"]})
+        out["order"] = order
+        d = order["decision"]
+        why = " ".join(r["text"] for r in d["reasons"])
+        if d["outcome"] == "auto":
+            log.append(f"Order {order['order_id']} placed automatically within mandate. {why}".strip())
+        elif d["outcome"] == "blocked":
+            log.append(f"Order {order['order_id']} blocked. {why}".strip())
+        else:
+            log.append(f"Order {order['order_id']} needs human approval. {why}".strip())
+            for _ in range(poll):
+                if order["status"] != "pending_approval":
+                    break
+                await asyncio.sleep(interval)
+                order = await _call(s, "get_order", {"order_id": order["order_id"]})
+            out["order"] = order
+            log.append(f"Order {order['order_id']} is now {order['status']}.")
     return out
 
 
-def run(text, customer, key, url="http://127.0.0.1:8080/mcp", poll=0, interval=2.0):
+def run(text, customer, key=None, url="http://127.0.0.1:8080/mcp", poll=0, interval=2.0, stdio=False):
     log = []
-    out = asyncio.run(_run(text, customer, key, url, log, poll, interval))
+    out = asyncio.run(_run(text, customer, key or "demo-" + customer, url, log, poll, interval, stdio))
     summary = llm.explain({"request": text, "log": log})
     if summary:
         log.append(summary)
@@ -159,14 +176,15 @@ def main():
     p.add_argument("--key")
     p.add_argument("--url", default="http://127.0.0.1:8080/mcp")
     p.add_argument("--poll", type=int, default=30)
+    p.add_argument("--stdio", action="store_true")
     p.add_argument("--mcp-config", action="store_true")
     a = p.parse_args()
     if a.mcp_config:
         print(MCP_CONFIG)
         return
-    if not a.text or not a.key:
-        p.error("text and --key are required")
-    out = run(a.text, a.customer, a.key, a.url, a.poll)
+    if not a.text:
+        p.error("text is required")
+    out = run(a.text, a.customer, a.key, a.url, a.poll, stdio=a.stdio)
     print("\n".join(out["log"]))
     o = out["order"]
     sys.exit(0 if o and o["status"] not in ("blocked", "rejected") else 1)
