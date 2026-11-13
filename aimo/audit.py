@@ -47,6 +47,16 @@ def _db():
     return con
 
 
+def _norm(v):
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, dict):
+        return {k: _norm(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    return v
+
+
 def _dump(d):
     return json.dumps(d, sort_keys=True, default=str)
 
@@ -59,7 +69,7 @@ def _digest(prev, row):
 def _event(r):
     return AuditEvent(
         seq=r[0], ts=r[1], customer=r[2], actor=r[3], action=r[4], subject=r[5],
-        detail=json.loads(r[6]), why=r[7], prev_hash=r[8], hash=r[9],
+        detail=_norm(json.loads(r[6])), why=r[7], prev_hash=r[8], hash=r[9],
     )
 
 
@@ -73,7 +83,7 @@ def record(customer, actor, action, subject, why, detail=None):
             "seq": seq,
             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "customer": customer, "actor": actor, "action": action,
-            "subject": str(subject), "detail": json.loads(_dump(detail or {})), "why": why,
+            "subject": str(subject), "detail": _norm(json.loads(_dump(detail or {}))), "why": why,
         }
         h = _digest(prev, row)
         con.execute(
