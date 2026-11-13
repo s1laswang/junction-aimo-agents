@@ -135,3 +135,11 @@ def test_top_match_is_the_product_asked(query, must):
     found = catalog.search(query, item.constraints, limit=50)
     top = max(found, key=lambda p: match_score(item, p))
     assert must in top.name.lower() and match_score(item, top) >= 0.5, top.name
+
+
+def test_mince_top_is_jauheliha():
+    from aimo import catalog
+
+    item = NeedItem(query="mince", quantity=60, unit="kg")
+    top = max(catalog.search("mince", item.constraints, limit=50), key=lambda p: match_score(item, p))
+    assert "jauheliha" in top.name.lower(), top.name

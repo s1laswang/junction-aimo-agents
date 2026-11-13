@@ -113,7 +113,7 @@ DERIVED = [
     "sauce", "kastike", "salad", "salaatti", "soup", "keitto", "cake", "kakku", "pie", "piirakka", "juice", "mehu",
     "mash", "muusi", "chips", "fries", "ranskal", "pizza", "bar", "patukka", "pudding", "puuro", "jam", "hillo",
     "cookie", "keksi", "noodle", "nuudeli", "mayo", "majoneesi", "dumpling", "bun", "pulla", "croissant", "knife",
-    "veitsi", "täysmehu", "lasagne", "burger", "sandwich", "decoration", "koriste", "chicken", "kana", "meat", "liha",
+    "veitsi", "sipuli", "onion", "rouhe", "täysmehu", "lasagne", "burger", "sandwich", "decoration", "koriste", "chicken", "kana", "meat", "liha",
     "potato", "peruna", "cider", "siideri", "ketchup", "paste", "seos", "rahka", "quark",
 ]
 
@@ -148,7 +148,7 @@ def _forms(w):
     elif w.endswith("s") and not w.endswith("ss") and len(w) > 3:
         w = w[:-1]
     forms = list(dict.fromkeys([*(SYNONYMS.get(w) or [w]), *_fi(raw), *_fi(w)]))
-    return [f[:-1] if len(f) > 4 and f[-1] in "aeiouyäö" else f for f in forms]
+    return [f[:-1] if len(f) > 4 and f[-1] in "aioyuäö" else f for f in forms]
 
 
 PENALTY_GROUPS = [
@@ -181,8 +181,9 @@ def match_score(item: NeedItem, product: Product) -> float:
     if hit == 0:
         return 0.0
     score = 0.6 + 0.4 * hit / len(qwords)
+    pname = name.replace("jauheliha", "mince")
     for _, words, pen in PENALTY_GROUPS:
-        if _has(name, words) and not _has(q, words):
+        if _has(pname, words) and not _has(q, words):
             score *= 1 - pen
     qf = [f for w in qwords for f in _forms(w) + [w]]
     for d in DERIVED:
