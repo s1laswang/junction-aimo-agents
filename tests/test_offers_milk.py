@@ -8,6 +8,8 @@ import pytest
 from aimo.models import Constraint, Need, NeedItem, SimulateStock
 
 offers = pytest.importorskip("aimo.offers")
+pytest.importorskip("aimo.catalog")
+pytest.importorskip("aimo.substitute")
 
 DATA = Path(os.environ.get("AIMO_DATA_DIR", "data"))
 CACHE = Path(os.environ.get("AIMO_CACHE_DIR", "var/cache"))
