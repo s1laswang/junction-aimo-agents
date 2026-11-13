@@ -6,7 +6,7 @@ r = Run("s3_event_substitution", base)
 
 def go():
     c = Client(base, "hotel-aurora")
-    day = date.today() + timedelta(days=2)
+    day = next_monday()
     r.say("last-minute event: 400 portions of cream sauce pasta, 2 days out, item short -> recipe-logic substitution")
     need = c.parse(f"Last-minute event, we need pasta carbonara for 400 portions by {day}", "hotel-aurora")
     r.check("recipe expanded to ingredient lines", len(need["items"]) >= 3, f"{len(need['items'])} lines")
