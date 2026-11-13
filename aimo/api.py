@@ -2,14 +2,28 @@ import functools
 import os
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from aimo.models import (ApprovalDecision, Constraint, Mandate, Need, ParseRequest,
                          PlaceOrderRequest, QuoteRequest, SimulateStock)
 
-router = APIRouter()
+class GuardRoute(APIRoute):
+    def get_route_handler(self):
+        inner = super().get_route_handler()
+
+        async def handler(request):
+            try:
+                return await inner(request)
+            except Err as e:
+                return JSONResponse(e.body, status_code=e.status)
+
+        return handler
+
+
+router = APIRouter(route_class=GuardRoute)
 
 
 class Err(Exception):
@@ -46,8 +60,10 @@ def resolve_agent(key):
     return Principal(hit[0], hit[1], hit[2])
 
 
-def resolve_admin(key):
+def resolve_admin(key, agent_key=None):
     if not is_admin(key):
+        if not key and agent_from_key(agent_key):
+            raise Err(403, {"code": "forbidden", "text": "This route needs an admin key."})
         raise Err(401, {"code": "unauthorized", "text": "Missing or invalid X-Admin-Key."})
     return Principal(None, None, None, True)
 
@@ -70,15 +86,12 @@ def _guard(fn):
 
 def _auth(resolver, *headers):
     def dep(x_agent_key: str | None = Header(None), x_admin_key: str | None = Header(None)):
-        try:
-            return resolver(*[{"agent": x_agent_key, "admin": x_admin_key}[h] for h in headers])
-        except Err as e:
-            raise HTTPException(e.status, e.body)
+        return resolver(*[{"agent": x_agent_key, "admin": x_admin_key}[h] for h in headers])
     return dep
 
 
 agent = _auth(resolve_agent, "agent")
-admin = _auth(resolve_admin, "admin")
+admin = _auth(resolve_admin, "admin", "agent")
 anyone = _auth(resolve_any, "agent", "admin")
 
 
@@ -87,7 +100,8 @@ def domain(fn, *a, **kw):
         return fn(*a, **kw)
     except Exception as e:
         if type(e).__name__ in ("QuoteError", "ApprovalError") and hasattr(e, "code"):
-            raise Err(409, {"code": e.code, "text": e.text})
+            status = {"NOT_FOUND": 404, "NOT_APPROVER": 403}.get(e.code, 409)
+            raise Err(status, {"code": e.code, "text": e.text})
         raise
 
 
@@ -166,7 +180,13 @@ def decide_approval(order_id, body: ApprovalDecision):
 def get_audit_trail(p, customer=None, order_id=None):
     from aimo import audit
     events = audit.events(customer=scope(p, customer), order_id=order_id)
-    return {"events": jsonable_encoder(events), "text": audit.narrate(events)}
+    ok, bad_seq = audit.verify()
+    return {
+        "events": jsonable_encoder(events),
+        "text": audit.narrate(events),
+        "verified": {"ok": ok, "bad_seq": bad_seq},
+        "checkpoint": audit.checkpoint(),
+    }
 
 
 def get_mandate(p, customer=None):
@@ -208,6 +228,12 @@ def r_search_products(q: str = "", lactose_free: bool | None = None, gluten_free
     c = Constraint(lactose_free=lactose_free, gluten_free=gluten_free, exclude_allergens=exclude_allergens,
                    labels=labels, origin=origin, max_unit_price=max_unit_price, brands=brands)
     return search_products(q, c, limit)
+
+
+@router.get("/products/{product_id}")
+@_guard
+def r_product(product_id: str):
+    return get_product(product_id)
 
 
 @router.post("/needs/parse")

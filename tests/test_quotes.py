@@ -74,3 +74,20 @@ def test_key_persists(tmp_path):
     k = keys.kid()
     keys._cache.clear()
     assert keys.kid() == k
+
+
+def test_naive_valid_until_and_audit_and_cli(tmp_path, capsys):
+    from aimo import audit
+
+    line = QuoteLine(product_id="p1", quantity=1, unit_price_net=1.0, line_total_net=1.0)
+    q = quotes.issue("hotel-aurora", "a1", [line], date(2026, 11, 16), datetime.utcnow() + timedelta(hours=1), 1.24)
+    quotes.redeem(q.quote_id, q.jws, "hotel-aurora", "a1")
+    ev = audit.events(order_id=q.quote_id)
+    assert [e.action for e in ev] == ["quote.issued", "quote.redeemed"]
+    assert "1.00 EUR net (1.24 EUR with VAT)" in ev[0].why and "Helsinki time" in ev[0].why
+    assert ev[0].detail["total_net"] == 1.0
+    f = tmp_path / "jwks.json"
+    f.write_text(json.dumps(keys.jwks()))
+    assert quotes.main(["x", "verify", q.jws, str(f)]) == 0
+    assert "OK " + q.quote_id in capsys.readouterr().out
+    assert quotes.main(["x", "verify", q.jws[:-4] + "AAAA", str(f)]) == 1
