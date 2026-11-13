@@ -8,7 +8,7 @@ _MANDATES = [
     Mandate(
         customer="hotel-aurora",
         agent_id="buyer-aurora",
-        per_order_eur=3000.0,
+        per_order_eur=2500.0,
         per_week_eur=15000.0,
         exclude_allergens=[],
         allowed_categories=None,
