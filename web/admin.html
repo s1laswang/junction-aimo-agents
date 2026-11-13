@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mandates - Aimo Trade Gateway</title>
+<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/admin.css"></head>
+<body><header class="top"><a class="brand" href="/">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html">Console</a><a href="/inbox.html">Approvals</a><a href="/audit.html">Audit</a><a href="/admin.html" aria-current="page">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
+<main>
+<div class="panel-head"><div><h1>Mandate</h1><p class="muted small">What a buying agent may do for <span class="mono" id="who"></span> without a human.</p></div><span class="tag neutral mono" id="agent"></span></div>
+<form id="f" class="panel form" autocomplete="off">
+<div class="row2">
+<div class="field"><label for="per_order_eur">Per order limit (EUR)</label><input id="per_order_eur" type="number" min="0" step="1" inputmode="decimal" required></div>
+<div class="field"><label for="per_week_eur">Per week limit (EUR)</label><input id="per_week_eur" type="number" min="0" step="1" inputmode="decimal" required></div>
+</div>
+<div class="field"><label for="substitutions">Substitution policy</label><select id="substitutions"><option value="never">never</option><option value="within_prefs">within_prefs</option><option value="ask">ask</option></select><p class="muted small">never: exact products only. within_prefs: swap inside allergens and brands. ask: propose, human decides.</p></div>
+<div class="field"><label for="exclude_allergens-in">Excluded allergens</label><div class="chips" data-k="exclude_allergens"><input id="exclude_allergens-in" placeholder="add and press Enter"></div></div>
+<div class="field"><label for="allowed_categories-in">Allowed categories (empty = all)</label><div class="chips" data-k="allowed_categories"><input id="allowed_categories-in" placeholder="add and press Enter"></div></div>
+<div class="field"><label for="preferred_brands-in">Preferred brands</label><div class="chips" data-k="preferred_brands"><input id="preferred_brands-in" placeholder="add and press Enter"></div></div>
+<div class="field"><label for="approvers-in">Approvers</label><div class="chips" data-k="approvers"><input id="approvers-in" placeholder="add and press Enter"></div></div>
+<div class="actions"><button class="btn btn-primary" type="submit">Save mandate</button><button class="btn btn-quiet" type="button" id="reset">Reset</button><span class="small muted" id="msg" role="status"></span></div>
+</form>
+</main>
+<script src="/shell.js"></script><script src="/admin.js"></script></body></html>
