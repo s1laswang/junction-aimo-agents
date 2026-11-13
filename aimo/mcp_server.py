@@ -142,9 +142,13 @@ def mount(app):
 
     @contextlib.asynccontextmanager
     async def lifespan(a):
+        prev = holder.get("asgi")
         build()
-        async with outer(a), mcp.session_manager.run():
-            yield
+        try:
+            async with outer(a), mcp.session_manager.run():
+                yield
+        finally:
+            holder["asgi"] = prev
 
     app.router.lifespan_context = lifespan
 
