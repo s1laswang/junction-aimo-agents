@@ -109,8 +109,8 @@ def test_reallocate_stock_drop_refills_from_next():
     out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
     assert {o.product_id: o.units_needed for o in out} == {"462775": 51, "463380": 300, "464201": 649}
     assert short == 0.0
-    assert "463380: 698 -> 300 units, stock dropped" in ch
-    assert "+398 from 464201 delivered 2026-11-16" in ch
+    assert "463380 p463380: 698 -> 300 units, stock dropped" in ch
+    assert "+398 from 464201 p464201 delivered 2026-11-16" in ch
 
 
 def test_reallocate_blocked_and_shortfall():

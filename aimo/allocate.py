@@ -131,6 +131,10 @@ def allocate(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetim
     return out, shortfall
 
 
+def _label(p: Product) -> str:
+    return f"{p.product_id} {p.name[:40].strip()}".strip()
+
+
 def _key(o: Offer):
     return o.product_id, o.available_date
 
@@ -150,11 +154,11 @@ def reallocate(item: NeedItem, allocated: list[Offer], fresh_offers: list[Offer]
         else:
             why, r = _why(f, item, deliver_by, now)
         if why:
-            changes.append(f"{p.product_id}: {p.units_needed:g} -> 0 units, {why}")
+            changes.append(f"{_label(p.product)}: {p.units_needed:g} -> 0 units, {why}")
             continue
         n = min(p.units_needed, math.floor(f.available_amount))
         if n < p.units_needed:
-            changes.append(f"{p.product_id}: {p.units_needed:g} -> {n:g} units, stock dropped")
+            changes.append(f"{_label(p.product)}: {p.units_needed:g} -> {n:g} units, stock dropped")
         if n <= 0:
             continue
         a = f.model_copy(deep=True)
@@ -171,7 +175,7 @@ def reallocate(item: NeedItem, allocated: list[Offer], fresh_offers: list[Offer]
     rest = item.model_copy(update={"quantity": max(0.0, round(item.quantity - covered, 6))})
     new, shortfall, skipped = fill(rest, pool, deliver_by, now) if rest.quantity > 1e-9 else ([], 0.0, [])
     for n in new:
-        changes.append(f"+{n.units_needed:g} from {n.product_id} delivered {n.available_date}")
+        changes.append(f"+{n.units_needed:g} from {_label(n.product)} delivered {n.available_date}")
         if _key(n) in kept:
             k = kept[_key(n)]
             k.units_needed += n.units_needed
@@ -230,7 +234,7 @@ def stockout_plan(lines, fresh_offers: list[Offer], deliver_by: date, now: datet
         item = NeedItem(query=l.name or l.product_id, quantity=l.quantity, unit=unit)
         prev = [o.model_copy(update={"units_needed": l.quantity}) for o in mine[:1]]
         if not prev:
-            changes.append(f"{l.product_id}: {l.quantity:g} -> 0 units, no longer offered")
+            changes.append(f"{l.product_id} {(l.name or '')[:40].strip()}: {l.quantity:g} -> 0 units, no longer offered")
         out, short, ch = reallocate(item, prev, fresh_offers, deliver_by, now)
         changes += ch
         if short > 1e-9:
