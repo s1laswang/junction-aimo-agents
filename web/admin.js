@@ -17,13 +17,18 @@ var b=document.createElement("button");b.type="button";b.setAttribute("aria-labe
 b.onclick=function(){cur[k].splice(i,1);render()};c.append(b);box.insertBefore(c,inp)});
 });
 }
+async function last(){
+var a=await aimo.api("/v1/audit?customer="+encodeURIComponent(aimo.customer()),{admin:true}),e=(Array.isArray(a)?a:a&&a.events||[]).filter(function(x){return x.action==="mandate_updated"}).pop(),el=$("last");
+el.textContent="";if(!e)return;
+var k=document.createElement("a");k.href="/audit.html";k.className="mono";k.textContent="#"+e.seq;
+el.append("Last change by "+e.actor+", "+String(e.ts).replace("T"," ").slice(0,16)+" UTC, audit ");el.append(k)}
 async function load(){
 var c=aimo.customer(),m=/[?&]mock=1/.test(location.search)?null:await aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true});
 aimo.mock(!m);
 cur=JSON.parse(JSON.stringify(m||MOCK[c]));
 LIST.forEach(function(k){if(!cur[k])cur[k]=[]});
 orig=JSON.parse(JSON.stringify(cur));
-$("msg").textContent="";render();
+$("msg").textContent="";render();last();
 }
 document.querySelectorAll(".chips input").forEach(function(inp){
 var k=inp.parentNode.dataset.k;
@@ -39,7 +44,7 @@ if(cur.per_order_eur>cur.per_week_eur){$("msg").textContent="Per order limit exc
 var body=Object.assign({},cur);if(!body.allowed_categories.length)body.allowed_categories=null;
 var r=await aimo.api("/v1/mandate",{method:"PUT",body:body,admin:true});
 var le=aimo.lastError;$("msg").textContent=r?"Saved.":(le&&le.status===404||le&&le.status===405)?"Not yet supported by gateway.":le&&le.status?"Blocked: "+(typeof le.detail==="string"?le.detail:"status "+le.status):"Gateway offline.";
-if(r){orig=JSON.parse(JSON.stringify(cur));var a=await aimo.api("/v1/audit?customer="+encodeURIComponent(cur.customer),{admin:true}),l=(Array.isArray(a)?a:a&&a.events||[]).filter(function(e){return e.action==="mandate_updated"}).pop();if(l){$("msg").textContent="Saved, recorded in ";var k=document.createElement("a");k.href="/audit.html";k.textContent="audit #"+l.seq;$("msg").append(k)}}
+if(r){orig=JSON.parse(JSON.stringify(cur));var a=await aimo.api("/v1/audit?customer="+encodeURIComponent(cur.customer),{admin:true}),l=(Array.isArray(a)?a:a&&a.events||[]).filter(function(e){return e.action==="mandate_updated"}).pop();last();if(l){$("msg").textContent="Saved, recorded in ";var k=document.createElement("a");k.href="/audit.html";k.textContent="audit #"+l.seq;$("msg").append(k)}}
 });
 window.addEventListener("customer",load);
 load();
