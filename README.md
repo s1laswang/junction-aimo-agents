@@ -7,12 +7,11 @@ Built for Junction 2026, Valio Aimo challenge.
 ## Quickstart (60 seconds)
 
 ```
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ln -s ~/aimo-agents/data data && ln -s ~/aimo-agents/.env .env
-.venv/bin/uvicorn aimo.app:app --port 8080
+make demo
 ```
 
-TODO-VERIFY: `make demo` (sh-deploy) replaces the three steps above and runs the scenarios.
+`make demo` sets up the venv, boots the server, runs the scenarios and keeps the server up. Other targets: `setup`, `run`, `test`, `mcp`, `scenarios`. Set `PORT` to change the port (default 8080). No LLM key is needed.
 
 Open `http://localhost:8080/` for the console, approval inbox and audit view. MCP at `/mcp`, stdio via `.venv/bin/python -m aimo.mcp_server`.
 

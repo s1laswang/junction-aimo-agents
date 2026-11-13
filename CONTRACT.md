@@ -149,3 +149,11 @@ catalog.search -> substitute.allergen_safe -> substitute.match_score (drop low) 
 - `get_audit_trail` returns `AuditTrail {events, text}`.
 - Bad/tampered/used/expired jws: HTTP 409 `{code, text}` (QuoteError code), no Order created, an `order_rejected` AuditEvent is written. MCP returns the same as a tool error.
 - `GET /v1/products/{id}` -> `Product` (tool `get_product`).
+
+## v4 additions (23:50)
+
+- `OfferGroup.offers` = the allocation (what to buy, `units_needed > 0`). `OfferGroup.alternatives` = up to 5 other matching products priced for the full quantity, ranked, with `tier` and a one-line trade-off in `notes[0]`. `OfferGroup.options` = `allocate.options(...)` dicts (partial / late / split, each with `why`) when shortfall > 0.
+- `Order.delivery_date` and `Order.valid_until` (copied from the quote) for the approval inbox.
+- `Product.allergens` format (fixed): plain lowercase names for CONTAINS (`milk`, `lactose`, `gluten`, `egg`, `peanuts`...), `may_contain:<name>` for MAY_CONTAIN. Lactose-free milk legitimately contains `milk` but not `lactose`. `Constraint.exclude_allergens` uses the same names.
+- Audit actions use dots (`order.rejected`, `parse.request`, `offers.compared`), and status changes put Decision reasons in `why`.
+- Push rule: leads `git push origin dev` after each green merge. Workers never push. Never force-push.

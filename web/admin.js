@@ -1,4 +1,4 @@
-var MOCK={"hotel-aurora":{customer:"hotel-aurora",agent_id:"aurora-buyer",per_order_eur:2000,per_week_eur:8000,exclude_allergens:[],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["head.chef"]},"hospital-tays":{customer:"hospital-tays",agent_id:"tays-buyer",per_order_eur:800,per_week_eur:3000,exclude_allergens:["gluten","nuts","egg"],allowed_categories:["dairy","bakery"],substitutions:"ask",preferred_brands:[],approvers:["kitchen.manager","dietitian"]},"school-hervanta":{customer:"school-hervanta",agent_id:"hervanta-buyer",per_order_eur:500,per_week_eur:1500,exclude_allergens:["nuts"],allowed_categories:null,substitutions:"never",preferred_brands:["Valio"],approvers:["school.cook"]}};
+var MOCK={"hotel-aurora":{customer:"hotel-aurora",agent_id:"aurora-buyer",per_order_eur:2000,per_week_eur:8000,exclude_allergens:[],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["head.chef"]},"hospital-tays":{customer:"hospital-tays",agent_id:"tays-buyer",per_order_eur:1500,per_week_eur:6000,exclude_allergens:["gluten","nuts","egg"],allowed_categories:["dairy","bakery"],substitutions:"ask",preferred_brands:[],approvers:["kitchen.manager","dietitian"]},"school-hervanta":{customer:"school-hervanta",agent_id:"hervanta-buyer",per_order_eur:800,per_week_eur:3000,exclude_allergens:["nuts"],allowed_categories:null,substitutions:"never",preferred_brands:["Valio"],approvers:["school.cook"]}};
 var LIST=["exclude_allergens","allowed_categories","preferred_brands","approvers"];
 var cur={},orig={};
 var X='<svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M18 6L6 18M6 6l12 12"/></svg>';
@@ -39,7 +39,7 @@ if(cur.per_order_eur>cur.per_week_eur){$("msg").textContent="Per order limit exc
 var body=Object.assign({},cur);if(!body.allowed_categories.length)body.allowed_categories=null;
 var r=await aimo.api("/v1/mandate",{method:"PUT",body:body,admin:true});
 var le=aimo.lastError;$("msg").textContent=r?"Saved.":(le&&le.status===404||le&&le.status===405)?"Not yet supported by gateway.":le&&le.status?"Blocked: "+(typeof le.detail==="string"?le.detail:"status "+le.status):"Gateway offline.";
-if(r){orig=JSON.parse(JSON.stringify(cur))}
+if(r){orig=JSON.parse(JSON.stringify(cur));var a=await aimo.api("/v1/audit?customer="+encodeURIComponent(cur.customer),{admin:true}),l=(Array.isArray(a)?a:a&&a.events||[]).filter(function(e){return e.action==="mandate_updated"}).pop();if(l){$("msg").textContent="Saved, recorded in ";var k=document.createElement("a");k.href="/audit.html";k.textContent="audit #"+l.seq;$("msg").append(k)}}
 });
 window.addEventListener("customer",load);
 load();

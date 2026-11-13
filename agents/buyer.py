@@ -13,6 +13,12 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 
 from agents import llm
 
+DEMO = [
+    ("hotel-aurora", "I need 1000 litres of lactose-free milk by Monday"),
+    ("hospital-tays", "I need 40 kg of gluten-free pasta and 200 litres of oat drink without milk allergens by Friday"),
+    ("school-hervanta", "We need 300 kg of potatoes and 120 kg of minced meat for school lunches by Thursday"),
+]
+
 MCP_CONFIG = """Claude Code:
   claude mcp add --transport http aimo http://127.0.0.1:8080/mcp --header "X-Agent-Key: <KEY>"
 
@@ -176,11 +182,20 @@ def main():
     p.add_argument("--key")
     p.add_argument("--url", default="http://127.0.0.1:8080/mcp")
     p.add_argument("--poll", type=int, default=30)
+    p.add_argument("--demo", action="store_true")
     p.add_argument("--stdio", action="store_true")
     p.add_argument("--mcp-config", action="store_true")
     a = p.parse_args()
     if a.mcp_config:
         print(MCP_CONFIG)
+        return
+    if a.demo:
+        for c, t in DEMO:
+            print(f"== {c}: {t}")
+            try:
+                print("\n".join(run(t, c, a.key, a.url, a.poll, stdio=a.stdio)["log"]))
+            except Exception as e:
+                print(f"failed: {e}")
         return
     if not a.text:
         p.error("text is required")

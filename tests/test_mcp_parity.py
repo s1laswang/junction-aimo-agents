@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 
-TOOLS = {"search_products", "parse_request", "get_offers", "request_quote", "place_order",
+TOOLS = {"search_products", "parse_request", "get_offers", "request_quote", "place_order", "get_product",
          "get_order", "list_approvals", "decide_approval", "get_audit_trail", "get_mandate"}
 
 

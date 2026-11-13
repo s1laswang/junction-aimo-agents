@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from aimo.allocate import allocate, units_for
+from aimo.allocate import allocate, options, reallocate, units_for
 from aimo.models import NeedItem, Offer, Product, UnitSize
 
 FX = Path(__file__).parent / "fixtures"
@@ -100,3 +100,66 @@ def test_two_schedule_lines_same_product():
     b = offer("464201", 1).model_copy(update={"available_amount": 9999, "available_date": date(2026, 11, 17)})
     out, short = allocate(ITEM, [a, b], date(2026, 11, 17), NOW)
     assert [o.units_needed for o in out] == [400, 600] and short == 0.0
+
+
+def test_reallocate_stock_drop_refills_from_next():
+    fresh = [offer("462775", 1), offer("463380", 1), offer("464201", 1)]
+    prev, short = allocate(ITEM, fresh, D, NOW)
+    fresh[1] = fresh[1].model_copy(update={"available_amount": 300})
+    out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
+    assert {o.product_id: o.units_needed for o in out} == {"462775": 51, "463380": 300, "464201": 649}
+    assert short == 0.0
+    assert "463380: 698 -> 300 units, stock dropped" in ch
+    assert "+398 from 464201 delivered 2026-11-16" in ch
+
+
+def test_reallocate_blocked_and_shortfall():
+    fresh = [offer("462775", 1), offer("463380", 1)]
+    prev, _ = allocate(ITEM, fresh, D, NOW)
+    fresh[1] = fresh[1].model_copy(update={"sales_block": "Z"})
+    out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
+    assert [o.units_needed for o in out] == [51]
+    assert short == 949
+    assert any("463380: 698 -> 0 units, sales blocked" in c for c in ch)
+
+
+def test_reallocate_unchanged_is_noop():
+    fresh = [offer("462775", 1), offer("463380", 1), offer("464201", 1)]
+    prev, _ = allocate(ITEM, fresh, D, NOW)
+    out, short, ch = reallocate(ITEM, prev, fresh, D, NOW)
+    assert ch == [] and short == 0.0
+    assert [o.units_needed for o in out] == [51, 698, 251]
+
+
+def later(pid, d, amount):
+    return offer(pid, 1).model_copy(update={"available_date": d, "available_amount": amount, "closing_time": None})
+
+
+def test_options_fully_covered_is_empty():
+    assert options(ITEM, [offer("464201", 1)], D, NOW) == []
+
+
+def test_options_partial_only():
+    o = options(ITEM, [offer("462775", 1), offer("463380", 1)], D, NOW)
+    assert [x["kind"] for x in o] == ["partial"]
+    assert o[0]["covered"] == 749 and o[0]["shortfall"] == 251
+
+
+def test_options_late_and_split():
+    offers = [offer("462775", 1), offer("463380", 1), later("464201", date(2026, 11, 18), 9999)]
+    o = {x["kind"]: x for x in options(ITEM, offers, D, NOW)}
+    assert o["partial"]["shortfall"] == 251
+    assert o["late"]["date"] == date(2026, 11, 18) and o["late"]["days_late"] == 2
+    assert o["split"]["on_time"] == 749 and o["split"]["later"] == 251
+    assert o["split"]["date"] == date(2026, 11, 18)
+    assert "251" in o["split"]["why"]
+
+
+def test_options_nothing_on_time_gives_late_only():
+    o = options(ITEM, [later("464201", date(2026, 11, 17), 9999)], D, NOW)
+    assert [x["kind"] for x in o] == ["late"] and o[0]["days_late"] == 1
+
+
+def test_options_never_covers():
+    o = options(ITEM, [offer("462775", 1)], D, NOW)
+    assert [x["kind"] for x in o] == ["partial"]
