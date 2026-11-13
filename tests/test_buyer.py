@@ -58,3 +58,14 @@ def test_milk_end_to_end():
     from agents.buyer import run
     out = run("I need 1000 litres of lactose-free milk by Monday", "hotel-aurora", os.environ.get("AIMO_TEST_KEY", "demo-hotel-aurora"))
     assert out["chosen"] and out["order"]["decision"]["outcome"] in ("auto", "needs_approval", "blocked")
+
+
+def test_split_offers_cover_full_need():
+    ni = {"query": "oat", "quantity": 200, "unit": "L", "constraints": {}}
+    a = offer("a", 96.6, units=69, avail=1414)
+    b = offer("b", 174.23, units=131, avail=131)
+    for o, price in ((a, 1.4), (b, 1.33)):
+        o["unit_price_net"] = price
+        o["product"]["unit_size"] = {"value": 1.0, "unit": "l"}
+    c, left = pick(ni, [a, b], "2026-11-17")
+    assert [(x["product_id"], x["quantity"]) for x in c] == [("b", 131), ("a", 69)] and left == 0

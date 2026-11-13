@@ -54,19 +54,30 @@ def usable(offer, need_item, deliver_by):
     return True
 
 
-def rank(offers):
-    return sorted(offers, key=lambda o: (o["total_net"], -(o.get("reliability") or 0)))
+BASE = {"kg": 1, "g": 0.001, "l": 1, "dl": 0.1, "cl": 0.01, "ml": 0.001}
+
+
+def units_for(offer, need_item):
+    us = offer["product"].get("unit_size") or {}
+    f, n = BASE.get(str(us.get("unit", "")).lower()), BASE.get(str(need_item.get("unit", "")).lower())
+    if f and n and us.get("value") and need_item.get("quantity"):
+        return math.ceil(need_item["quantity"] * n / (us["value"] * f) - 1e-9)
+    return offer["units_needed"] or 1
+
+
+def rank(offers, need_item):
+    return sorted(offers, key=lambda o: (o["unit_price_net"] * units_for(o, need_item), -(o.get("reliability") or 0)))
 
 
 def pick(need_item, offers, deliver_by, first=None):
-    ok = rank([o for o in offers if usable(o, need_item, deliver_by)])
+    ok = rank([o for o in offers if usable(o, need_item, deliver_by)], need_item)
     if first is not None:
         ok.sort(key=lambda o: o["product_id"] != first)
     chosen, left = [], 1.0
     for o in ok:
         if left <= 1e-9:
             break
-        need_units = o["units_needed"] or 1
+        need_units = units_for(o, need_item)
         amt = o.get("available_amount")
         cap = 1.0 if amt is None else min(1.0, amt / need_units)
         take = min(cap, left)
