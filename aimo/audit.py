@@ -160,6 +160,17 @@ def _money(d):
     return None
 
 
+SYSTEM = {
+    "order.approved": "Mandate check passed:",
+    "order.pending_approval": "Order held for human approval:",
+    "order.blocked": "Order blocked:",
+    "order.confirmed": "Order confirmed by Valio (mock).",
+    "order.expired": "Order expired:",
+    "order.rejected": "Order rejected:",
+    "order_rejected": "Refused:",
+}
+
+
 def narrate(events, view="buyer"):
     lines = []
     for e in events:
@@ -168,13 +179,18 @@ def narrate(events, view="buyer"):
         who = _who(e, view)
         if view == "valio" and e.actor.startswith("human"):
             who += f" at {_name(e.customer)}"
-        s = f"{ts.astimezone(HELSINKI):%H:%M} {who} {verb}"
-        m = _money(e.detail)
-        if m and m.split()[0].replace(",", "") not in e.why.replace(",", ""):
-            s += f" for {m}"
-        s += "."
-        if e.why:
-            s += " " + e.why.strip().rstrip(".") + "."
+        clock = f"{ts.astimezone(HELSINKI):%H:%M}"
+        if e.action == "order_rejected" or (e.actor == "system" and e.action in SYSTEM):
+            why = e.why.strip().rstrip(".").replace("Mock confirmation, delivery", "Delivery")
+            s = f"{clock} {SYSTEM[e.action]}" + (f" {why}." if why else "")
+        else:
+            s = f"{clock} {who} {verb}"
+            m = _money(e.detail)
+            if m and m.split()[0].replace(",", "") not in e.why.replace(",", ""):
+                s += f" for {m}"
+            s += "."
+            if e.why:
+                s += " " + e.why.strip().rstrip(".") + "."
         if e.action in ("order.pending_approval", "order.blocked"):
             d = e.detail.get("decision")
             rs = e.detail.get("reasons") or (d.get("reasons") if isinstance(d, dict) else None) or []
