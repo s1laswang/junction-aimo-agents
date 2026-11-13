@@ -37,20 +37,23 @@ def go():
     try:
         import asyncio
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+        from agents import buyer
 
-        async def run():
-            async with streamablehttp_client(base + "/mcp", headers={"X-Agent-Key": KEYS["hotel-aurora"]}) as (rd, wr, _):
-                async with ClientSession(rd, wr) as s:
-                    await s.initialize()
-                    tools = {t.name for t in (await s.list_tools()).tools}
-                    return tools, await s.call_tool("get_offers", need)
+        async def tools():
+            async with create_mcp_http_client(headers={"X-Agent-Key": KEYS["hotel-aurora"]}) as http:
+                async with streamable_http_client(base + "/mcp", http_client=http) as st:
+                    async with ClientSession(st[0], st[1]) as sess:
+                        await sess.initialize()
+                        return {t.name for t in (await sess.list_tools()).tools}
 
-        tools, res = asyncio.run(run())
-        r.check("MCP lists all tools", {"get_offers", "request_quote", "place_order", "get_audit_trail"} <= tools, str(tools))
-        r.check("MCP get_offers returns offers", not res.isError)
+        names = asyncio.run(tools())
+        r.check("MCP lists all tools", {"get_offers", "request_quote", "place_order", "get_audit_trail"} <= names, str(names))
+        out = buyer.run(text, "hotel-aurora", KEYS["hotel-aurora"], base + "/mcp")
+        o2 = out.get("order") or {}
+        r.check("MCP buyer agent gets an order with Decision", bool(o2.get("decision", {}).get("outcome")), str(out.get("log", ""))[-150:])
     except Exception as e:
-        r.check("MCP get_offers", False, f"{type(e).__name__}: {e}"[:150])
+        r.check("MCP leg", False, f"{type(e).__name__}: {e}"[:150])
 
 
 r.guard(go)
