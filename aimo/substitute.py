@@ -229,3 +229,16 @@ def rank_substitutes(item: NeedItem, offers: list[Offer], exclude_allergens: lis
         out.append(o.model_copy(update={"tier": tier, "notes": [_line(o, base, item), *o.notes]}))
     order = {"good": 0, "better": 1, "best": 2}
     return sorted(out, key=lambda o: order[o.tier])[:limit]
+
+
+def safe_alternatives(item: NeedItem, exclude_allergens: list[str]) -> list[tuple[NeedItem, str]]:
+    from aimo import catalog
+    from aimo.recipes import recipe_swaps
+
+    c = item.constraints.model_copy(update={"exclude_allergens": [*item.constraints.exclude_allergens, *exclude_allergens]})
+    out = []
+    for o in recipe_swaps(item.query, c):
+        alt = item.model_copy(update={"query": o["query"], "quantity": item.quantity * o["ratio"], "constraints": c})
+        if any(allergen_safe(p, c, []) and match_score(alt, p) >= MIN_MATCH for p in catalog.search(alt.query, c, limit=50)):
+            out.append((alt, o["why"]))
+    return out
