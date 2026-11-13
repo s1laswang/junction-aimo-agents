@@ -60,15 +60,20 @@ def decide(quote, mandate, products, spent_this_week=0.0, substitutions=(), now=
         if mandate.preferred_brands and p.brand not in mandate.preferred_brands:
             add(info, "NON_PREFERRED_BRAND", f"{p.name} ({pid}) is brand {p.brand}, preferred: {', '.join(mandate.preferred_brands)}")
 
+    def nm(pid):
+        p = products.get(pid)
+        return f"{p.name} ({pid})" if p else str(pid)
+
     for s in substitutions:
         sub = products.get(s.substitute_id)
+        swap = f"{nm(s.substitute_id)} in place of {nm(s.original_id)}"
         if mandate.substitutions == "never":
-            add(blocked, "SUBSTITUTION_NOT_ALLOWED", f"Substituting {s.original_id} with {s.substitute_id} is not allowed by the mandate ({s.reason})")
+            add(blocked, "SUBSTITUTION_NOT_ALLOWED", f"Substitution of {swap} is not allowed by the mandate of {mandate.customer}")
         elif mandate.substitutions == "ask":
-            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"Substituting {s.original_id} with {s.substitute_id} needs human approval ({s.reason})")
+            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"The order swaps {swap}; {mandate.customer} requires a human to approve every substitution")
         elif mandate.preferred_brands and (sub is None or sub.brand not in mandate.preferred_brands):
             brand = sub.brand if sub else "unknown"
-            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"Substitute {s.substitute_id} is brand {brand}, outside preferred brands {', '.join(mandate.preferred_brands)} ({s.reason})")
+            add(ask, "SUBSTITUTION_NEEDS_APPROVAL", f"The order swaps {swap}; brand {brand} is outside the preferred brands {', '.join(mandate.preferred_brands)}")
 
     if total > mandate.per_order_eur:
         add(ask, "OVER_ORDER_LIMIT", f"Order total {_eur(total)} is over the {_eur(mandate.per_order_eur)} per-order limit")

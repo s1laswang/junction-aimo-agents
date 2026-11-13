@@ -22,9 +22,12 @@ def c(tmp_path, monkeypatch):
         yield cl
 
 
-def order(c, key, pid, qty):
+def order(c, key, pid, qty, sub_for=None):
     h = {"X-Agent-Key": key}
-    q = c.post("/v1/quotes", headers=h, json={"offers": [{"product_id": pid, "quantity": qty}], "delivery_date": DAY})
+    line = {"product_id": pid, "quantity": qty}
+    if sub_for:
+        line["substitute_for"] = sub_for
+    q = c.post("/v1/quotes", headers=h, json={"offers": [line], "delivery_date": DAY})
     assert q.status_code == 200, q.text
     q = q.json()
     o = c.post("/v1/orders", headers=h, json={"quote_id": q["quote_id"], "jws": q["jws"]})
@@ -79,3 +82,12 @@ def test_reseed_keeps_edits_and_adds_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("AIMO_DB", str(tmp_path / "r.db"))
     mandates.put(mandates.get("hotel-aurora").model_copy(update={"per_order_eur": 7.0}))
     assert mandates.get("hotel-aurora").per_order_eur == 7.0 and len(mandates.all()) == 3
+
+
+def test_substitution_live(c):
+    o = order(c, "demo-hospital-tays", "464073", 10, sub_for="464201")
+    assert o["status"] == "pending_approval" and o["substitutions"]
+    r = next(x for x in o["decision"]["reasons"] if x["code"] == "SUBSTITUTION_NEEDS_APPROVAL")
+    assert "Valio" in r["text"] and "in place of" in r["text"] and "464201" in r["text"]
+    o = order(c, "demo-hotel-aurora", "464073", 10, sub_for="464201")
+    assert o["decision"]["outcome"] == "auto" and o["substitutions"]

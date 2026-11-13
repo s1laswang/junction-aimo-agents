@@ -99,3 +99,19 @@ def test_demo_limits_from_measured_milk_price():
     assert decide(quote(2000 * net_per_l), hotel, PRODUCTS, now=NOW).outcome == "needs_approval"
     assert decide(quote(200 * net_per_l), school, PRODUCTS, now=NOW).outcome == "auto"
     assert decide(quote(500 * net_per_l), school, PRODUCTS, now=NOW).outcome == "needs_approval"
+
+
+def test_catalog_v4_strings_block_hospital():
+    h = mandates.get("hospital-tays")
+    for i, al in enumerate(["peanuts", "tree nuts", "may_contain:peanuts", "may_contain:tree nuts", "egg"]):
+        p = Product(product_id=f"v{i}", name="X", brand="Valio", allergens=[al])
+        assert decide(quote(10.0, pid=p.product_id), h, {p.product_id: p}, now=NOW).outcome == "blocked", al
+    ok = Product(product_id="m", name="Lactose-free milk", brand="Valio", allergens=["milk"])
+    assert decide(quote(10.0, pid="m"), h, {"m": ok}, now=NOW).outcome == "auto"
+
+
+def test_substitution_text_names_both():
+    s = [Substitution(original_id="464073", substitute_id="2", reason="x")]
+    d = decide(quote(10.0), mandates.get("hospital-tays"), PRODUCTS, substitutions=s, now=NOW)
+    t = d.reasons[0].text
+    assert "Oat drink" in t and "Valio whole milk 1 l lactose free UHT" in t
