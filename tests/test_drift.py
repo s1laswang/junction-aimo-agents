@@ -125,3 +125,24 @@ def test_live(tmp_path):
 def test_apply_holds_on_approval():
     r = {"standing_order": {"lines": []}, "flags": [{"route": "approval", "product_id": "1", "fix": {}}]}
     assert drift.apply(r, "k", "http://x")["status"] == "needs_approval"
+
+
+def test_apply_ask_human_sends_note():
+    sent = {}
+
+    def handler(req):
+        body = __import__("json").loads(req.content)
+        if req.url.path == "/v1/quotes":
+            return httpx.Response(200, json={"quote_id": "q", "jws": "j"})
+        sent.update(body)
+        return httpx.Response(200, json={"status": "pending_approval"})
+
+    real = httpx.Client
+    drift.httpx.Client = lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    try:
+        r = {"standing_order": {"delivery_date": "d", "lines": [{"product_id": "1", "quantity": 5}]},
+             "flags": [{"route": "approval", "product_id": "1", "why": "creep", "fix": {"action": "confirm_qty", "quantity": 4}}]}
+        drift.apply(r, "k", "http://t", ask_human=True)
+    finally:
+        drift.httpx.Client = real
+    assert sent["ask_human"] is True and sent["note"] == "creep"

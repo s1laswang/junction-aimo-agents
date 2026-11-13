@@ -110,7 +110,7 @@ def drift_rules(line, before, after, mandate, delivery):
         pct = round((weeks[-1] - weeks[0]) / weeks[0] * 100, 1)
         if pct >= CREEP_PCT:
             flag("qty_creep", weeks[0], weeks[-1],
-                 f"Weekly quantity of {name} grew from {weeks[0]} to {weeks[-1]} {line['unit']} (+{pct}%) over {len(weeks)} weeks without a decision.",
+                 f"Weekly quantity of {name} grew from {weeks[0]} to {weeks[-1]} {line['unit']} (+{pct}%) over {len(weeks)} weeks (seeded demo history) without a decision.",
                  {"action": "confirm_qty", "quantity": weeks[0]}, "approval")
     return flags
 
@@ -171,10 +171,10 @@ def check(customer, key, url, today=None, state_path=None, rebaseline=False, cli
     return {"standing_order": order, "flags": flags}
 
 
-def apply(result, key, url):
+def apply(result, key, url, ask_human=False):
     o = result["standing_order"]
     pending = [f for f in result["flags"] if f["route"] == "approval"]
-    if pending:
+    if pending and not ask_human:
         return {"status": "needs_approval", "flags": pending}
     fixes = {f["product_id"]: f["fix"] for f in result["flags"]}
     lines = []
@@ -184,7 +184,10 @@ def apply(result, key, url):
         lines.append({"product_id": pid, "quantity": fx.get("quantity", l["quantity"])})
     c = httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=30)
     q = c.post("/v1/quotes", json={"offers": lines, "delivery_date": o["delivery_date"]}).raise_for_status().json()
-    return c.post("/v1/orders", json={"quote_id": q["quote_id"], "jws": q["jws"]}).raise_for_status().json()
+    body = {"quote_id": q["quote_id"], "jws": q["jws"]}
+    if pending:
+        body.update(ask_human=True, note="; ".join(f["why"] for f in pending))
+    return c.post("/v1/orders", json=body).raise_for_status().json()
 
 
 def main():
@@ -192,6 +195,7 @@ def main():
     ap.add_argument("--customer", required=True, choices=list(SEEDS))
     ap.add_argument("--key", default=os.environ.get("AIMO_AGENT_KEY"))
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--ask-human", action="store_true")
     ap.add_argument("--url", default=os.environ.get("AIMO_URL", "http://127.0.0.1:8080"))
     ap.add_argument("--rebaseline", action="store_true")
     a = ap.parse_args()
@@ -201,7 +205,7 @@ def main():
     for f in r["flags"]:
         print(f"[{f['route']}] {f['why']} -> {f['fix']['action']}")
     if a.apply:
-        print(json.dumps(apply(r, a.key, a.url), indent=1))
+        print(json.dumps(apply(r, a.key, a.url, a.ask_human), indent=1))
 
 
 if __name__ == "__main__":
