@@ -157,3 +157,11 @@ catalog.search -> substitute.allergen_safe -> substitute.match_score (drop low) 
 - `Product.allergens` format (fixed): plain lowercase names for CONTAINS (`milk`, `lactose`, `gluten`, `egg`, `peanuts`...), `may_contain:<name>` for MAY_CONTAIN. Lactose-free milk legitimately contains `milk` but not `lactose`. `Constraint.exclude_allergens` uses the same names.
 - Audit actions use dots (`order.rejected`, `parse.request`, `offers.compared`), and status changes put Decision reasons in `why`.
 - Push rule: leads `git push origin dev` after each green merge. Workers never push. Never force-push.
+
+## v5 (00:55)
+
+- `QuoteRequestLine.quantity > 0` (422). QuoteError codes add `INVALID_QUOTE`. `price_lines` rejects `delivery_date < today` with `INVALID_QUOTE`.
+- Cutoff rule: Valio `closingTime` is a fixed timestamp in the mock, so cutoff = (available or delivery date) - 1 day at closingTime's Helsinki clock time. Past cutoff -> next open date as a `late` option, never a quoted offer.
+- Stock-out: `POST /v1/admin/simulate` reacts server-side (`orders.react_stockout`): affected orders go to `pending_approval` with reason `STOCKOUT` and filled substitutions, audited `order.stockout`.
+- Valio upstream failure (429/5xx after retries, no cache): offers return 503 `{code: "UPSTREAM_UNAVAILABLE"}`, never 500. Stale cache is served first.
+- Parse response = Need + optional `summary`.
