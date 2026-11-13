@@ -4,6 +4,7 @@ import sys
 import urllib.request
 import uuid
 import warnings
+from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
 
 from joserfc import jws
@@ -14,6 +15,7 @@ from aimo.models import Quote
 
 warnings.filterwarnings("ignore", message="EdDSA is deprecated")
 
+HELSINKI = ZoneInfo("Europe/Helsinki")
 ALGS = ["EdDSA"]
 
 
@@ -44,7 +46,7 @@ def _audit(action, quote, why):
         action,
         quote.quote_id,
         why,
-        {"quote_id": quote.quote_id, "total_gross": quote.total_gross, "currency": quote.currency},
+        {"quote_id": quote.quote_id, "total_net": quote.total_net, "total_gross": quote.total_gross, "currency": quote.currency},
     )
 
 
@@ -74,7 +76,8 @@ def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, cu
     _audit(
         "quote.issued",
         quote,
-        f"Quote {quote.quote_id} for {quote.total_gross:.2f} {quote.currency} issued, valid until {quote.valid_until.isoformat()}.",
+        f"Quote {quote.quote_id} for {quote.total_net:,.2f} {quote.currency} net ({quote.total_gross:,.2f} {quote.currency} with VAT), "
+        f"valid until {quote.valid_until.astimezone(HELSINKI):%d.%m. %H:%M} Helsinki time.",
     )
     return quote
 
@@ -121,7 +124,7 @@ def redeem(quote_id, token, customer, agent_id):
         ).rowcount
     if not n:
         raise QuoteError("QUOTE_USED", "Quote was already used.")
-    _audit("quote.redeemed", quote, f"Quote {quote_id} redeemed for {quote.total_gross:.2f} {quote.currency}.")
+    _audit("quote.redeemed", quote, f"Quote {quote_id} redeemed for {quote.total_net:,.2f} {quote.currency} net ({quote.total_gross:,.2f} {quote.currency} with VAT).")
     return quote
 
 
