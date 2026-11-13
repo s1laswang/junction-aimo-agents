@@ -30,6 +30,7 @@ Verify the quote offline: see [STANDARDS](docs/STANDARDS.md).
 ## Docs
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Trust protocol](docs/TRUST.md)
 - [Open standards](docs/STANDARDS.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 - [Production path](docs/PRODUCTION.md)

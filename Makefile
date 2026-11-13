@@ -1,5 +1,6 @@
 PORT ?= 8080
 PY = .venv/bin/python
+DEMO_DB = var/demo.db
 
 .PHONY: setup check run test mcp scenarios demo
 
@@ -12,7 +13,7 @@ setup: check
 	@.venv/bin/pip install -q -r requirements.txt
 
 run: setup
-	$(PY) -m uvicorn aimo.app:app --port $(PORT)
+	AIMO_DB=$(DEMO_DB) $(PY) -m uvicorn aimo.app:app --port $(PORT)
 
 test: setup
 	.venv/bin/pytest -q
@@ -24,7 +25,8 @@ scenarios:
 	$(PY) scenarios/run_all.py --base http://localhost:$(PORT)
 
 demo: setup
-	@$(PY) -m uvicorn aimo.app:app --port $(PORT) > var-demo.log 2>&1 & \
+	@rm -f $(DEMO_DB); mkdir -p var; \
+	AIMO_DB=$(DEMO_DB) $(PY) -m uvicorn aimo.app:app --port $(PORT) > var-demo.log 2>&1 & \
 	pid=$$!; trap 'kill $$pid 2>/dev/null' EXIT INT TERM; \
 	ok=0; for i in $$(seq 30); do \
 	  curl -sf http://localhost:$(PORT)/.well-known/agent-card.json >/dev/null && { ok=1; break; }; sleep 1; done; \

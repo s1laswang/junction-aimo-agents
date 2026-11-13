@@ -1,0 +1,10 @@
+.git
+.venv
+.env
+data
+var
+var-demo.log
+__pycache__
+*.pyc
+pitch
+tests

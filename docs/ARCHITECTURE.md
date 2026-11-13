@@ -31,6 +31,8 @@ Valio has no order endpoint, so orders live in our store (see ASSUMPTIONS).
 - Missing or bad key: 401. Wrong customer: 403. Domain errors: 409 with `code` and `text`.
 - Search, parse, discovery and `/health` need no key.
 
+See [TRUST](TRUST.md) for the trust protocol and red-team results.
+
 ## Modules
 
 | Module | What it does | Owner |
