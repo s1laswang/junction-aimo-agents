@@ -392,9 +392,29 @@ def _llm_parse(text, customer, today):
         return None
 
 
+def deliver_date(text, today):
+    d, _ = _find_date(text, today)
+    return d or today + timedelta(2)
+
+
+def text_constraints(text):
+    return _constraints(text)[0]
+
+
+def _menu_parse(text, customer, today):
+    from aimo import recipes
+
+    if not recipes._dishes_in(text):
+        return None
+    c = text_constraints(text)
+    c.max_unit_price = None
+    need = recipes.menu_to_need(text, customer, deliver_by=deliver_date(text, today), today=today, constraints=c)
+    return need if need.items else None
+
+
 def parse_need(text: str, customer: str, today: date | None = None) -> Need:
     today = today or date.today()
-    return _llm_parse(text, customer, today) or _rule_parse(text, customer, today)
+    return _menu_parse(text, customer, today) or _llm_parse(text, customer, today) or _rule_parse(text, customer, today)
 
 
 FI_NAME = {

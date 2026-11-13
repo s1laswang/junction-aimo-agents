@@ -381,6 +381,43 @@
      "unit": "g"
     }
    ]
+  },
+  {
+   "id": "carbonara",
+   "en": "pasta carbonara",
+   "fi": "carbonara",
+   "aliases": [
+    "pasta carbonara",
+    "spaghetti carbonara",
+    "carbonara"
+   ],
+   "ingredients": [
+    {
+     "query": "pasta",
+     "per_cover": 100,
+     "unit": "g"
+    },
+    {
+     "query": "bacon",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "eggs",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "cooking cream",
+     "per_cover": 40,
+     "unit": "ml"
+    },
+    {
+     "query": "grated cheese",
+     "per_cover": 15,
+     "unit": "g"
+    }
+   ]
   }
  ],
  "swaps": [
