@@ -28,7 +28,10 @@ def usual_items(events):
     seen = {}
     for e in events:
         d = e.get("detail") or e
-        for ln in d.get("lines") or d.get("items") or []:
+        lines = d.get("lines") or d.get("items") or []
+        for ln in lines if isinstance(lines, list) else []:
+            if not isinstance(ln, dict):
+                continue
             pid = str(ln.get("product_id", ""))
             q = ln.get("name") or ln.get("query") or ln.get("product_name")
             if pid and q and pid not in seen:
