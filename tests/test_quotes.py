@@ -91,3 +91,83 @@ def test_naive_valid_until_and_audit_and_cli(tmp_path, capsys):
     assert quotes.main(["x", "verify", q.jws, str(f)]) == 0
     assert "OK " + q.quote_id in capsys.readouterr().out
     assert quotes.main(["x", "verify", q.jws[:-4] + "AAAA", str(f)]) == 1
+
+
+def b64(d):
+    return base64.urlsafe_b64encode(json.dumps(d, separators=(",", ":")).encode()).rstrip(b"=").decode()
+
+
+def parts(q):
+    h, p, s = q.jws.split(".")
+    return json.loads(base64.urlsafe_b64decode(h + "==")), json.loads(base64.urlsafe_b64decode(p + "==")), s
+
+
+def code(q, token):
+    with pytest.raises(quotes.QuoteError) as e:
+        quotes.redeem(q.quote_id, token, q.customer, q.agent_id)
+    return e.value.code
+
+
+def test_alg_none_and_hs256_rejected():
+    import hashlib
+    import hmac
+
+    q = make()
+    h, p, _ = parts(q)
+    assert code(q, f"{b64({'alg': 'none', 'kid': h['kid']})}.{b64(p)}.") == "BAD_SIGNATURE"
+    assert code(q, f"{b64({'alg': 'none'})}.{b64(p)}.AAAA") == "BAD_SIGNATURE"
+    for secret in (base64.urlsafe_b64decode(keys.public_jwk()["x"] + "=="), json.dumps(keys.jwks()["keys"][0]).encode(), keys.kid().encode()):
+        head = f"{b64({'alg': 'HS256', 'kid': h['kid']})}.{b64(p)}"
+        sig = base64.urlsafe_b64encode(hmac.new(secret, head.encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
+        assert code(q, f"{head}.{sig}") == "BAD_SIGNATURE"
+    assert quotes.get(q.quote_id) is not None
+    quotes.redeem(q.quote_id, q.jws, q.customer, q.agent_id)
+
+
+def test_kid_swap_and_foreign_key_rejected():
+    from joserfc.jwk import OKPKey
+
+    q = make()
+    h, p, s = parts(q)
+    assert code(q, f"{b64({**h, 'kid': 'evil'})}.{b64(p)}.{s}") == "BAD_SIGNATURE"
+    evil = OKPKey.generate_key("Ed25519")
+    forged = jws.serialize_compact({"alg": "EdDSA", "kid": keys.kid()}, json.dumps(p).encode(), evil, algorithms=["EdDSA"])
+    assert code(q, forged) == "BAD_SIGNATURE"
+    forged = jws.serialize_compact({"alg": "EdDSA", "kid": evil.thumbprint()}, json.dumps(p).encode(), evil, algorithms=["EdDSA"])
+    assert code(q, forged) == "BAD_SIGNATURE"
+    with pytest.raises(quotes.QuoteError):
+        quotes.verify(forged, keys.jwks())
+
+
+@pytest.mark.parametrize("edit", [
+    lambda p: p.update(total_gross=0.01),
+    lambda p: p["lines"][0].update(quantity=1000),
+    lambda p: p["lines"][0].update(unit_price_net=0.01),
+    lambda p: p.update(customer="school-hervanta"),
+    lambda p: p.update(agent_id="other"),
+    lambda p: p.update(valid_until="2099-01-01T00:00:00+00:00"),
+])
+def test_payload_edits_rejected(edit):
+    q = make()
+    h, p, s = parts(q)
+    edit(p)
+    assert code(q, f"{b64(h)}.{b64(p)}.{s}") == "BAD_SIGNATURE"
+
+
+def test_customer_swap_is_wrong_agent_and_stays_redeemable():
+    q = make()
+    with pytest.raises(quotes.QuoteError) as e:
+        quotes.redeem(q.quote_id, q.jws, "school-hervanta", "a1")
+    assert e.value.code == "WRONG_AGENT"
+    assert quotes.redeem(q.quote_id, q.jws, "hotel-aurora", "a1").quote_id == q.quote_id
+
+
+@pytest.mark.parametrize("qty,total,gross", [(-5, -34.3, -38.95), (0, 0.0, 0.0), (5, 6.0, 0.0), (5, 6.0, -1.0)])
+def test_invalid_quote_not_issued(qty, total, gross):
+    line = QuoteLine(product_id="p1", quantity=qty, unit_price_net=1.2, line_total_net=total)
+    until = datetime.now(timezone.utc) + timedelta(hours=2)
+    with pytest.raises(quotes.QuoteError) as e:
+        quotes.issue("hotel-aurora", "a1", [line], date(2026, 11, 16), until, gross)
+    assert e.value.code == "INVALID_QUOTE"
+    with pytest.raises(quotes.QuoteError):
+        quotes.issue("hotel-aurora", "a1", [], date(2026, 11, 16), until, 5.0)
