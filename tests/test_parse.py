@@ -1,0 +1,104 @@
+from datetime import date
+
+import pytest
+
+from aimo.parse import parse_need
+
+T = date(2026, 11, 13)
+
+
+def one(text):
+    n = parse_need(text, "hotel-aurora", T)
+    assert n.raw_text == text
+    return n
+
+
+def test_milk_en():
+    n = one("I need 1,000 litres of lactose-free milk by Monday")
+    i = n.items[0]
+    assert len(n.items) == 1 and (i.query, i.quantity, i.unit) == ("milk", 1000.0, "L")
+    assert i.constraints.lactose_free is True and n.deliver_by == date(2026, 11, 16)
+
+
+def test_milk_fi_equals_en():
+    a = one("I need 1,000 litres of lactose-free milk by Monday")
+    b = one("Tarvitsen 1000 litraa laktoositonta maitoa maanantaiksi")
+    assert a.items == b.items and a.deliver_by == b.deliver_by
+
+
+@pytest.mark.parametrize("text,qty", [("1 000 l milk", 1000.0), ("1.5 kg butter", 1.5), ("2,5 kg butter", 2.5), ("1.000 l milk", 1000.0)])
+def test_numbers(text, qty):
+    assert one(text).items[0].quantity == qty
+
+
+@pytest.mark.parametrize("text,unit", [("5 kiloa perunaa", "kg"), ("500 g butter", "g"), ("30 kpl eggs", "pcs"), ("12 pieces of bread", "pcs"), ("4 packs cheese", "packs"), ("50 l cream", "L")])
+def test_units(text, unit):
+    assert one(text).items[0].unit == unit
+
+
+def test_ml_converts():
+    i = one("500 ml cream").items[0]
+    assert (i.quantity, i.unit) == (0.5, "L")
+
+
+@pytest.mark.parametrize("text,d", [
+    ("10 kg butter tomorrow", date(2026, 11, 14)),
+    ("10 kg voita huomenna", date(2026, 11, 14)),
+    ("10 kg butter by Friday", date(2026, 11, 20)),
+    ("10 kg voita keskiviikkoon", date(2026, 11, 18)),
+    ("10 kg butter next week", date(2026, 11, 20)),
+    ("10 kg butter 2026-12-01", date(2026, 12, 1)),
+    ("10 kg voita 20.11.", date(2026, 11, 20)),
+    ("10 kg butter by 20.11", date(2026, 11, 20)),
+    ("10 kg butter", date(2026, 11, 15)),
+])
+def test_dates(text, d):
+    assert one(text).deliver_by == d
+
+
+def test_gluten_fi():
+    c = one("20 kg gluteenitonta jauhoa").items[0]
+    assert c.constraints.gluten_free is True and c.query == "flour"
+
+
+def test_allergens():
+    assert one("10 kg pasta without egg").items[0].constraints.exclude_allergens == ["egg"]
+    assert one("10 kg pasta no nuts").items[0].constraints.exclude_allergens == ["nuts"]
+    assert one("5 kg munatonta pastaa").items[0].constraints.exclude_allergens == ["egg"]
+    assert one("5 kg pähkinätöntä suklaata").items[0].constraints.exclude_allergens == ["nuts"]
+
+
+def test_organic_origin_brand_price():
+    c = one("100 kg organic Finnish potatoes under 2 EUR").items[0]
+    assert c.query == "potatoes"
+    assert c.constraints.labels == ["organic"] and c.constraints.origin == "fi"
+    assert c.constraints.max_unit_price == 2.0
+    c = one("200 l luomu kotimainen maito Valio").items[0]
+    assert c.constraints.labels == ["organic"] and c.constraints.origin == "fi"
+    assert c.constraints.brands == ["Valio"]
+
+
+def test_multi_items():
+    n = one("200 kg potatoes and 50 l cream")
+    assert [(i.query, i.quantity, i.unit) for i in n.items] == [("potatoes", 200.0, "kg"), ("cream", 50.0, "L")]
+
+
+def test_multi_items_fi_constraints_scoped():
+    n = one("Tarvitsen 100 l laktoositonta maitoa ja 20 kg voita huomenna")
+    assert n.items[0].constraints.lactose_free is True
+    assert n.items[1].constraints.lactose_free is None and n.items[1].query == "butter"
+
+
+def test_no_quantity_still_works():
+    n = one("milk")
+    assert n.items[0].query == "milk" and n.items[0].quantity == 1.0
+
+
+def test_gibberish_never_raises():
+    assert parse_need("", "x", T).items
+    assert parse_need("???", "x", T).items
+
+
+def test_llm_off_without_env(monkeypatch):
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    assert one("5 kg butter").items[0].query == "butter"
