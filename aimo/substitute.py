@@ -210,6 +210,7 @@ def match_score(item: NeedItem, product: Product) -> float:
 
 
 MIN_MATCH = 0.5
+LABEL = {"good": "cheapest acceptable", "better": "balanced", "best": "closest match"}
 
 
 def _unit_price(o, item):
@@ -288,7 +289,7 @@ def rank_substitutes(item: NeedItem, offers: list[Offer], exclude_allergens: lis
             picked.append((min(pool, key=key), tier))
     out = []
     for o, tier in picked:
-        out.append(o.model_copy(update={"tier": tier, "notes": [_line(o, base, item), *o.notes]}))
+        out.append(o.model_copy(update={"tier": tier, "notes": [f"{LABEL[tier]}: {_line(o, base, item)}", *o.notes]}))
     order = {"good": 0, "better": 1, "best": 2}
     return sorted(out, key=lambda o: order[o.tier])[:limit]
 
