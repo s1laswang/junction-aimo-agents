@@ -158,6 +158,7 @@ def test_options_late_and_split():
 def test_options_nothing_on_time_gives_late_only():
     o = options(ITEM, [later("464201", date(2026, 11, 17), 9999)], D, NOW)
     assert [x["kind"] for x in o] == ["late"] and o[0]["days_late"] == 1
+    assert "1 day after" in o[0]["why"]
 
 
 def test_options_never_covers():

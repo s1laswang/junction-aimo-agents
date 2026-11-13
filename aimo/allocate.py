@@ -205,7 +205,7 @@ def options(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetime
     if late:
         n = (late - deliver_by).days
         out.append({"kind": "late", "date": late, "days_late": n,
-                    "why": f"all {item.quantity:g} {u} available by {late}, {n} days after {deliver_by}"})
+                    "why": f"all {item.quantity:g} {u} available by {late}, {n} day{'s' if n != 1 else ''} after {deliver_by}"})
     if covered > 0:
         used: dict = {}
         for a in alloc:
@@ -217,7 +217,7 @@ def options(item: NeedItem, offers: list[Offer], deliver_by: date, now: datetime
         if d:
             n = (d - deliver_by).days
             out.append({"kind": "split", "date": d, "on_time": covered, "later": short, "days_late": n,
-                        "why": f"{covered:g} {u} by {deliver_by}, remaining {short:g} {u} on {d}, {n} days late"})
+                        "why": f"{covered:g} {u} by {deliver_by}, remaining {short:g} {u} on {d}, {n} day{'s' if n != 1 else ''} late"})
     return out
 
 
