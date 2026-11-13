@@ -1,49 +1,56 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
+
+from aimo import keys, mandates
 
 router = APIRouter()
 
 TOOLS = [
-    {"name": "search_products", "rest": "GET /v1/products", "auth": "none", "description": "Search the catalog with constraints."},
-    {"name": "parse_request", "rest": "POST /v1/needs/parse", "auth": "none", "description": "Turn free text into a structured Need."},
-    {"name": "get_offers", "rest": "POST /v1/offers", "auth": "agent", "description": "Ranked offers with price, stock, delivery and substitutes."},
-    {"name": "request_quote", "rest": "POST /v1/quotes", "auth": "agent", "description": "Signed quote for chosen offers."},
-    {"name": "place_order", "rest": "POST /v1/orders", "auth": "agent", "description": "Place an order; policy decides auto, needs_approval or blocked."},
-    {"name": "get_order", "rest": "GET /v1/orders/{id}", "auth": "agent", "description": "Order status and decision."},
-    {"name": "list_orders", "rest": "GET /v1/orders", "auth": "agent", "description": "Orders of this customer."},
-    {"name": "list_approvals", "rest": "GET /v1/approvals", "auth": "agent", "description": "Orders waiting for human approval."},
-    {"name": "decide_approval", "rest": "POST /v1/approvals/{order_id}", "auth": "admin", "description": "Human approves or rejects a pending order."},
-    {"name": "get_audit_trail", "rest": "GET /v1/audit", "auth": "agent", "description": "Hash-chained audit events with a plain-language summary."},
-    {"name": "get_mandate", "rest": "GET /v1/mandate", "auth": "agent", "description": "The spending and allergen mandate of this agent."},
+    ("search_products", "GET", "/v1/products", "Search the catalog with constraints such as lactose free, allergens, origin and brand."),
+    ("parse_request", "POST", "/v1/needs/parse", "Turn a free-text purchase request into a structured Need."),
+    ("get_offers", "POST", "/v1/offers", "Ranked offers with price, availability, reliability and CO2 for each item of a Need."),
+    ("request_quote", "POST", "/v1/quotes", "Get a signed quote for chosen offers and a delivery date."),
+    ("place_order", "POST", "/v1/orders", "Redeem a signed quote. Policy decides auto, needs_approval or blocked."),
+    ("get_order", "GET", "/v1/orders/{id}", "Read one order with its decision and status."),
+    ("list_orders", "GET", "/v1/orders", "List orders by customer and status."),
+    ("list_approvals", "GET", "/v1/approvals", "Orders waiting for human approval."),
+    ("decide_approval", "POST", "/v1/approvals/{order_id}", "Approve or reject a pending order as a named approver."),
+    ("get_audit_trail", "GET", "/v1/audit", "Hash-chained audit events with a plain-language summary."),
+    ("get_mandate", "GET", "/v1/mandate", "The calling agent's spending and allergen mandate."),
 ]
 
 
 @router.get("/.well-known/agent-card.json")
-def agent_card(request: Request):
-    from aimo import mandates
-    base = str(request.base_url).rstrip("/")
+def agent_card():
     return {
         "name": "AIMO Trusted Trade Gateway",
-        "description": "Gateway for external purchasing agents: products, signed quotes, mandate-checked orders, human approval, audit.",
-        "version": "0.1.0",
-        "endpoints": {"rest": f"{base}/v1", "mcp": f"{base}/mcp", "openapi": f"{base}/openapi.json", "jwks": f"{base}/.well-known/jwks.json"},
-        "transports": ["rest", "mcp-streamable-http", "mcp-stdio"],
+        "description": "Gateway for external purchasing agents to find products, compare offers and place orders with the right human approval, without exposing Valio Aimo systems.",
+        "endpoints": {"rest": "/v1", "mcp": "/mcp", "openapi": "/openapi.json", "jwks": "/.well-known/jwks.json"},
         "auth": {
-            "agent": {"header": "X-Agent-Key", "scope": "calls are limited to the customer of the key"},
-            "admin": {"header": "X-Admin-Key", "scope": "human side: approvals, mandates, simulation"},
+            "agent": {"type": "apiKey", "in": "header", "name": "X-Agent-Key"},
+            "admin": {"type": "apiKey", "in": "header", "name": "X-Admin-Key"},
         },
-        "tools": TOOLS,
+        "tools": [
+            {"name": n, "method": m, "route": r, "description": d} for n, m, r, d in TOOLS
+        ],
         "policies": {
-            "quotes": "Ed25519 signed JWS, verified at order time, valid until supplier cutoff.",
-            "orders": "Each mandate sets per-order and per-week EUR limits, allergen exclusions and substitution rules; outcome is auto, needs_approval or blocked.",
-            "approvals": "Orders outside the mandate wait for a named human approver.",
-            "audit": "Every step is a hash-chained event with a plain-language reason.",
-            "mandates": [{"customer": m.customer, "per_order_eur": m.per_order_eur, "per_week_eur": m.per_week_eur,
-                          "exclude_allergens": m.exclude_allergens, "substitutions": m.substitutions} for m in mandates.all()],
+            "quotes": "Signed with EdDSA (JWS), single use, valid until the product order cutoff (closingTime).",
+            "decisions": ["auto", "needs_approval", "blocked"],
+            "audit": "Every step is recorded in an append-only hash-chained log with a plain-language reason.",
+            "mandates": [
+                {
+                    "customer": m.customer,
+                    "agent_id": m.agent_id,
+                    "per_order_eur": m.per_order_eur,
+                    "per_week_eur": m.per_week_eur,
+                    "exclude_allergens": m.exclude_allergens,
+                    "substitutions": m.substitutions,
+                }
+                for m in mandates.all()
+            ],
         },
     }
 
 
 @router.get("/.well-known/jwks.json")
 def jwks():
-    from aimo import keys
     return keys.jwks()
