@@ -6,6 +6,7 @@ router = APIRouter()
 
 TOOLS = [
     ("search_products", "GET", "/v1/products", "Search the catalog with constraints such as lactose free, allergens, origin and brand."),
+    ("get_product", "MCP", "get_product", "Read one product by id (MCP tool only, no REST route)."),
     ("parse_request", "POST", "/v1/needs/parse", "Turn a free-text purchase request into a structured Need."),
     ("get_offers", "POST", "/v1/offers", "Ranked offers with price, availability, reliability and CO2 for each item of a Need."),
     ("request_quote", "POST", "/v1/quotes", "Get a signed quote for chosen offers and a delivery date."),
