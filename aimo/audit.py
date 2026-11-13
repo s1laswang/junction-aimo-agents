@@ -174,6 +174,8 @@ SYSTEM = {
 def narrate(events, view="buyer"):
     lines = []
     for e in events:
+        if e.action in ("order.approved", "order.rejected") and e.actor.startswith("human"):
+            continue
         ts = e.ts if isinstance(e.ts, datetime) else datetime.fromisoformat(str(e.ts).replace("Z", "+00:00"))
         verb = VERBS.get(e.action, e.action.replace(".", " ").replace("_", " "))
         who = _who(e, view)
