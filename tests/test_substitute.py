@@ -5,7 +5,7 @@ import pytest
 
 from aimo.models import Constraint, NeedItem, Offer, Product, UnitSize
 from aimo.allocate import _ratio
-from aimo.substitute import CODE_NAMES, allergen_safe, match_score, rank_substitutes
+from aimo.substitute import CODE_NAMES, allergen_safe, match_score, rank_substitutes, tradeoff
 
 NAMES = CODE_NAMES
 DATA = os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json")
@@ -100,3 +100,13 @@ def test_rank_substitutes_milk_shortfall(products, offers):
 
 def test_rank_substitutes_excludes_milk_allergen(offers):
     assert rank_substitutes(MILK, offers, ["milk"]) == []
+
+
+def test_tradeoff_public(products, offers):
+    by = {o.product_id: o for o in offers}
+    a, b = by["463335"], by["464201"]
+    line = tradeoff(b, a)
+    assert "\n" not in line and line
+    assert "vs 1 " not in line.replace("reliability 1 vs 1,", "")
+    same = tradeoff(a, a)
+    assert "reliability" not in same

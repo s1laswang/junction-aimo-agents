@@ -162,6 +162,18 @@ def _pack(p, item):
     return f"{r:.3g} {item.unit} packs" if r and not (p.sales_unit and item.unit.strip().lower() == p.sales_unit.strip().lower()) else None
 
 
+def _unit_for(base):
+    for u in ("l", "kg"):
+        if _ratio(base.product, u):
+            return u
+    return base.product.sales_unit or "pcs"
+
+
+def tradeoff(o: Offer, base: Offer, unit: str | None = None) -> str:
+    item = NeedItem(query="", quantity=1, unit=unit or _unit_for(base))
+    return _line(o, base, item)
+
+
 def _line(o, base, item):
     price, per = _unit_price(o, item)
     parts = []
