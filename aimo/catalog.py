@@ -54,12 +54,15 @@ SYNONYMS = [
     ["sokeri", "sugar", "socker"],
     ["suola", "salt"],
     ["öljy", "oil", "olja"],
-    ["riisi", "rice", "ris"],
+    ["riisi", "rice"],
     ["leipä", "bread", "bröd"],
     ["kahvi", "coffee", "kaffe"],
     ["vesi", "water", "vatten"],
     ["luomu", "organic", "ekologisk"],
     ["vegaani", "vegan"],
+    ["jauheliha", "minced meat", "ground meat", "mince"],
+    ["pasta", "pasta"],
+    ["rahka", "quark"],
 ]
 LABEL_ALIASES = {
     "organic": ["organic", "eco"], "luomu": ["organic", "eco"],
@@ -72,7 +75,9 @@ ORIGIN_ALIASES = {
     "netherlands": "nl", "hollanti": "nl", "france": "fr", "ranska": "fr", "italy": "it", "italia": "it",
     "spain": "es", "espanja": "es",
 }
-MODIFIER_PREFIXES = ("kahvi", "suklaa", "mansikka", "vanilja", "kaakao", "banaani", "kookos")
+MODIFIER_PREFIXES = ("kahvi", "suklaa", "mansikka", "vanilja", "kaakao", "banaani", "kookos",
+                     "peruna", "kana", "liha", "kala", "riisi", "maissi", "soija", "kaura", "korppu")
+NONFOOD_PREFIXES = ("20", "30", "32", "63", "64", "67", "77", "90")
 HEAD_SUFFIXES = ("juoma",)
 WORD_RE = re.compile(r"[^\W\d_]+", re.U)
 TEMPERATURE_LABELS = {"warmTemperature", "coolTemperature", "freezeTemperature"}
@@ -235,15 +240,28 @@ def _load() -> dict:
 
 def _groups(q: str) -> list[list[tuple]]:
     q = re.sub(r"(lactose|laktos)[\s-]*free|laktoositon|laktosfri", " laktoositon ", q.lower())
+    q = re.sub(r"minced meat|ground meat", " jauheliha ", q)
     q = re.sub(r"gluten[\s-]*free|gluteeniton|glutenfri", " gluteeniton ", q)
     out = []
     for tok in re.findall(r"[\wäöåÄÖÅ%]+", q):
-        group = [(tok, 1.0, True)]
+        stems = _stems(tok)
+        group = [(tok, 1.0, True)] + [(s, 0.95, False) for s in stems]
         for syn in SYNONYMS:
-            if tok in syn:
+            if tok in syn or any(s in syn for s in stems):
                 group = [(v, 1.0 if v == syn[0] else 0.85, v == syn[0]) for v in syn]
                 break
         out.append(group)
+    return out
+
+
+def _stems(tok: str) -> list[str]:
+    out = []
+    if tok.endswith("ies") and len(tok) > 4:
+        out.append(tok[:-3] + "y")
+    if tok.endswith("es") and len(tok) > 4:
+        out.append(tok[:-2])
+    if tok.endswith("s") and len(tok) > 3:
+        out.append(tok[:-1])
     return out
 
 
@@ -285,7 +303,7 @@ def _word_score(v: str, words: list[str], nb: str, compound: bool = True) -> flo
         if not compound:
             continue
         if w.endswith(v):
-            best = max(best, 1.5 if w[: -len(v)] in MODIFIER_PREFIXES else 3.0)
+            best = max(best, 1.5 if any(m in w[: -len(v)] for m in MODIFIER_PREFIXES) else 3.0)
         elif w.startswith(v):
             best = max(best, 3.0 if w[len(v):] in HEAD_SUFFIXES else 0.5)
         elif v in w:
@@ -337,6 +355,8 @@ def search(q: str, constraints: Constraint | None = None, limit: int = 50) -> li
                 score += max(_word_score(v, words, nb, c) * w for v, w, c in g)
             if hits == len(groups):
                 score += 3
+            if (s["products"][pid].category or "").startswith(NONFOOD_PREFIXES):
+                score -= 4
             if hits:
                 scored.append((-score, len(nb), pid))
         scored.sort()
