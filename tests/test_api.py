@@ -25,7 +25,27 @@ def test_auth_and_mandate(client):
     assert r.status_code == 200 and r.json()["customer"] == "hotel-aurora"
     assert client.get("/v1/mandate?customer=school-hervanta", headers=A).status_code == 403
     assert client.get("/v1/mandate?customer=school-hervanta", headers=ADMIN).status_code == 200
-    assert client.post("/v1/approvals/x", json={"approve": True, "by": "x"}, headers=A).status_code == 401
+    body = {"approve": True, "by": "x"}
+    r = client.get("/v1/mandate")
+    assert r.json() == {"code": "unauthorized", "text": "Missing or invalid X-Agent-Key."}
+    assert client.post("/v1/approvals/x", json=body).status_code == 401
+    assert client.post("/v1/approvals/x", json=body, headers={"X-Admin-Key": "bad"}).status_code == 401
+    r = client.post("/v1/approvals/x", json=body, headers=A)
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+
+
+def test_domain_status_map():
+    class ApprovalError(Exception):
+        def __init__(self, code):
+            self.code, self.text = code, "t"
+
+    def boom(code):
+        raise ApprovalError(code)
+
+    for code, status in [("NOT_FOUND", 404), ("NOT_APPROVER", 403), ("NOT_PENDING", 409)]:
+        with pytest.raises(api.Err) as e:
+            api.domain(boom, code)
+        assert e.value.status == status and e.value.body["code"] == code
 
 
 def test_helpers():
