@@ -5,3 +5,4 @@ data
 var/
 .DS_Store
 .venv
+var-demo.log
