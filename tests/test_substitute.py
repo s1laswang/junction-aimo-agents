@@ -4,7 +4,8 @@ import os
 import pytest
 
 from aimo.models import Constraint, NeedItem, Offer, Product, UnitSize
-from aimo.substitute import CODE_NAMES, _size, allergen_safe, match_score, rank_substitutes
+from aimo.allocate import _ratio
+from aimo.substitute import CODE_NAMES, allergen_safe, match_score, rank_substitutes
 
 NAMES = CODE_NAMES
 DATA = os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json")
@@ -94,7 +95,7 @@ def test_rank_substitutes_milk_shortfall(products, offers):
         assert allergen_safe(o.product, MILK.constraints, [])
         assert o.match_score >= 0.5
         assert o.notes and "\n" not in o.notes[0]
-    assert res[0].unit_price_net / _size(res[0].product)[1] <= min(x.unit_price_net / _size(x.product)[1] for x in res)
+    assert res[0].unit_price_net / _ratio(res[0].product, "l") <= min(x.unit_price_net / _ratio(x.product, "l") for x in res)
 
 
 def test_rank_substitutes_excludes_milk_allergen(offers):
