@@ -2,6 +2,8 @@ import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from aimo.allocate import allocate, units_for
 from aimo.models import NeedItem, Offer, Product, UnitSize
 
@@ -41,6 +43,7 @@ def test_units_for_litre_packs():
     assert units_for(offer("464073", 1).product, 500, "ml") == 1
 
 
+@pytest.mark.skipif(not Path("data/valio_aimo_junction26_product_data.json").exists(), reason="no data")
 def test_units_for_from_data_file():
     p = offer("464201", unit_size=False).product
     assert units_for(p, 1000, "L") == 1000
