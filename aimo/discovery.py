@@ -35,6 +35,13 @@ def agent_card():
         ],
         "policies": {
             "quotes": "Signed with EdDSA (JWS), single use, valid until the product order cutoff (closingTime).",
+            "quote_verification": {
+                "format": "JWS compact",
+                "alg": "EdDSA",
+                "curve": "Ed25519",
+                "keys": "/.well-known/jwks.json",
+                "note": "Select the key by the kid header and pin the algorithm to EdDSA, for example joserfc with algorithms=[\"EdDSA\"].",
+            },
             "decisions": ["auto", "needs_approval", "blocked"],
             "audit": "Every step is recorded in an append-only hash-chained log with a plain-language reason.",
             "mandates": [
