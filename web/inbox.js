@@ -145,7 +145,7 @@ function renderDetail() {
   rej.addEventListener("click", function () { if (!rejecting) { rejecting = true; paint(); note.focus(); } else decide(o, false, note.value.trim()); });
   note.addEventListener("input", paint);
   paint();
-  var rows = o.lines.map(function (l) { return h("tr", null, h("td", null, l.product_id), h("td", null, l.quantity + " " + l.sales_unit), h("td", null, money(l.unit_price_net)), h("td", null, money(l.line_total_net))); });
+  var rows = o.lines.map(function (l) { return h("tr", null, h("td", null, l.name ? [h("span", { class: "pname" }, l.name), h("span", { class: "pid" }, l.product_id)] : l.product_id), h("td", null, l.quantity + " " + l.sales_unit), h("td", null, money(l.unit_price_net)), h("td", null, money(l.line_total_net))); });
   p.append(
     h("div", { class: "dhead" }, h("button", { class: "back", type: "button", onclick: function () { history.replaceState(null, "", location.pathname + location.search); S.sel = null; render(); window.scrollTo(0, 0); } }, icon("back"), "Approvals")),
     h("div", { class: "dbody" },

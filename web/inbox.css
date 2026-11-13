@@ -126,3 +126,6 @@ dialog .row .act{flex:1}
 .detail{display:flex;flex-direction:column;min-height:calc(100dvh - 44px)}
 .dbody{flex:1}
 .act.danger:disabled{background:var(--sheet)}
+.pname{display:block;font-family:var(--sans);font-size:12px;color:var(--ink);overflow-wrap:break-word}
+.pid{display:block;font-size:11px;color:var(--ink-3)}
+.act{white-space:nowrap}
