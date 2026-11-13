@@ -37,7 +37,7 @@ def _run(ctx, auth, fn, *a):
         if auth == "agent":
             p = api.resolve_agent(agent_key)
         elif auth == "admin":
-            p = api.resolve_admin(admin_key)
+            p = api.resolve_admin(admin_key, agent_key)
         else:
             p = api.resolve_any(agent_key, admin_key)
         return fn(p, *a) if auth != "admin" else fn(*a)
