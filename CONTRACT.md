@@ -37,7 +37,7 @@ Every team codes against this. Changes only through lead-gateway, announced to a
 | `web/audit.*` | ui-audit |
 | `web/admin.*`, `web/index.html`, `web/style.css`, `web/shell.js` | ui-admin |
 | `tests/` | sh-qa (each worker adds its own `tests/test_<module>.py`) |
-| `docs/JUDGING.md` | sh-qa |
+| `docs/JUDGING.md`, `pytest.ini` | sh-qa |
 | `Makefile`, `.dockerignore` | sh-deploy |
 | `Dockerfile`, `deploy/` | sh-deploy |
 | `README.md`, `docs/` | sh-docs |
@@ -139,4 +139,4 @@ catalog.search -> substitute.allergen_safe -> substitute.match_score (drop low) 
 ## Workflow
 
 - Shared venv: `ln -s ~/aimo-agents/.venv .venv` (never commit it). New dependency: ask lead-gateway.
-- Leads merge from their worktree: `git -C ~/software/junction26-valio merge --no-ff <branch>`, then `pytest -q` there must be green.
+- Leads merge from their worktree: `git -C ~/software/junction26-valio merge --no-ff <branch>`, then `python -m pytest -q` there must be green, then push: `~/.local/forceguard/git push origin dev` (origin = Momin010/junction26-valio). Workers never push. Nobody touches main.
