@@ -108,7 +108,7 @@ class Quote(BaseModel):
 
 class QuoteRequestLine(BaseModel):
     product_id: str
-    quantity: float
+    quantity: float = Field(gt=0)
     substitute_for: str | None = None
 
 
