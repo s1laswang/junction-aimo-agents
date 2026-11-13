@@ -34,17 +34,24 @@ function eur(n){return n==null?"":Number(n).toFixed(2)}
 function evs(x){return Array.isArray(x)?x:(x&&x.events)||[]}
 function rows(el,h,empty){document.getElementById(el).innerHTML=h||'<p class="empty">'+empty+'</p>'}
 async function load(){
-var c=aimo.customer(),q=await Promise.all([aimo.api("/v1/approvals",{admin:true}),aimo.api("/v1/audit",{admin:true}),aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true})]);
-var mock=q.some(function(x){return x===null})||/[?&]mock=1/.test(location.search);
-var ap=mock?M.appr:q[0],ev=mock?M.audit:evs(q[1]);
-document.getElementById("n-appr").textContent=ap.length;
-var last=ev.length?ev.reduce(function(a,b){return b.seq>a.seq?b:a}):null;
-document.getElementById("n-audit").textContent=last?"#"+last.seq:"0";
-document.getElementById("d-audit").textContent=last?last.action+" "+String(last.ts).slice(11,16):"no events";
-document.getElementById("n-man").textContent=mock||!q[2]?MM[c]:q[2].per_order_eur;
-rows("pend",ap.slice(0,3).map(function(o){var r=o.decision&&o.decision.reasons&&o.decision.reasons[0];return '<a class="row" href="/inbox.html"><span class="l mono">'+esc(o.order_id)+'</span><span class="w">'+esc(r?r.text:o.customer)+'</span><span class="r mono">'+eur(o.total_net)+'</span></a>'}).join(""),"Nothing waiting.");
-rows("act",ev.slice().sort(function(a,b){return b.seq-a.seq}).slice(0,8).map(function(e){var u=/^ord/.test(e.subject)?"/audit.html?order_id="+encodeURIComponent(e.subject):"/audit.html";return '<a class="row" href="'+u+'"><span class="l mono">#'+e.seq+'</span><span class="l mono">'+esc(String(e.ts).slice(11,16))+'</span><span class="w">'+esc(e.why||e.action)+'</span></a>'}).join(""),"No events yet.");
+var c=aimo.customer(),mock=aimo.mockMode(),ap,ev,mn;
 aimo.mock(mock);
+["n-appr","n-audit","n-man"].forEach(function(i){$c(i,"-")});$c("d-audit","last event");
+if(mock){ap=M.appr;ev=M.audit;mn=MM[c]}
+else{
+var a=await aimo.api("/v1/approvals",{admin:true});
+if(a===null){aimo.offline(document.getElementById("pend"))}else ap=a;
+var u=await aimo.api("/v1/audit",{admin:true});
+if(u===null){aimo.offline(document.getElementById("act"));$c("d-audit",aimo.lastError&&aimo.lastError.status?"unavailable":"gateway offline")}else ev=evs(u);
+var m=await aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true});
+if(m===null)$c("n-man","n/a");else mn=m.per_order_eur;
+}
+if(ap){$c("n-appr",ap.length);rows("pend",ap.slice(0,3).map(function(o){var r=o.decision&&o.decision.reasons&&o.decision.reasons[0];return '<a class="row" href="/inbox.html"><span class="l mono">'+esc(o.order_id)+'</span><span class="w">'+esc(r?r.text:o.customer)+'</span><span class="r mono">'+eur(o.total_net)+'</span></a>'}).join(""),"Nothing waiting.")}
+if(ev){var last=ev.length?ev.reduce(function(a,b){return b.seq>a.seq?b:a}):null;
+$c("n-audit",last?"#"+last.seq:"0");
+$c("d-audit",last?last.action+" "+String(last.ts).slice(11,16):"no events");
+rows("act",ev.slice().sort(function(a,b){return b.seq-a.seq}).slice(0,8).map(function(e){var u=/^ord/.test(e.subject)?"/audit.html?order_id="+encodeURIComponent(e.subject):"/audit.html";return '<a class="row" href="'+u+'"><span class="l mono">#'+e.seq+'</span><span class="l mono">'+esc(String(e.ts).slice(11,16))+'</span><span class="w">'+esc(e.why||e.action)+'</span></a>'}).join(""),"No events yet.")}
+if(mn!=null)$c("n-man",mn);
 }
 var O=location.origin;
 $c("c-mcp",O+"/mcp");$c("c-rest",O+"/v1");

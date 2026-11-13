@@ -18,13 +18,16 @@ b.onclick=function(){cur[k].splice(i,1);render()};c.append(b);box.insertBefore(c
 });
 }
 async function last(){
+if(aimo.mockMode())return;
 var a=await aimo.api("/v1/audit?customer="+encodeURIComponent(aimo.customer()),{admin:true}),e=(Array.isArray(a)?a:a&&a.events||[]).filter(function(x){return x.action==="mandate_updated"}).pop(),el=$("last");
 el.textContent="";if(!e)return;
 var k=document.createElement("a");k.href="/audit.html";k.className="mono";k.textContent="#"+e.seq;
 el.append("Last change by "+e.actor+", "+String(e.ts).replace("T"," ").slice(0,16)+" UTC, audit ");el.append(k)}
 async function load(){
-var c=aimo.customer(),m=/[?&]mock=1/.test(location.search)?null:await aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true});
-aimo.mock(!m);
+var c=aimo.customer(),mk=aimo.mockMode(),m=mk?null:await aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true});
+aimo.mock(mk);
+$("f").hidden=false;$("off").textContent="";
+if(!mk&&!m){$("f").hidden=true;$("off").textContent=aimo.offline();$("last").textContent="";return}
 cur=JSON.parse(JSON.stringify(m||MOCK[c]));
 LIST.forEach(function(k){if(!cur[k])cur[k]=[]});
 orig=JSON.parse(JSON.stringify(cur));

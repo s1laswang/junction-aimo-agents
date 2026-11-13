@@ -19,6 +19,8 @@ if(sel){sel.innerHTML=CUSTOMERS.map(function(c){return '<option value="'+c+'">'+
 var mb=document.querySelector(".menu-btn");
 if(mb)mb.addEventListener("click",function(){var t=document.querySelector(".top");var o=t.classList.toggle("open");mb.setAttribute("aria-expanded",o)});
 }
-window.aimo={lastError:null,customer:customer,setCustomer:setCustomer,api:api,mock:mock,CUSTOMERS:CUSTOMERS};
+function mockMode(){return new URLSearchParams(location.search).has("mock")}
+function offline(el){var e=window.aimo.lastError,t=e&&e.status?"Unavailable ("+e.status+")":"Gateway offline";if(el)el.innerHTML='<p class="empty muted">'+t+"</p>";return t}
+window.aimo={mockMode:mockMode,offline:offline,lastError:null,customer:customer,setCustomer:setCustomer,api:api,mock:mock,CUSTOMERS:CUSTOMERS};
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
 })();

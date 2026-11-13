@@ -67,3 +67,4 @@ main{padding:16px 12px 40px}
 }
 @media (min-width:641px){.menu-btn{display:none}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}.btn:active{transform:none}}
+[hidden]{display:none!important}
