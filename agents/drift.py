@@ -127,23 +127,42 @@ def save_state(path, state):
 
 
 def snapshot(offers_items, lines):
+    every = [o for g in offers_items for o in g.get("offers", [])]
     out = {}
     for line, res in zip(lines, offers_items):
-        offers = res.get("offers", [])
-        mine = next((o for o in offers if o["product_id"] == line["product_id"]), None)
+        pid = line["product_id"]
+        mine = next((o for o in every if o["product_id"] == pid), None)
         alts = [
             {"product_id": o["product_id"], "name": o["product"]["name"], "price": o["unit_price_net"],
              "allergens": o["product"].get("allergens", []), "available_amount": o.get("available_amount"),
              "sales_block": o.get("sales_block")}
-            for o in offers if o["product_id"] != line["product_id"]
+            for o in res.get("offers", []) if o["product_id"] != pid
         ]
-        out[line["product_id"]] = {"found": mine is not None, "alternatives": alts}
+        out[pid] = {"found": mine is not None, "alternatives": alts}
         if mine:
-            out[line["product_id"]].update(
+            out[pid].update(
                 price=mine["unit_price_net"], available_amount=mine.get("available_amount"),
                 available_date=mine.get("available_date"), sales_block=mine.get("sales_block"),
                 allergens=mine["product"].get("allergens", []))
     return out
+
+
+def product_of(c, pid):
+    try:
+        return c.get(f"/v1/products/{pid}").raise_for_status().json()
+    except httpx.HTTPError:
+        return {}
+
+
+def exact_quote(c, line, product, delivery):
+    try:
+        q = c.post("/v1/quotes", json={"offers": [{"product_id": line["product_id"], "quantity": line["weeks"][-1]}], "delivery_date": delivery})
+        q.raise_for_status()
+        ql = next(l for l in q.json()["lines"] if l["product_id"] == line["product_id"])
+    except (httpx.HTTPError, StopIteration, KeyError):
+        return None
+    return {"found": True, "price": ql["unit_price_net"], "available_amount": None, "available_date": None,
+            "sales_block": None, "allergens": product.get("allergens", [])}
 
 
 def check(customer, key, url, today=None, state_path=None, rebaseline=False, client=None):
@@ -152,12 +171,19 @@ def check(customer, key, url, today=None, state_path=None, rebaseline=False, cli
     state_path = state_path or os.environ.get("AIMO_DRIFT_STATE", "var/drift.json")
     c = client or httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=30)
     mandate = c.get("/v1/mandate").raise_for_status().json()
+    prods = {l["product_id"]: product_of(c, l["product_id"]) for l in seed["lines"]}
     need = {
         "customer": customer, "deliver_by": delivery,
-        "items": [{"query": l["name"], "quantity": l["weeks"][-1], "unit": l["unit"], "constraints": {}} for l in seed["lines"]],
+        "items": [{"query": prods[l["product_id"]].get("name") or l["name"], "quantity": l["weeks"][-1], "unit": l["unit"], "constraints": {}} for l in seed["lines"]],
     }
     items = c.post("/v1/offers", json=need).raise_for_status().json()["items"]
     now = snapshot(items, seed["lines"])
+    for l in seed["lines"]:
+        pid = l["product_id"]
+        if not now[pid]["found"]:
+            q = exact_quote(c, l, prods[pid], delivery)
+            if q:
+                now[pid].update(q)
     state = load_state(state_path)
     base = state.get(customer, {}).get("baseline", {})
     flags = []

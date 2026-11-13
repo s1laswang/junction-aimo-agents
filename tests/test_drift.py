@@ -95,6 +95,8 @@ def mock_client(price):
     def handler(req):
         if req.url.path == "/v1/mandate":
             return httpx.Response(200, json=MANDATE)
+        if req.url.path.startswith("/v1/products/"):
+            return httpx.Response(404)
         items = []
         for it in __import__("json").loads(req.content)["items"]:
             line = next(l for s in SEEDS.values() for l in s["lines"] if l["name"] == it["query"])
@@ -224,3 +226,43 @@ def test_watch_reports_gateway_stockout_without_placing(tmp_path):
     r = drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=c)
     assert len(r) == 1 and r[0]["kind"] == "stockout_handled" and r[0]["why"] == "Milk out of stock" and r[0]["new_order_id"] is None
     assert sent == []
+
+
+def exact_client(quote_ok, found_elsewhere=False):
+    import json
+
+    def handler(req):
+        p = req.url.path
+        if p == "/v1/mandate":
+            return httpx.Response(200, json=MANDATE)
+        if p.startswith("/v1/products/"):
+            return httpx.Response(200, json={"product_id": p.rsplit("/", 1)[1], "name": "Exact " + p.rsplit("/", 1)[1], "allergens": []})
+        body = json.loads(req.content)
+        if p == "/v1/quotes":
+            if not quote_ok:
+                return httpx.Response(422, json={"code": "x"})
+            ln = body["offers"][0]
+            return httpx.Response(200, json={"lines": [{"product_id": ln["product_id"], "unit_price_net": 7.5}]})
+        items = []
+        for i, it in enumerate(body["items"]):
+            offers = []
+            if found_elsewhere and i == 1:
+                offers = [{"product_id": "460396", "product": {"name": "M", "allergens": []}, "unit_price_net": 3.0, "available_amount": 99, "available_date": "2026-11-17", "sales_block": None}]
+            items.append({"need_item": it, "shortfall": 0, "offers": offers})
+        return httpx.Response(200, json={"items": items})
+    return httpx.Client(base_url="http://t", transport=httpx.MockTransport(handler))
+
+
+def test_exact_quote_prevents_false_unavailable(tmp_path):
+    r = drift.check("school-hervanta", "k", "", today=date(2026, 11, 13), state_path=tmp_path / "d.json", client=exact_client(True))
+    assert not [f for f in r["flags"] if f["kind"] == "unavailable"]
+
+
+def test_quote_error_means_not_offered(tmp_path):
+    r = drift.check("school-hervanta", "k", "", today=date(2026, 11, 13), state_path=tmp_path / "d.json", client=exact_client(False))
+    assert len([f for f in r["flags"] if f["kind"] == "unavailable"]) == 3
+
+
+def test_match_across_all_groups(tmp_path):
+    r = drift.check("school-hervanta", "k", "", today=date(2026, 11, 13), state_path=tmp_path / "d.json", client=exact_client(False, True))
+    assert len([f for f in r["flags"] if f["kind"] == "unavailable"]) == 2
