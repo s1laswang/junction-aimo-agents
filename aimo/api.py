@@ -101,6 +101,14 @@ def search_products(q="", constraints=None, limit=50):
     return jsonable_encoder(catalog.search(q, constraints or Constraint(), limit))
 
 
+def get_product(product_id):
+    from aimo import catalog
+    pr = catalog.get(product_id)
+    if pr is None:
+        raise Err(404, {"code": "not_found", "text": f"No product {product_id}."})
+    return jsonable_encoder(pr)
+
+
 def parse_request(req: ParseRequest):
     from aimo import parse
     return jsonable_encoder(parse.parse_need(req.text, req.customer))

@@ -1,6 +1,7 @@
 import contextlib
 import json
 import os
+from datetime import date
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -8,8 +9,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
 from aimo import api
-from aimo.models import (ApprovalDecision, Constraint, Mandate, Need, ParseRequest, PlaceOrderRequest,
-                         QuoteRequest)
+from aimo.models import (ApprovalDecision, Constraint, Need, NeedItem, ParseRequest,
+                         PlaceOrderRequest, QuoteRequest, QuoteRequestLine)
 
 mcp = MCPServer("aimo")
 
@@ -56,27 +57,33 @@ def search_products(ctx: Context, q: str = "", lactose_free: bool | None = None,
 
 
 @mcp.tool()
+def get_product(ctx: Context, product_id: str) -> dict:
+    """One Product by id."""
+    return _run(ctx, "none", api.get_product, product_id)
+
+
+@mcp.tool()
 def parse_request(ctx: Context, text: str, customer: str) -> dict:
     """Parse free text into a Need."""
     return _run(ctx, "none", api.parse_request, ParseRequest(text=text, customer=customer))
 
 
 @mcp.tool()
-def get_offers(ctx: Context, need: Need) -> dict:
+def get_offers(ctx: Context, customer: str, deliver_by: date, items: list[NeedItem], raw_text: str | None = None) -> dict:
     """Ranked offers per need item: {items: [{need_item, offers, shortfall}]}."""
-    return _run(ctx, "agent", api.get_offers, need)
+    return _run(ctx, "agent", api.get_offers, Need(customer=customer, deliver_by=deliver_by, items=items, raw_text=raw_text))
 
 
 @mcp.tool()
-def request_quote(ctx: Context, offers: list[dict], delivery_date: str) -> dict:
-    """Signed Quote. offers is [{product_id, quantity}]."""
+def request_quote(ctx: Context, offers: list[QuoteRequestLine], delivery_date: date) -> dict:
+    """Signed Quote. offers is [{product_id, quantity, substitute_for?}]."""
     return _run(ctx, "agent", api.request_quote, QuoteRequest(offers=offers, delivery_date=delivery_date))
 
 
 @mcp.tool()
-def place_order(ctx: Context, quote_id: str, jws: str) -> dict:
-    """Place an order from a signed quote. Returns Order with Decision."""
-    return _run(ctx, "agent", api.place_order, PlaceOrderRequest(quote_id=quote_id, jws=jws))
+def place_order(ctx: Context, quote_id: str, jws: str, ask_human: bool = False, note: str | None = None) -> dict:
+    """Place an order from a signed quote. Returns Order with Decision. ask_human forces human approval."""
+    return _run(ctx, "agent", api.place_order, PlaceOrderRequest(quote_id=quote_id, jws=jws, ask_human=ask_human, note=note))
 
 
 @mcp.tool()
@@ -123,8 +130,11 @@ def mount(app):
         sub = mcp.streamable_http_app(streamable_http_path="/mcp", transport_security=security)
         holder["asgi"] = sub.routes[0].endpoint
 
-    async def asgi(scope, receive, send):
-        await holder["asgi"](scope, receive, send)
+    class Asgi:
+        async def __call__(self, scope, receive, send):
+            await holder["asgi"](scope, receive, send)
+
+    asgi = Asgi()
 
     build()
     app.router.routes.append(Route("/mcp", endpoint=asgi))
