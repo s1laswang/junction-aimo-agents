@@ -110,3 +110,13 @@ def test_tradeoff_public(products, offers):
     assert "vs 1 " not in line.replace("reliability 1 vs 1,", "")
     same = tradeoff(a, a)
     assert "reliability" not in same
+
+
+@pytest.mark.parametrize("query,must", [("whipping cream", "kuohukerma"), ("butter", "voi"), ("carrots", "porkkana"), ("cucumber", "kurkku")])
+def test_top_match_is_the_product_asked(query, must):
+    from aimo import catalog
+
+    item = NeedItem(query=query, quantity=10, unit="kg")
+    found = catalog.search(query, item.constraints, limit=50)
+    top = max(found, key=lambda p: match_score(item, p))
+    assert must in top.name.lower() and match_score(item, top) >= 0.5, top.name

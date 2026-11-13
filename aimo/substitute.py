@@ -61,6 +61,7 @@ def allergen_safe(product: Product, constraints: Constraint, exclude_allergens: 
 SYNONYMS = {
     "milk": ["milk", "maito", "mjölk"],
     "cream": ["cream", "kerma", "grädde"],
+    "whipping": ["whipping", "kuohu"],
     "butter": ["butter", "voi", "smör"],
     "yogurt": ["yogurt", "yoghurt", "jogurtti"],
     "cheese": ["cheese", "juusto", "ost"],
@@ -82,21 +83,71 @@ SYNONYMS = {
     "pork": ["pork", "possu", "porsaan"],
     "sugar": ["sugar", "sokeri"],
     "juice": ["juice", "mehu"],
+    "cucumber": ["cucumber", "kurkku"],
+    "broccoli": ["broccoli", "parsakaali"],
+    "banana": ["banana", "banaani"],
+    "cabbage": ["cabbage", "kaali"],
+    "lettuce": ["lettuce", "salaatti"],
+    "pepper": ["pepper", "paprika", "pippuri"],
+    "mushroom": ["mushroom", "sieni"],
+    "orange": ["orange", "appelsiini"],
+    "lemon": ["lemon", "sitruuna"],
+    "strawberry": ["strawberry", "mansikka"],
+    "pasta": ["pasta"],
+    "oil": ["oil", "öljy"],
+    "water": ["water", "vesi"],
+    "coffee": ["coffee", "kahvi"],
+    "ham": ["ham", "kinkku"],
+    "sausage": ["sausage", "makkara"],
+    "yoghurt": ["yoghurt", "yogurt", "jogurtti"],
+    "cod": ["cod", "turska"],
+    "turkey": ["turkey", "kalkkuna"],
+    "oatmeal": ["oatmeal", "kaurahiutale", "puuro"],
+    "bean": ["bean", "papu"],
+    "pea": ["pea", "herne"],
+    "corn": ["corn", "maissi"],
+    "lingonberry": ["lingonberry", "puolukka"],
+    "blueberry": ["blueberry", "mustikka"],
 }
 DERIVED = [
     "sauce", "kastike", "salad", "salaatti", "soup", "keitto", "cake", "kakku", "pie", "piirakka", "juice", "mehu",
     "mash", "muusi", "chips", "fries", "ranskal", "pizza", "bar", "patukka", "pudding", "puuro", "jam", "hillo",
     "cookie", "keksi", "noodle", "nuudeli", "mayo", "majoneesi", "dumpling", "bun", "pulla", "croissant", "knife",
-    "veitsi", "lasagne", "burger", "sandwich", "decoration", "koriste", "chicken", "kana", "meat", "liha",
+    "veitsi", "täysmehu", "lasagne", "burger", "sandwich", "decoration", "koriste", "chicken", "kana", "meat", "liha",
     "potato", "peruna", "cider", "siideri", "ketchup", "paste", "seos", "rahka", "quark",
 ]
 
 
+START_ONLY = {"kana", "liha", "bar", "pie", "jam", "bun"}
+
+
+def _form_w(f, name):
+    e = re.escape(f)
+    if len(f) <= 3:
+        return 1.0 if re.search(r"(?<![a-zäöå])" + e + r"(?![a-zäöå])", name) else 0.0
+    if re.search(e + r"[a-zäö]{0,3}(?![a-zäöå])", name):
+        return 1.0
+    return 0.5 if re.search(r"(?<![a-zäöå])" + e, name) else 0.0
+
+
+def _fi(w):
+    from aimo.parse import FI_NAME
+
+    out = []
+    for k, v in FI_NAME.items():
+        if w in (k, k.rstrip("s")) or w == v:
+            out += [k.split()[-1], v]
+    return out
+
+
 def _forms(w):
+    raw = w
     w = {"potatoes": "potato", "tomatoes": "tomato"}.get(w, w)
-    if w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+    if w.endswith("ies") and len(w) > 4:
+        w = w[:-3] + "y"
+    elif w.endswith("s") and not w.endswith("ss") and len(w) > 3:
         w = w[:-1]
-    forms = SYNONYMS.get(w, [w])
+    forms = list(dict.fromkeys([*(SYNONYMS.get(w) or [w]), *_fi(raw), *_fi(w)]))
     return [f[:-1] if len(f) > 4 and f[-1] in "aeiouyäö" else f for f in forms]
 
 
@@ -126,8 +177,7 @@ def match_score(item: NeedItem, product: Product) -> float:
         return 0.0
     hit = 0
     for w in qwords:
-        if _has(name, _forms(w)):
-            hit += 1
+        hit += max(_form_w(f, name) for f in _forms(w))
     if hit == 0:
         return 0.0
     score = 0.6 + 0.4 * hit / len(qwords)
@@ -136,7 +186,12 @@ def match_score(item: NeedItem, product: Product) -> float:
             score *= 1 - pen
     qf = [f for w in qwords for f in _forms(w) + [w]]
     for d in DERIVED:
-        hit_d = d in name if len(d) >= 5 else re.search(r"\b" + d, name)
+        if len(d) >= 5:
+            hit_d = d in name
+        elif d in START_ONLY:
+            hit_d = re.search(r"\b" + d, name)
+        else:
+            hit_d = re.search(r"\b" + d + "|" + d + r"(?![a-zäö])", name)
         if hit_d and not any(d in f or f in d for f in qf):
             score *= 0.5
     score -= 0.005 * min(len(re.findall(r"[\wäöå]+", name)), 20)
