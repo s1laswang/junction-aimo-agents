@@ -180,3 +180,26 @@ def test_past_delivery_date_not_issued():
         quotes.issue("hotel-aurora", "a1", [line], date(2020, 1, 1), until, 1.24)
     assert e.value.code == "INVALID_QUOTE"
     assert quotes.issue("hotel-aurora", "a1", [line], datetime.now(quotes.HELSINKI).date(), until, 1.24)
+
+
+def test_rotation_keeps_old_quotes_valid(tmp_path, capsys):
+    from aimo import keys as k
+
+    old = make()
+    old_kid = k.kid()
+    new_kid = k.rotate()
+    assert new_kid != old_kid and k.kid() == new_kid
+    ids = [x["kid"] for x in k.jwks()["keys"]]
+    assert ids == [new_kid, old_kid]
+    assert all("d" not in x for x in k.jwks()["keys"])
+    assert quotes.verify(old.jws, k.jwks()).quote_id == old.quote_id
+    assert quotes.redeem(old.quote_id, old.jws, "hotel-aurora", "a1").quote_id == old.quote_id
+    new = make(agent="a2")
+    assert parts(new)[0]["kid"] == new_kid
+    assert quotes.redeem(new.quote_id, new.jws, "hotel-aurora", "a2").quote_id == new.quote_id
+    k._cache.clear()
+    assert k.kid() == new_kid and len(k.jwks()["keys"]) == 2
+    h, p, s = parts(old)
+    forged = f"{b64({**h, 'kid': 'evil'})}.{b64(p)}.{s}"
+    with pytest.raises(quotes.QuoteError):
+        quotes.verify(forged)
