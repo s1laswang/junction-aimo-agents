@@ -11,3 +11,4 @@
 .actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 @media(max-width:640px){.row2{grid-template-columns:1fr}}
 @media(max-width:640px){.panel-head{flex-wrap:wrap}}
+.note{margin-top:12px}#last{margin-top:4px;color:var(--ink-2)}

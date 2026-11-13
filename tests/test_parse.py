@@ -210,3 +210,19 @@ def test_menu_lasagne_allergen_on_every_line():
 def test_menu_not_triggered_by_product_line():
     assert [i.query for i in one("20 kg lasagne sheets").items] != []
     assert len(one("20 kg lasagne").items) == 1
+
+
+@pytest.mark.parametrize("text,want", [
+    ("10 kg perunat", [("potatoes", 10.0, "kg")]),
+    ("10 kg lohta", [("salmon", 10.0, "kg")]),
+    ("200 kananmunia", [("egg", 200.0, "pcs")]),
+    ("tomatoes and carrots", [("tomato", 1.0, "pcs"), ("carrot", 1.0, "pcs")]),
+    ("5 kg tomaatteja ja 3 kg porkkanoita", [("tomato", 5.0, "kg"), ("carrot", 3.0, "kg")]),
+    ("10 kg jauhelihaa", [("mince", 10.0, "kg")]),
+    ("tomatoes, carrots and onions 20 kg", [("tomato", 20.0, "kg"), ("carrot", 20.0, "kg"), ("onion", 20.0, "kg")]),
+    ("tomatoes 20 kg and carrots 5 kg", [("tomato", 20.0, "kg"), ("carrot", 5.0, "kg")]),
+    ("10 kg cucumbers, 5 kg lemons", [("cucumber", 10.0, "kg"), ("lemon", 5.0, "kg")]),
+    ("20 kg salmon fillets", [("salmon", 20.0, "kg")]),
+])
+def test_plural_inflected_multi(text, want):
+    assert [(i.query, i.quantity, i.unit) for i in one(text).items] == want
