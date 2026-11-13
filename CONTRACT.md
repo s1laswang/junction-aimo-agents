@@ -140,3 +140,12 @@ catalog.search -> substitute.allergen_safe -> substitute.match_score (drop low) 
 
 - Shared venv: `ln -s ~/aimo-agents/.venv .venv` (never commit it). New dependency: ask lead-gateway.
 - Leads merge from their worktree: `git -C ~/software/junction26-valio merge --no-ff <branch>`, then `python -m pytest -q` there must be green, then push: `~/.local/forceguard/git push origin dev` (origin = Momin010/junction26-valio). Workers never push. Nobody touches main.
+
+## v3 additions (23:20)
+
+- `Offer.substitute_for: product_id|None` (set when the offer replaces the asked product). `QuoteRequestLine` and `QuoteLine` carry `substitute_for` too; `QuoteLine.name` added. `orders.place` fills `Order.substitutions` from quote lines with `substitute_for` and passes them to `policy.decide`.
+- `PlaceOrderRequest {quote_id, jws, ask_human=false, note}`: `ask_human` forces `needs_approval` with reason `AGENT_REQUESTED` (note as text).
+- MCP tool arguments are the REST JSON body fields at top level (e.g. `get_offers` takes `customer, deliver_by, items, raw_text`), plus query params for GET tools. Tool result = the REST JSON.
+- `get_audit_trail` returns `AuditTrail {events, text}`.
+- Bad/tampered/used/expired jws: HTTP 409 `{code, text}` (QuoteError code), no Order created, an `order_rejected` AuditEvent is written. MCP returns the same as a tool error.
+- `GET /v1/products/{id}` -> `Product` (tool `get_product`).
