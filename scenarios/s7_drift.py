@@ -25,6 +25,7 @@ def go():
     pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
     simulate(c, "stockout", product_id=pid, available_amount=0)
     flags = drift.check("hotel-aurora", KEYS["hotel-aurora"], base, state_path=st)["flags"]
+    clear_simulation(c)
     r.check("injected stock-out is flagged for that product", any(f["product_id"] == pid for f in flags))
 
 

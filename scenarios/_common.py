@@ -6,10 +6,11 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 KEYS = {
-    "hotel-aurora": os.environ.get("KEY_HOTEL", "key-hotel-aurora"),
-    "hospital-tays": os.environ.get("KEY_HOSPITAL", "key-hospital-tays"),
-    "school-hervanta": os.environ.get("KEY_SCHOOL", "key-school-hervanta"),
+    "hotel-aurora": os.environ.get("KEY_HOTEL", "demo-hotel-aurora"),
+    "hospital-tays": os.environ.get("KEY_HOSPITAL", "demo-hospital-tays"),
+    "school-hervanta": os.environ.get("KEY_SCHOOL", "demo-school-hervanta"),
 }
+ADMIN = {"X-Admin-Key": os.environ.get("AIMO_ADMIN_KEY", "demo-admin")}
 DATA = os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json")
 
 
@@ -71,10 +72,10 @@ class Client:
         return self.j("POST", "/v1/orders", json={"quote_id": quote["quote_id"], "jws": quote["jws"]})
 
     def approvals(self):
-        return self.j("GET", "/v1/approvals")
+        return self.j("GET", "/v1/approvals", headers=ADMIN)
 
     def decide(self, order_id, approve, by="scenario-human", note="scenario"):
-        return self.j("POST", f"/v1/approvals/{order_id}", json={"approve": approve, "by": by, "note": note})
+        return self.j("POST", f"/v1/approvals/{order_id}", json={"approve": approve, "by": by, "note": note}, headers=ADMIN)
 
     def audit(self, order_id):
         return self.j("GET", "/v1/audit", params={"order_id": order_id})
@@ -138,7 +139,11 @@ def verify_jws(base, jws):
 
 
 def simulate(client, kind, **params):
-    return client.j("POST", "/v1/admin/simulate", json={"kind": kind, **params})
+    return client.j("POST", "/v1/admin/simulate", json={"product_id": str(params["product_id"]), "available_amount": params.get("available_amount", 0)}, headers=ADMIN)
+
+
+def clear_simulation(client):
+    client.call("DELETE", "/v1/admin/simulate", headers=ADMIN)
 
 
 def table(rows):

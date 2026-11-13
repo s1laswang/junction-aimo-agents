@@ -20,6 +20,7 @@ def go():
     r.check("fault injected", sim is not None)
     after = c.j("GET", f"/v1/orders/{o['order_id']}")
     pend = any(a["order_id"] == o["order_id"] for a in c.approvals())
+    clear_simulation(c)
     changed = after["status"] != o["status"] or after["substitutions"] or after["lines"] != o["lines"]
     r.check("order reacted (split, substitute or new date)", bool(changed) or pend, after["status"])
     r.check("human asked before changing the order", pend or after["decision"]["outcome"] == "needs_approval", after["decision"]["outcome"])
