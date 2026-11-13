@@ -1,19 +1,21 @@
 import json
 import os
-import sqlite3
+import sys
+import urllib.request
 import uuid
 import warnings
+from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
-from pathlib import Path
 
 from joserfc import jws
 from joserfc.errors import JoseError
 
-from aimo import keys
+from aimo import audit, db, keys
 from aimo.models import Quote
 
 warnings.filterwarnings("ignore", message="EdDSA is deprecated")
 
+HELSINKI = ZoneInfo("Europe/Helsinki")
 ALGS = ["EdDSA"]
 
 
@@ -25,9 +27,7 @@ class QuoteError(Exception):
 
 
 def _db():
-    path = os.environ.get("AIMO_DB", "var/aimo.db")
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
+    con = db.connect()
     con.execute(
         "CREATE TABLE IF NOT EXISTS quotes (quote_id TEXT PRIMARY KEY, customer TEXT, agent_id TEXT,"
         " valid_until TEXT, payload TEXT, jws TEXT, used_at TEXT)"
@@ -39,22 +39,20 @@ def _canon(d):
     return json.dumps(d, sort_keys=True, separators=(",", ":"))
 
 
-def _audit(customer, agent_id, quote):
-    try:
-        from aimo import audit
-    except ImportError:
-        return
+def _audit(action, quote, why):
     audit.record(
-        customer,
-        f"agent:{agent_id}",
-        "quote.issued",
+        quote.customer,
+        f"agent:{quote.agent_id}",
+        action,
         quote.quote_id,
-        f"Quote {quote.quote_id} for {quote.total_gross:.2f} {quote.currency} issued, valid until {quote.valid_until.isoformat()}.",
-        {"quote_id": quote.quote_id, "total_gross": quote.total_gross, "lines": len(quote.lines)},
+        why,
+        {"quote_id": quote.quote_id, "total_net": quote.total_net, "total_gross": quote.total_gross, "currency": quote.currency},
     )
 
 
 def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, currency="EUR"):
+    if valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
     quote = Quote(
         quote_id="q_" + uuid.uuid4().hex[:12],
         customer=customer,
@@ -75,7 +73,12 @@ def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, cu
             "INSERT INTO quotes (quote_id, customer, agent_id, valid_until, payload, jws) VALUES (?,?,?,?,?,?)",
             (quote.quote_id, customer, agent_id, quote.valid_until.isoformat(), payload, token),
         )
-    _audit(customer, agent_id, quote)
+    _audit(
+        "quote.issued",
+        quote,
+        f"Quote {quote.quote_id} for {quote.total_net:,.2f} {quote.currency} net ({quote.total_gross:,.2f} {quote.currency} with VAT), "
+        f"valid until {quote.valid_until.astimezone(HELSINKI):%d.%m. %H:%M} Helsinki time.",
+    )
     return quote
 
 
@@ -121,4 +124,34 @@ def redeem(quote_id, token, customer, agent_id):
         ).rowcount
     if not n:
         raise QuoteError("QUOTE_USED", "Quote was already used.")
+    _audit("quote.redeemed", quote, f"Quote {quote_id} redeemed for {quote.total_net:,.2f} {quote.currency} net ({quote.total_gross:,.2f} {quote.currency} with VAT).")
     return quote
+
+
+def _load_jwks(src):
+    if src.startswith("http"):
+        with urllib.request.urlopen(src, timeout=10) as r:
+            return json.load(r)
+    return json.load(open(src))
+
+
+def main(argv):
+    if len(argv) < 3 or argv[1] != "verify":
+        print("usage: python -m aimo.quotes verify <jws> [jwks_url_or_file]")
+        return 2
+    try:
+        q = verify(argv[2], _load_jwks(argv[3]) if len(argv) > 3 else None)
+    except QuoteError as e:
+        print(e)
+        return 1
+    expired = datetime.now(timezone.utc) >= q.valid_until
+    print(
+        f"OK {q.quote_id} customer={q.customer} agent={q.agent_id} lines={len(q.lines)} "
+        f"total_gross={q.total_gross:.2f} {q.currency} delivery={q.delivery_date} "
+        f"valid_until={q.valid_until.isoformat()}{' (EXPIRED)' if expired else ''}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

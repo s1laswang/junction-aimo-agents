@@ -1,45 +1,18 @@
 import json
 import math
 import re
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from aimo.models import Constraint, Need, NeedItem
+from aimo.parse import deliver_date, text_constraints
 
 _DATA = json.loads((Path(__file__).resolve().parent.parent / "data_extra" / "recipes.json").read_text())
 DISHES = _DATA["dishes"]
 SWAPS = _DATA["swaps"]
 
-_DAYS = {
-    "monday": 0, "maanantai": 0, "tuesday": 1, "tiistai": 1, "wednesday": 2, "keskiviikko": 2,
-    "thursday": 3, "torstai": 3, "friday": 4, "perjantai": 4, "saturday": 5, "lauantai": 5,
-    "sunday": 6, "sunnuntai": 6,
-}
 _UNITS = {"g": ("kg", 1000), "ml": ("L", 1000), "pcs": ("pcs", 1)}
 _COVERS = r"(?:guests?|people|persons?|covers?|portions?|pax|hengelle|henkilölle|henkilolle|hengen|henkeä|annosta|annos)"
-
-
-def _deliver_by(text, today):
-    m = re.search(r"\d{4}-\d{2}-\d{2}", text)
-    if m:
-        return date.fromisoformat(m.group())
-    t = text.lower()
-    if "tomorrow" in t or "huomenna" in t or "huomiseksi" in t:
-        return today + timedelta(days=1)
-    for name, wd in _DAYS.items():
-        if name in t:
-            return today + timedelta(days=(wd - today.weekday()) % 7 or 7)
-    return today + timedelta(days=3)
-
-
-def _constraint(text):
-    t = text.lower()
-    c = Constraint()
-    if "lactose-free" in t or "lactose free" in t or "laktoositon" in t:
-        c.lactose_free = True
-    if "gluten-free" in t or "gluten free" in t or "gluteeniton" in t:
-        c.gluten_free = True
-    return c
 
 
 def _triggered(trigger, c):
@@ -82,7 +55,7 @@ def _default_covers(text):
 def menu_to_need(text, customer, deliver_by=None, today=None, stock=None, constraints=None):
     today = today or date.today()
     default = _default_covers(text)
-    c = constraints or _constraint(text)
+    c = constraints or text_constraints(text)
     totals = {}
     for d, n in _dishes_in(text):
         covers = n or default
@@ -106,6 +79,6 @@ def menu_to_need(text, customer, deliver_by=None, today=None, stock=None, constr
             query=q,
             quantity=math.ceil(qty * 100) / 100,
             unit=out_unit,
-            constraints=c.model_copy() if swapped else Constraint(),
+            constraints=c.model_copy() if swapped else Constraint(exclude_allergens=list(c.exclude_allergens)),
         ))
-    return Need(customer=customer, deliver_by=deliver_by or _deliver_by(text, today), items=items, raw_text=text)
+    return Need(customer=customer, deliver_by=deliver_by or deliver_date(text, today), items=items, raw_text=text)

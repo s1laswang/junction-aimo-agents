@@ -39,3 +39,14 @@ def test_v2(tmp_path, monkeypatch):
     cp = audit.checkpoint()
     got = jws.deserialize_compact(cp["jws"], keys.signing_key(), algorithms=["EdDSA"])
     assert got.protected["kid"] == keys.kid() and cp["hash"] == e.hash and cp["seq"] == 1
+
+
+def test_float_matches_js(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "f.db"))
+    e = audit.record("hotel-aurora", "system", "order.placed", "o1", "ok", {"total": 1590.0, "n": [2.0, 1.5]})
+    js = json.dumps({"action": e.action, "actor": e.actor, "customer": e.customer, "detail": {"n": [2, 1.5], "total": 1590}, "seq": 1, "subject": "o1", "ts": e.ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "why": "ok"}, sort_keys=True, separators=(",", ":"))
+    assert e.hash == hashlib.sha256(("0" * 64 + js).encode()).hexdigest()
+    assert audit.verify() == (True, None)

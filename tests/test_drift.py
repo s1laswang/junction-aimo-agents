@@ -124,7 +124,7 @@ def test_live(tmp_path):
 
 def test_apply_holds_on_approval():
     r = {"standing_order": {"lines": []}, "flags": [{"route": "approval", "product_id": "1", "fix": {}}]}
-    assert drift.apply(r, "k", "http://x")["status"] == "needs_approval"
+    assert drift.apply(r, "k", "http://x", ask_human=False)["status"] == "needs_approval"
 
 
 def test_apply_ask_human_sends_note():
@@ -146,3 +146,63 @@ def test_apply_ask_human_sends_note():
     finally:
         drift.httpx.Client = real
     assert sent["ask_human"] is True and sent["note"] == "creep"
+
+
+ORDER = {"order_id": "ord_1", "status": "confirmed", "delivery_date": "2026-11-17",
+         "lines": [{"product_id": "1", "name": "Milk", "quantity": 10, "sales_unit": "CS"},
+                   {"product_id": "9", "name": "Bread", "quantity": 4, "sales_unit": "CS"}]}
+
+
+def offer(pid, amt, **kw):
+    o = {"product_id": pid, "product": {"name": "N" + pid}, "units_needed": 4, "available_amount": amt, "available_date": "2026-11-17", "sales_block": None}
+    o.update(kw)
+    return o
+
+
+def watch_client(groups, sent):
+    import json
+
+    def handler(req):
+        p = req.url.path
+        if req.method == "GET":
+            return httpx.Response(200, json=[ORDER, {**ORDER, "order_id": "ord_2", "status": "pending_approval"}])
+        body = json.loads(req.content)
+        if p == "/v1/offers":
+            return httpx.Response(200, json={"items": groups})
+        if p == "/v1/quotes":
+            sent["quote"] = body
+            return httpx.Response(200, json={"quote_id": "q", "jws": "j"})
+        sent["order"] = body
+        return httpx.Response(200, json={"order_id": "ord_new"})
+    return httpx.Client(base_url="http://t", transport=httpx.MockTransport(handler))
+
+
+def test_watch_split_with_substitute(tmp_path):
+    sent = {}
+    groups = [{"offers": [offer("1", 6), offer("5", 0, units_needed=4, substitute_for="1")]}, {"offers": [offer("9", 99)]}]
+    r = drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=watch_client(groups, sent))
+    assert len(r) == 1 and r[0]["product_id"] == "1" and r[0]["after"] == 6 and r[0]["new_order_id"] == "ord_new"
+    assert r[0]["fix"]["action"] == "split"
+    assert sent["quote"]["offers"] == [{"product_id": "1", "quantity": 6}, {"product_id": "5", "quantity": 4, "substitute_for": "1"}, {"product_id": "9", "quantity": 4}]
+    assert sent["order"]["ask_human"] is True and "ord_1" in sent["order"]["note"]
+    sent.clear()
+    assert drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=watch_client(groups, sent)) == [] and not sent
+
+
+def test_watch_stockout_full_substitute(tmp_path):
+    sent = {}
+    groups = [{"offers": [offer("5", 50, substitute_for="1", units_needed=10)]}, {"offers": [offer("9", 99)]}]
+    r = drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=watch_client(groups, sent))
+    assert r[0]["fix"]["action"] == "substitute" and "no longer available" in r[0]["why"]
+
+
+def test_watch_move_date(tmp_path):
+    sent = {}
+    groups = [{"offers": [offer("1", 50, available_date="2026-11-19")]}, {"offers": [offer("9", 99)]}]
+    r = drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=watch_client(groups, sent))
+    assert r[0]["fix"]["action"] == "move_date" and sent["quote"]["delivery_date"] == "2026-11-19"
+
+
+def test_watch_all_fine(tmp_path):
+    groups = [{"offers": [offer("1", 50)]}, {"offers": [offer("9", 99)]}]
+    assert drift.watch_orders("c", "k", "", state_path=tmp_path / "s.json", client=watch_client(groups, {})) == []

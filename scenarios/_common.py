@@ -74,7 +74,8 @@ class Client:
     def approvals(self):
         return self.j("GET", "/v1/approvals", headers=ADMIN)
 
-    def decide(self, order_id, approve, by="scenario-human", note="scenario"):
+    def decide(self, order_id, approve, by=None, note="scenario"):
+        by = by if by and by != "scenario-human" else self.j("GET", "/v1/mandate")["approvers"][0]
         return self.j("POST", f"/v1/approvals/{order_id}", json={"approve": approve, "by": by, "note": note}, headers=ADMIN)
 
     def audit(self, order_id):
@@ -146,7 +147,7 @@ def verify_jws(base, jws):
     from joserfc import jws as J
     from joserfc.jwk import KeySet
     keys = httpx.get(base + "/.well-known/jwks.json", timeout=30).json()
-    return J.deserialize_compact(jws, KeySet.import_key_set(keys))
+    return J.deserialize_compact(jws, KeySet.import_key_set(keys), algorithms=["EdDSA"])
 
 
 def simulate(client, kind, **params):
@@ -163,3 +164,16 @@ def table(rows):
     fails = sum(1 for r in rows if not r[0])
     lines.append(f"{len(rows) - fails}/{len(rows)} passed")
     return "\n".join(lines), fails
+
+
+def excluded_codes(names):
+    from aimo.catalog import ALLERGEN_ALIASES, ALLERGEN_NAMES
+    out = set()
+    for a in names:
+        a = a.strip().lower()
+        out |= set(ALLERGEN_ALIASES.get(a) or [k for k, v in ALLERGEN_NAMES.items() if v == a] or [a.upper()])
+    return out
+
+
+def violates(pid, names):
+    return bool((allergens_of(pid) or set()) & excluded_codes(names))

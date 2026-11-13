@@ -26,7 +26,7 @@ def go():
     for s in o["substitutions"]:
         r.check("substitution recorded with reason", s.get("original_id") and s.get("substitute_id") and s.get("reason"), str(s))
     excl = set(c.j("GET", "/v1/mandate").get("exclude_allergens", []))
-    bad = [s for s in o["substitutions"] if (allergens_of(s["substitute_id"]) or set()) & excl]
+    bad = [s for s in o["substitutions"] if violates(s["substitute_id"], excl)]
     r.check("substitutes respect mandate allergens", not bad)
     ev = c.audit(o["order_id"])
     events = ev["events"] if isinstance(ev, dict) and "events" in ev else ev

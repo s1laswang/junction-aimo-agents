@@ -20,14 +20,14 @@
 </main>
 <script src="/shell.js"></script>
 <script>
-var MM={"hotel-aurora":2000,"hospital-tays":1500,"school-hervanta":800};
+var MM={"hotel-aurora":2500,"hospital-tays":1500,"school-hervanta":600};
 var M={appr:[{order_id:"ord_demo1",customer:"hotel-aurora",total_net:2480.5,decision:{reasons:[{text:"Over per order limit"}]}},{order_id:"ord_demo2",customer:"hospital-tays",total_net:640,decision:{reasons:[{text:"Substitution needs approval"}]}}],audit:[{seq:42,ts:"2026-11-14T00:12:00Z",customer:"hotel-aurora",action:"order_placed",subject:"ord_demo0",why:"Within mandate, placed automatically",detail:{total_net:310}},{seq:41,ts:"2026-11-14T00:10:00Z",customer:"hotel-aurora",action:"quote_issued",subject:"q_demo",why:"Quote signed, valid until closing time",detail:{}}]};
 function esc(t){var d=document.createElement("div");d.textContent=t==null?"":t;return d.innerHTML}
 function eur(n){return n==null?"":Number(n).toFixed(2)}
 function evs(x){return Array.isArray(x)?x:(x&&x.events)||[]}
 function rows(el,h,empty){document.getElementById(el).innerHTML=h||'<p class="empty">'+empty+'</p>'}
 async function load(){
-var c=aimo.customer(),o={admin:true},q=await Promise.all([aimo.api("/v1/approvals",o),aimo.api("/v1/audit",o),aimo.api("/v1/mandate")]);
+var c=aimo.customer(),q=await Promise.all([aimo.api("/v1/approvals",{admin:true}),aimo.api("/v1/audit",{admin:true}),aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true})]);
 var mock=q.some(function(x){return x===null})||/[?&]mock=1/.test(location.search);
 var ap=mock?M.appr:q[0],ev=mock?M.audit:evs(q[1]);
 document.getElementById("n-appr").textContent=ap.length;

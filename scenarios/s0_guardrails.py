@@ -18,7 +18,7 @@ def go():
     o = c.order(qb)
     r.check("over per_order_eur -> needs_approval", o["decision"]["outcome"] == "needs_approval" and o["status"] == "pending_approval", str(o["decision"]))
     r.check("order listed in approvals", any(a["order_id"] == o["order_id"] for a in c.approvals()))
-    d = c.decide(o["order_id"], True, "scenario-human", "ok")
+    d = c.decide(o["order_id"], True, m["approvers"][0], "ok")
     r.check("approval -> placed", d["status"] in ("placed", "approved", "confirmed"), d["status"])
     h, p, s = q["jws"].split(".")
     tam = ".".join([h, p[:-2] + ("AA" if p[-2:] != "AA" else "BB"), s])
