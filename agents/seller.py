@@ -160,7 +160,7 @@ if __name__ == "__main__":
     ap.add_argument("--customer")
     ap.add_argument("--key", default=None)
     ap.add_argument("--url", default=URL)
-    ap.add_argument("--accept", type=int)
+    ap.add_argument("--accept", type=int, nargs="?", const=0)
     ap.add_argument("--demo", action="store_true")
     a = ap.parse_args()
     if a.demo:
