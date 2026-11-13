@@ -18,8 +18,7 @@ def c(tmp_path, monkeypatch):
     monkeypatch.setenv("AIMO_DB", str(tmp_path / "t.db"))
     monkeypatch.setenv("AIMO_CACHE_DIR", "var/cache")
     from aimo.app import app
-    with TestClient(app) as cl:
-        yield cl
+    yield TestClient(app)
 
 
 def order(c, key, pid, qty, sub_for=None):
