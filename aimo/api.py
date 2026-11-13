@@ -106,6 +106,8 @@ def domain(fn, *a, **kw):
         if type(e).__name__ in ("QuoteError", "ApprovalError") and hasattr(e, "code"):
             status = {"NOT_FOUND": 404, "NOT_APPROVER": 403}.get(e.code, 409)
             raise Err(status, {"code": e.code, "text": e.text})
+        if type(e).__name__ == "UpstreamUnavailable":
+            raise Err(503, {"code": "UPSTREAM_UNAVAILABLE", "text": str(e) or "The supplier system is unavailable, try again shortly."})
         raise
 
 
@@ -160,7 +162,7 @@ def get_offers(p, need: Need):
     from aimo import mandates, offers
     own(p, need.customer)
     mandate = p.mandate if p.mandate else mandates.get(need.customer)
-    res = offers.get_offers(need, mandate)
+    res = domain(offers.get_offers, need, mandate)
     _audit_offers(p, need, res)
     return jsonable_encoder(res)
 
