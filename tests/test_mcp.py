@@ -136,3 +136,20 @@ def test_parse_summary(client):
     init(client)
     out = rpc(client, "tools/call", {"name": "parse_request", "arguments": {"text": "100 litres of milk by Friday", "customer": "hotel-aurora"}}, id=9)
     assert "summary" in json.dumps(out["result"]["content"])
+
+
+def test_upstream_unavailable(client, agent_key, monkeypatch):
+    from aimo import offers
+
+    class UpstreamUnavailable(Exception):
+        pass
+
+    def boom(*a, **k):
+        raise UpstreamUnavailable("Valio API down")
+    monkeypatch.setattr(offers, "get_offers", boom)
+    need = {"customer": "hotel-aurora", "deliver_by": "2026-11-20", "items": [{"query": "milk", "quantity": 1, "unit": "l"}]}
+    r = client.post("/v1/offers", json=need, headers={"X-Agent-Key": agent_key})
+    assert r.status_code == 503 and r.json()["code"] == "UPSTREAM_UNAVAILABLE"
+    init(client)
+    out = rpc(client, "tools/call", {"name": "get_offers", "arguments": need}, {"X-Agent-Key": agent_key}, id=11)
+    assert out["result"]["isError"] and "UPSTREAM_UNAVAILABLE" in json.dumps(out["result"]["content"])
