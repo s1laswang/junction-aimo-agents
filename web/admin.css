@@ -10,3 +10,4 @@
 .chip button:hover{color:var(--stop)}
 .actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 @media(max-width:640px){.row2{grid-template-columns:1fr}}
+@media(max-width:640px){.panel-head{flex-wrap:wrap}}
