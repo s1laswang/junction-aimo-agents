@@ -19,3 +19,23 @@ def test_chain(tmp_path, monkeypatch):
     c.execute("update audit set why='edited' where seq=2")
     c.commit()
     assert audit.verify() == (False, 2)
+
+
+def test_v2(tmp_path, monkeypatch):
+    from datetime import date
+
+    from joserfc import jws
+
+    from aimo import keys
+
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "b.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    e = audit.record("hotel-aurora", "system", "order.pending_approval", "o9", "Held for Laura Virtanen.", {"order_id": "o9", "d": date(2026, 11, 14), "reasons": [{"code": "OVER_ORDER_LIMIT", "text": "The 3,400 EUR order is over the 3,000 EUR limit."}]})
+    assert audit.verify() == (True, None)
+    text = audit.narrate([e])
+    assert "over the 3,000 EUR limit" in text
+    h = e.ts.astimezone(audit.HELSINKI).strftime("%H:%M")
+    assert text.startswith(h)
+    cp = audit.checkpoint()
+    got = jws.deserialize_compact(cp["jws"], keys.signing_key(), algorithms=["EdDSA"])
+    assert got.protected["kid"] == keys.kid() and cp["hash"] == e.hash and cp["seq"] == 1
