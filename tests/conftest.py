@@ -14,6 +14,7 @@ def tmp_db(tmp_path_factory):
 @pytest.fixture(scope="session")
 def client(tmp_db):
     pytest.importorskip("aimo.app")
+    pytest.importorskip("aimo.api")
     from fastapi.testclient import TestClient
     from aimo.app import app
     with TestClient(app) as c:
