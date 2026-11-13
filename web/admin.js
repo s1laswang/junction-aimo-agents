@@ -1,4 +1,4 @@
-var MOCK={"hotel-aurora":{customer:"hotel-aurora",agent_id:"aurora-buyer",per_order_eur:2000,per_week_eur:8000,exclude_allergens:[],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["head.chef"]},"hospital-tays":{customer:"hospital-tays",agent_id:"tays-buyer",per_order_eur:1500,per_week_eur:6000,exclude_allergens:["gluten","nuts","egg"],allowed_categories:["dairy","bakery"],substitutions:"ask",preferred_brands:[],approvers:["kitchen.manager","dietitian"]},"school-hervanta":{customer:"school-hervanta",agent_id:"hervanta-buyer",per_order_eur:800,per_week_eur:3000,exclude_allergens:["nuts"],allowed_categories:null,substitutions:"never",preferred_brands:["Valio"],approvers:["school.cook"]}};
+var MOCK={"hotel-aurora":{customer:"hotel-aurora",agent_id:"buyer-aurora",per_order_eur:2500,per_week_eur:15000,exclude_allergens:[],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["head.chef"]},"hospital-tays":{customer:"hospital-tays",agent_id:"buyer-tays",per_order_eur:1500,per_week_eur:8000,exclude_allergens:["peanut","nuts","egg"],allowed_categories:null,substitutions:"ask",preferred_brands:["Valio"],approvers:["kitchen.manager","dietitian"]},"school-hervanta":{customer:"school-hervanta",agent_id:"buyer-hervanta",per_order_eur:600,per_week_eur:3000,exclude_allergens:["peanut","nuts"],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["school.cook"]}};
 var LIST=["exclude_allergens","allowed_categories","preferred_brands","approvers"];
 var cur={},orig={};
 var X='<svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M18 6L6 18M6 6l12 12"/></svg>';
@@ -18,7 +18,7 @@ b.onclick=function(){cur[k].splice(i,1);render()};c.append(b);box.insertBefore(c
 });
 }
 async function load(){
-var c=aimo.customer(),m=/[?&]mock=1/.test(location.search)?null:await aimo.api("/v1/mandate");
+var c=aimo.customer(),m=/[?&]mock=1/.test(location.search)?null:await aimo.api("/v1/mandate?customer="+encodeURIComponent(c),{admin:true});
 aimo.mock(!m);
 cur=JSON.parse(JSON.stringify(m||MOCK[c]));
 LIST.forEach(function(k){if(!cur[k])cur[k]=[]});
