@@ -82,3 +82,34 @@ def test_expiry(env):
     assert approvals.expire_stale() == 1
     assert db["o3"].status == "expired" and db["o2"].status == "pending_approval"
     assert [o.order_id for o in approvals.pending()] == ["o2"]
+
+
+def test_real_flow(monkeypatch, tmp_path):
+    pytest.importorskip("aimo.orders")
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "t.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    from aimo import audit, orders, quotes
+    from aimo.models import PlaceOrderRequest, Product
+
+    try:
+        import aimo.catalog
+    except ImportError:
+        cat = types.ModuleType("aimo.catalog")
+        cat.get = lambda pid: Product(product_id=pid, name="Valio lactose-free milk", brand="Valio")
+        monkeypatch.setitem(sys.modules, "aimo.catalog", cat)
+        import aimo
+        monkeypatch.setattr(aimo, "catalog", cat, raising=False)
+
+    line = QuoteLine(product_id="p1", quantity=1000, sales_unit="L", unit_price_net=4.0, line_total_net=4000.0)
+    q = quotes.issue("hotel-aurora", "buyer-aurora", [line], NOW.date() + timedelta(days=2), NOW + timedelta(hours=2), 4960.0)
+    o = orders.place("hotel-aurora", "buyer-aurora", PlaceOrderRequest(quote_id=q.quote_id, jws=q.jws))
+    assert o.status == "pending_approval"
+    assert [x.order_id for x in approvals.pending("hotel-aurora")] == [o.order_id]
+    err("NOT_APPROVER", o.order_id, True, "Nobody")
+    out = approvals.decide(o.order_id, True, "Laura Virtanen", "fine")
+    assert out.status == "confirmed"
+    err("NOT_PENDING", o.order_id, True, "Laura Virtanen")
+    actions = [e.action for e in audit.events(order_id=o.order_id)]
+    for a in ("quote.issued", "order.placed", "order.pending_approval", "approval.approved", "order.placed", "order.confirmed"):
+        assert a in actions
+    assert audit.verify()[0]

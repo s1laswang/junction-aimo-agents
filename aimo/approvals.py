@@ -1,6 +1,3 @@
-import json
-import os
-import urllib.request
 from datetime import datetime, timezone
 from importlib import import_module
 
@@ -35,13 +32,6 @@ def _reasons(order):
 
 def _notify(order, event):
     print(f"[approvals] {event} order={order.order_id} customer={order.customer} total={order.total_net:.2f}")
-    url = os.environ.get("AIMO_APPROVAL_WEBHOOK")
-    if url:
-        try:
-            req = urllib.request.Request(url, json.dumps({"event": event, "order_id": order.order_id, "customer": order.customer}).encode(), {"Content-Type": "application/json"})
-            urllib.request.urlopen(req, timeout=3)
-        except OSError:
-            pass
 
 
 def pending(customer=None):

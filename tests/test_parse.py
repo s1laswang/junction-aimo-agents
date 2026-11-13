@@ -178,3 +178,18 @@ def test_llm_allergens_global(monkeypatch):
     monkeypatch.setattr(llm, "chat", lambda s, u: '{"deliver_by":"2026-11-16","items":[{"query":"milk","quantity":5,"unit":"L","constraints":{"exclude_allergens":["nuts"]}},{"query":"cream","quantity":2,"unit":"L"}]}')
     n = one("whatever")
     assert [i.constraints.exclude_allergens for i in n.items] == [["nuts"], ["nuts"]]
+
+
+def test_describe_need_en_fi():
+    from aimo.parse import describe_need
+
+    n = one("I need 1,000 litres of lactose-free milk by Monday")
+    assert describe_need(n) == "1000 L milk, lactose-free, deliver by Mon 16 Nov 2026"
+    assert describe_need(n, "fi") == "1000 L maito, laktoositon, toimitus ma 16.11.2026"
+
+
+def test_describe_need_multi():
+    from aimo.parse import describe_need
+
+    n = one("200 kg potatoes and 50 l cream, no nuts, organic")
+    assert describe_need(n) == "200 kg potatoes, no nuts, organic; 50 L cream, no nuts, organic; deliver by Sun 15 Nov 2026"
