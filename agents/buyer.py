@@ -15,6 +15,7 @@ from agents import llm
 
 DEMO = [
     ("hotel-aurora", "I need 1000 litres of lactose-free milk by Monday"),
+    ("hotel-aurora", "I need 3000 litres of lactose-free milk by Monday for a big event"),
     ("hospital-tays", "I need 40 kg of gluten-free pasta and 200 litres of oat drink without milk allergens by Friday"),
     ("school-hervanta", "We need 300 kg of potatoes and 120 kg of minced meat for school lunches by Thursday"),
 ]
@@ -204,7 +205,7 @@ def main():
         for c, t in DEMO:
             print(f"== {c}: {t}")
             try:
-                print("\n".join(run(t, c, a.key, a.url, a.poll, stdio=a.stdio)["log"]))
+                print("\n".join(run(t, c, a.key, a.url, min(a.poll, 2), stdio=a.stdio)["log"]))
             except Exception as e:
                 print(f"failed: {e}")
         return
