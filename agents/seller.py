@@ -12,9 +12,9 @@ KEYS = {
     "school-hervanta": "demo-school-hervanta",
 }
 SEED = {
-    "hotel-aurora": ["butter", "cream", "cheese"],
-    "hospital-tays": ["milk", "yoghurt", "oat"],
-    "school-hervanta": ["milk", "porridge", "cheese"],
+    "hotel-aurora": ["Valio maito", "Valio voi", "Valio rahka"],
+    "hospital-tays": ["Valio maito", "Valio rahka", "Valio jogurtti"],
+    "school-hervanta": ["Valio maito", "Valio raejuusto", "Valio voi"],
 }
 
 
