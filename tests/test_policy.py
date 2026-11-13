@@ -115,3 +115,15 @@ def test_substitution_text_names_both():
     d = decide(quote(10.0), mandates.get("hospital-tays"), PRODUCTS, substitutions=s, now=NOW)
     t = d.reasons[0].text
     assert "Oat drink" in t and "Valio whole milk 1 l lactose free UHT" in t
+
+
+def test_brand_prefix_and_note_only_on_auto():
+    m = mandates.get("hotel-aurora")
+    v = Product(product_id="5", name="Maito", brand=None, vendor="VALIO MAIDOT OY", category="10400")
+    assert codes(decide(quote(10.0, pid="5"), m, {"5": v}, now=NOW)) == ["WITHIN_MANDATE"]
+    d = decide(quote(10.0, pid="2"), m, PRODUCTS, now=NOW)
+    assert d.outcome == "auto" and d.reasons[-1].code == "NON_PREFERRED_BRAND" and d.reasons[-1].text.startswith("Note:")
+    d = decide(quote(m.per_order_eur + 1, pid="2"), m, PRODUCTS, now=NOW)
+    assert d.outcome == "needs_approval" and "NON_PREFERRED_BRAND" not in codes(d)
+    s = [Substitution(original_id="2", substitute_id="5", reason="x")]
+    assert decide(quote(10.0, pid="2"), m, {**PRODUCTS, "5": v}, substitutions=s, now=NOW).outcome == "auto"
