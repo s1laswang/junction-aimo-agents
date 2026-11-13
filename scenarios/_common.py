@@ -87,6 +87,13 @@ def next_monday(today=None):
     return d + timedelta(days=(7 - d.weekday()) % 7 or 7)
 
 
+def next_delivery_day(min_days=2, today=None):
+    d = (today or date.today()) + timedelta(days=min_days)
+    while d.weekday() > 4:
+        d += timedelta(days=1)
+    return d
+
+
 def pick_of(o, qty):
     return {"product_id": o["product_id"], "quantity": qty, "substitute_for": o.get("substitute_for")}
 
