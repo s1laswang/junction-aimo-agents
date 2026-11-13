@@ -106,20 +106,25 @@ def propose(customer, key, url=URL, max_offers=3):
     if not items:
         audit = _call("GET", "/audit", key, url, params={"customer": customer})
         items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit)
-    if not items:
-        items = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
+    seeds = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
     deliver_by = (date.today() + timedelta(days=3)).isoformat()
     excl = mandate.get("exclude_allergens") or []
-    props = []
-    for it in items:
-        need = {
-            "customer": customer,
-            "deliver_by": deliver_by,
-            "items": [{"query": it["query"], "quantity": it["quantity"], "unit": it["unit"], "constraints": {"exclude_allergens": excl, "labels": [], "brands": []}}],
-        }
-        res = _call("POST", "/offers", key, url, json=need)
-        for group in res.get("items", []):
-            props += rank(it["product_id"], group["offers"], mandate)
+    def run(items):
+        props = []
+        for it in items:
+            need = {
+                "customer": customer,
+                "deliver_by": deliver_by,
+                "items": [{"query": it["query"], "quantity": it["quantity"], "unit": it["unit"], "constraints": {"exclude_allergens": excl, "labels": [], "brands": []}}],
+            }
+            res = _call("POST", "/offers", key, url, json=need)
+            for group in res.get("items", []):
+                props += rank(it["product_id"], group["offers"], mandate)
+        return props
+
+    props = run(items)
+    if not props:
+        props = run(seeds)
     props.sort(key=lambda p: -p["score"])
     return props[:max_offers]
 
