@@ -40,26 +40,7 @@ CASES = [
 ]
 
 
-MISSES = {
-    "200 kg of Finnish potatoes by Friday": "match_score 0 for fi-only names, top is mash 473115",
-    "Tarvitsen 50 kg gluteenitonta jauhoa": "flour search returns potato flour 475953 with score 0",
-    "20 kg rahkaa": "match_score 0 for maitorahka 463196",
-    "100 kg carrots": "match_score 0 for PORKKANA 460738",
-    "80 kg rice": "search returns decorative items, 476167",
-    "Tilaan 60 kg perunaa ja 40 l maitoa maanantaiksi": "potato score 0, top 460631",
-    "30 kg lohta huomenna": "top is knife 464612 LOHIVEITSI",
-    "20 kg organic apples": "top is snack bar 464683, apples score 0",
-    "100 kg tomatoes by Wednesday": "match_score 0 for TOMAATTI 460027",
-    "100 kg gluten-free pasta": "top is chicken pasta 475275",
-}
-
-
-def _case(c):
-    marks = [pytest.mark.xfail(reason=MISSES[c[0]], strict=False)] if c[0] in MISSES else []
-    return pytest.param(*c, marks=marks, id=c[0][:40])
-
-
-@pytest.mark.parametrize("text,expect", [_case(c) for c in CASES])
+@pytest.mark.parametrize("text,expect", CASES, ids=[c[0][:40] for c in CASES])
 def test_top_product_is_what_was_asked(text, expect):
     need = parse_need(text, "hotel-aurora", T)
     assert len(need.items) == len(expect)

@@ -81,8 +81,9 @@ NOUNS = [
     ("rice", r"\brice\b|\briisi\w*"),
     ("pasta", r"pasta\w*"),
     ("bread", r"bread|\bleip(?:ä|ää|än|iä)\b"),
+    ("mince", r"\bmince\w*|ground\s+(?:beef|meat)|\bjauheliha\w*"),
     ("beef", r"beef|\bnauda\w*|\bnauta\w*"),
-    ("pork", r"pork|\bporsaan\w*|\bpossun\w*"),
+    ("pork", r"\bpork\b|\bporsaan\w*|\bpossun\w*"),
     ("chicken", r"chicken|\bkan(?:a|aa|an\w*|oja)\b"),
     ("salmon", r"salmon|\blohi\w*|\blohta\b"),
     ("fish", r"\bfish\b|\bkala(?:a|n|t)?\b"),
@@ -263,6 +264,17 @@ def _noun(seg):
     return " ".join(words[:2]) or None
 
 
+def _nouns(seg):
+    out = []
+    for piece in re.split(r"\band\b|\bja\b|\bsekä\b|[,&]", seg, flags=re.I):
+        for name, rx in NOUNS:
+            if rx.search(piece):
+                if name not in out:
+                    out.append(name)
+                break
+    return out
+
+
 def _unit(m):
     for k in UNITS:
         if m.group(f"u_{k}"):
@@ -324,8 +336,20 @@ def _rule_parse(text, customer, today):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(rest)
         segs.append((m, rest[m.end():end], rest[prev_end:m.start()]))
         prev_end = end
+    suffix = bool(segs) and bool(_nouns(_constraints(segs[0][2])[1]))
+    if suffix:
+        segs = [(m, a_, rest[(matches[i - 1].end() if i else 0):m.start()]) for i, (m, a_, _) in enumerate(segs)]
     items = []
     single = len(segs) <= 1
+
+    def build(c0):
+        c = c0.model_copy(deep=True)
+        c.max_unit_price = c.max_unit_price if c.max_unit_price is not None else price
+        _merge(c, full_c, allergens_only=True)
+        if tail_c:
+            _merge(c, tail_c)
+        return c
+
     for m, after, before in segs:
         n = _num(m["n"])
         u = _unit(m)
@@ -334,31 +358,20 @@ def _rule_parse(text, customer, today):
         elif u in TO_BASE:
             u, f = TO_BASE[u]
             n = round(n * f, 6)
-        seg = rest_all if single else after
-        c, _ = _constraints(seg)
-        c.max_unit_price = price
-        _merge(c, full_c, allergens_only=True)
-        if tail_c:
-            _merge(c, tail_c)
+        own = before if suffix else after
+        c0, cleaned_own = _constraints(rest_all if single else own)
         _, cleaned_after = _constraints(after)
-        q = _noun(cleaned_after)
-        if q is None or (q not in {n_ for n_, _ in NOUNS} and not single):
-            _, cleaned_before = _constraints(before)
-            q2 = _noun(cleaned_before)
-            q = q2 or q
-        if q is None:
-            _, cleaned_all = _constraints(rest_all)
-            q = _noun(cleaned_all)
-        if q:
-            items.append(NeedItem(query=q, quantity=n, unit=u, constraints=c))
+        _, cleaned_before = _constraints(before)
+        names = _nouns(cleaned_before if suffix else cleaned_after) or _nouns(cleaned_after if suffix else cleaned_before)
+        if not names:
+            q = _noun(cleaned_own) or _noun(_constraints(rest_all)[1])
+            names = [q] if q else []
+        for q in names:
+            items.append(NeedItem(query=q, quantity=n, unit=u, constraints=build(c0)))
     if not items:
-        c, cleaned = _constraints(rest_all)
-        c.max_unit_price = price
-        _merge(c, full_c, allergens_only=True)
-        if tail_c:
-            _merge(c, tail_c)
-        q = _noun(cleaned) or text.strip()[:60] or "product"
-        items.append(NeedItem(query=q, quantity=1.0, unit="pcs", constraints=c))
+        c0, cleaned = _constraints(rest_all)
+        names = _nouns(cleaned) or [_noun(cleaned) or text.strip()[:60] or "product"]
+        items = [NeedItem(query=q, quantity=1.0, unit="pcs", constraints=build(c0)) for q in names]
     return Need(customer=customer, deliver_by=deliver, items=items, raw_text=text)
 
 
@@ -420,7 +433,7 @@ def parse_need(text: str, customer: str, today: date | None = None) -> Need:
 FI_NAME = {
     "milk": "maito", "cream": "kerma", "butter": "voi", "potatoes": "peruna", "cheese": "juusto",
     "yoghurt": "jogurtti", "egg": "kananmuna", "flour": "jauho", "sugar": "sokeri", "salt": "suola",
-    "rice": "riisi", "bread": "leipä", "beef": "naudanliha", "pork": "porsaanliha", "chicken": "kana",
+    "rice": "riisi", "bread": "leipä", "beef": "naudanliha", "mince": "jauheliha", "pork": "porsaanliha", "chicken": "kana",
     "salmon": "lohi", "fish": "kala", "meat": "liha", "tomato": "tomaatti", "carrot": "porkkana",
     "onion": "sipuli", "apple": "omena", "juice": "mehu", "water": "vesi", "coffee": "kahvi",
     "oil": "öljy", "chocolate": "suklaa", "oat drink": "kaurajuoma", "sour cream": "kermaviili",
