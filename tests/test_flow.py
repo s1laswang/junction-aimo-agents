@@ -46,6 +46,8 @@ def test_milk_flow(client, agent_key):
     audit = call(client, "GET", f"/v1/audit?order_id={order['order_id']}", agent_key)
     events = audit if isinstance(audit, list) else audit["events"]
     assert events
-    for a, b in zip(events, events[1:]):
-        assert b["prev_hash"] == a["hash"]
     assert all(e["why"] for e in events)
+    full = call(client, "GET", "/v1/audit", agent_key)
+    chain = full if isinstance(full, list) else full["events"]
+    for a, b in zip(chain, chain[1:]):
+        assert b["prev_hash"] == a["hash"]
