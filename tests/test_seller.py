@@ -15,7 +15,7 @@ M = {"per_order_eur": 1000, "exclude_allergens": ["nuts"], "allowed_categories":
 def test_cheaper_and_reliable():
     r = rank("1", [offer("1", 5, 500, 0.8), offer("2", 4, 500, 0.9)], M)
     assert len(r) == 1 and r[0]["offer"]["product_id"] == "2"
-    assert "4.00 vs 5.00" in r[0]["why"] and "0.90 vs 0.80" in r[0]["why"]
+    assert "400.00 vs 500.00" in r[0]["why"] and "0.90 vs 0.80" in r[0]["why"]
 
 
 def test_mandate_filters():
@@ -43,3 +43,15 @@ def test_integration():
     if not key:
         pytest.skip("no key")
     assert isinstance(propose("hotel-aurora", key), list)
+
+
+def test_missing_usual_uses_cheapest():
+    r = rank("9", [offer("1", 5, 500, 0.8), offer("2", 4, 500, 0.9), offer("3", 3, 500, 0.7)], M)
+    assert "not in the offers" in r[0]["why"]
+
+
+def test_total_not_unit():
+    big = offer("2", 10, 500, 0.8, need=100)
+    big["total_net"] = 900
+    r = rank("1", [offer("1", 5, 500, 0.8), big], M)
+    assert r and "900.00 vs 500.00" not in r[0]["why"] or r == []
