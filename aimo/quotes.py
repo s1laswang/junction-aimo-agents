@@ -51,6 +51,12 @@ def _audit(action, quote, why):
 
 
 def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, currency="EUR"):
+    if not lines or total_gross <= 0:
+        raise QuoteError("INVALID_QUOTE", "A quote needs at least one line and a positive total.")
+    for l in lines:
+        q, t = (l["quantity"], l["line_total_net"]) if isinstance(l, dict) else (l.quantity, l.line_total_net)
+        if q <= 0 or t < 0:
+            raise QuoteError("INVALID_QUOTE", "Quote line quantity must be positive.")
     if valid_until.tzinfo is None:
         valid_until = valid_until.replace(tzinfo=timezone.utc)
     quote = Quote(
