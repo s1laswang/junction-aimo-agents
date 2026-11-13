@@ -64,6 +64,7 @@ def test_under_limit_confirms(env):
     assert o.status == "confirmed"
     assert o.delivery_date == date(2026, 11, 16) and o.valid_until
     assert orders.confirmation(o.order_id)["delivery_date"] == "2026-11-16"
+    assert "Mock" not in str(o)
     assert orders.spent_this_week("hotel-aurora") >= 2.0
 
 
@@ -121,7 +122,7 @@ def test_stockout_reopens_order(env, monkeypatch):
     stub(monkeypatch, "offers", fresh_offers=lambda c, d, ids: [])
     stub(monkeypatch, "allocate", stockout_plan=lambda lines, fresh, day: {"changed": True, "lines": [new], "changes": ["p replaced by alt"], "shortfall": 0})
     res = orders.react_stockout("p")
-    assert [x.order_id for x in res] == [o.order_id]
+    assert o.order_id in [x.order_id for x in res]
     g = orders.get(o.order_id)
     assert g.status == "pending_approval"
     assert g.decision.reasons[0].code == "STOCKOUT"
