@@ -36,7 +36,8 @@ const money=v=>eur(v)+" EUR";
 const qty=v=>new Intl.NumberFormat("en-GB",{maximumFractionDigits:0}).format(v);
 const AVAIL=v=>v>=1e9?"in stock":qty(v);
 const lt=s=>{const d=new Date(s);if(isNaN(d))return clock();const p=n=>String(n).padStart(2,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`};
-const noteHtml=n=>{n=n||[];if(!n.length)return"";const r=n.slice(1);const sk=r.length&&r.every(x=>/skipped/i.test(x));return" - "+esc(n[0])+(r.length?`<details><summary>${sk?"+"+r.length+" skipped (cutoff passed)":"+"+r.length+" more"}</summary>${r.map(x=>"<div>"+esc(x)+"</div>").join("")}</details>`:"")};
+const short=s=>s.length>70?s.slice(0,67)+"...":s;
+const noteHtml=n=>{n=(n||[]).filter(x=>!/skipped/i.test(x));return n.length?" - "+esc(short(n[0]))+(n.length>1?` (+${n.length-1})`:""):""};
 const day=s=>{const d=new Date(s);return isNaN(d)?String(s||""):d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})};
 const MANDATES={"hotel-aurora":{o:2000,w:8000},"hospital-tays":{o:1500,w:6000},"school-hervanta":{o:800,w:3000}};
 const clock=()=>{const d=new Date(),p=(n,l=2)=>String(n).padStart(l,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`};
@@ -56,7 +57,7 @@ function startRun(c,note){
  const li=document.createElement("li");li.className="run";
  li.innerHTML=`<details open><summary></summary><ol class="rb"></ol></details>`;
  const r={el:li,body:li.querySelector(".rb"),sum:li.querySelector("summary"),calls:{},start:Date.now(),end:null,n:S.n,c,note,tm:lt(Date.now()),out:"running"};
- $("#trace").prepend(li);S.runs.push(r);S.run=r;sumRun(r);return r;
+ $("#trace").prepend(li);if(S.top){$("#trace").prepend(S.top);S.top=null}S.runs.push(r);S.run=r;sumRun(r);return r;
 }
 function sumRun(r){r.sum.innerHTML=`<span class="rn">Run ${r.n}</span><span>${esc(r.c)}</span><span class="mono">${r.tm}</span>${r.out?`<span class="ro ${esc(r.cls||"")}">${esc(r.out)}</span>`:""}${r.total!=null?`<span class="mono">${money(r.total)}</span>`:""}${r.note?`<span class="rnote">${esc(r.note)}</span>`:""}`}
 function attach(e){
@@ -127,7 +128,7 @@ const hex=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)
 function demoBtns(out,ord,picks){
  out.insertAdjacentHTML("beforeend",'<div class="row"><button type="button" class="ghost" id="sim">Simulate stock-out</button><button type="button" class="ghost" id="clr">Clear</button></div>');
  const pid=String(((ord.lines||[])[0]||{}).product_id||"");
- const act=async(method,body,msg)=>{const t0=performance.now();const r=await aimo.api("/v1/admin/simulate",{method,admin:true,body});line({tool:"admin/simulate",status:r?"200":"failed",cls:r?"ok":"err",ms:Math.round(performance.now()-t0),why:msg,req:body,res:r});return !!r};
+ const act=async(method,body,msg)=>{const t0=performance.now();const r=await aimo.api("/v1/admin/simulate",{method,admin:true,body});const li=line({tool:"admin/simulate",status:r?"200":"failed",cls:r?"ok":"err",ms:Math.round(performance.now()-t0),why:msg,req:body,res:r});if(body&&body.available_amount===0&&r)S.top=li;return !!r};
  const pn=(picks.find(p=>String(p.product_id)===pid)||{product:{}}).product.name||pid;
  $("#sim").onclick=async()=>{const ok=await act("POST",{product_id:pid,available_amount:0},"Simulated stock-out on "+pn);if(ok)run("after stock-out on "+pn)};
  $("#clr").onclick=()=>act("DELETE",undefined,"Cleared simulation");
