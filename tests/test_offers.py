@@ -97,3 +97,13 @@ def test_split_filler_same_brand_not_substitute():
             assert f.substitute_for is None
     finally:
         offers.clear_simulation()
+
+
+def test_cutoff_passed_shifts_date(monkeypatch):
+    from datetime import datetime, timedelta
+    tomorrow = date.today() + timedelta(days=1)
+    n = Need(customer="hotel-aurora", deliver_by=tomorrow, items=[NeedItem(query="lactose-free milk", quantity=100, unit="L")])
+    monkeypatch.setattr(offers.valio, "availability", lambda c, d, ids: {i: {"productId": i, "closingTime": "2026-11-12T15:00:00+0200", "salesBlock": False, "scheduleLines": [{"salesBlock": False, "availableAmount": 9999.0, "availableDate": tomorrow.isoformat(), "salesUnit": "ST"}]} for i in ids})
+    g = offers.get_offers(n).items[0]
+    assert all(o.available_date <= tomorrow for o in g.offers + g.alternatives)
+    assert g.shortfall > 0 and g.options and g.options[0]["date"] > tomorrow

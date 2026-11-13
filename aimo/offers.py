@@ -99,9 +99,19 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
         for line in av.get("scheduleLines") or []:
             blocked = av.get("salesBlock") or line.get("salesBlock")
             ct, notes = av.get("closingTime"), []
+            adate = line.get("availableDate")
             if ct:
-                co = cutoff(ct, line.get("availableDate"), day)
+                co = cutoff(ct, adate, day)
                 notes.append(f"cutoff computed from Valio closing time {co:%H:%M}, day before delivery")
+                if co <= datetime.now(HEL):
+                    new = date.fromisoformat(adate) if adate else day
+                    for _ in range(14):
+                        new += timedelta(days=1)
+                        co = cutoff(ct, new, day)
+                        if co > datetime.now(HEL):
+                            break
+                    notes.insert(0, f"cutoff passed for {adate or day}, earliest delivery {new}")
+                    adate = new.isoformat()
                 ct = co.isoformat()
             offers.append(Offer(
                 product_id=p.product_id,
@@ -112,7 +122,7 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
                 total_gross=round(units * gross, 2),
                 currency=pr.get("currency") or "EUR",
                 available_amount=line.get("availableAmount") or 0.0,
-                available_date=line.get("availableDate"),
+                available_date=adate,
                 closing_time=ct,
                 notes=notes,
                 sales_block="blocked" if blocked else None,
@@ -120,7 +130,7 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
                 co2_per_kg=catalog.co2_per_kg(p.product_id) if catalog else None,
                 match_score=scores.get(p.product_id, 1.0),
             ))
-    offers.sort(key=lambda o: (-o.match_score, o.total_net))
+    offers.sort(key=lambda o: (o.available_date != day and o.available_date is not None and o.available_date > day, -o.match_score, o.total_net))
     return offers
 
 
@@ -152,7 +162,7 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
     if shortfall > 1e-9 and subst and offers:
         used = {o.product_id for o in chosen}
         original = (chosen[0] if chosen else offers[0]).product
-        pool = [o for o in offers if o.product_id not in used or o.product_id == original.product_id]
+        pool = [o for o in offers if o.available_date and o.available_date <= need.deliver_by and (o.product_id not in used or o.product_id == original.product_id)]
         for s in subst.rank_substitutes(item, pool, excl, original=original, limit=3):
             if s.product_id in used:
                 continue
@@ -165,7 +175,7 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
                 "units_needed": units, "total_net": net, "total_gross": round(net * k, 2),
                 "substitute_for": original.product_id,
             }))
-    alts = _alternatives(item, offers, chosen, excl, subst)
+    alts = _alternatives(item, [o for o in offers if o.available_date and o.available_date <= need.deliver_by], chosen, excl, subst)
     opts = allocate.options(item, offers, need.deliver_by) if allocate and shortfall > 1e-9 else []
     return OfferGroup(need_item=item, offers=chosen, shortfall=shortfall, alternatives=alts, options=opts)
 
