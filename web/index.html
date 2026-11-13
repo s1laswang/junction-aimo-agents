@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aimo Trade Gateway</title>
 <link rel="stylesheet" href="/style.css">
-<style>.lead{max-width:60ch;color:var(--ink-2);margin:4px 0 20px}.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.tile{display:flex;flex-direction:column;gap:4px;color:var(--ink);padding:12px 16px}.tile:hover{text-decoration:none;border-color:var(--rule-2)}.tile .n{font:500 26px var(--mono);letter-spacing:-.02em}.tile .t{display:flex;align-items:center;gap:6px;font-weight:600}.tile .d{font-size:12px;color:var(--ink-3)}.links{display:flex;flex-wrap:wrap;gap:16px;margin-top:8px}.sec{margin-top:24px}@media(max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}}@media(max-width:420px){.tiles{grid-template-columns:1fr}}</style></head>
+<style>.lead{max-width:60ch;color:var(--ink-2);margin:4px 0 20px}.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.tile{display:flex;flex-direction:column;gap:4px;color:var(--ink);padding:12px 16px}.tile:hover{text-decoration:none;border-color:var(--rule-2)}.tile .n{font:500 26px var(--mono);letter-spacing:-.02em}.tile .t{display:flex;align-items:center;gap:6px;font-weight:600}.tile .d{font-size:12px;color:var(--ink-3)}.links a{overflow-wrap:anywhere}.links{display:flex;flex-wrap:wrap;gap:16px;margin-top:8px}.sec{margin-top:24px}.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.row{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--rule);color:var(--ink);font-size:13px;min-width:0}.row:last-child{border-bottom:0}.row:hover{text-decoration:none;background:var(--paper)}.row .l{flex:none;color:var(--ink-3)}.row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.row .r{flex:none;margin-left:auto}.empty{color:var(--ink-3);font-size:13px;padding:6px 0}@media(max-width:700px){.cols{grid-template-columns:minmax(0,1fr)}}@media(max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}}@media(max-width:420px){.tiles{grid-template-columns:1fr}}</style></head>
 <body><header class="top"><a class="brand" href="/">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html">Console</a><a href="/inbox.html">Approvals</a><a href="/audit.html">Audit</a><a href="/admin.html">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
 <main>
 <h1>Trusted purchasing gateway</h1>
@@ -12,20 +12,31 @@
 <a class="panel tile" href="/audit.html"><span class="t"><svg class="i" viewBox="0 0 24 24"><path d="M9 5h10M9 12h10M9 19h10M4 5h.01M4 12h.01M4 19h.01"/></svg>Audit</span><span class="n" id="n-audit">-</span><span class="d" id="d-audit">last event</span></a>
 <a class="panel tile" href="/admin.html"><span class="t"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Mandates</span><span class="n" id="n-man">-</span><span class="d">per order limit, EUR</span></a>
 </div>
+<div class="cols sec">
+<section class="panel"><div class="panel-head"><h3>Waiting for approval</h3><a class="small" href="/inbox.html">All</a></div><div id="pend"></div></section>
+<section class="panel"><div class="panel-head"><h3>Recent activity</h3><a class="small" href="/audit.html">Audit</a></div><div id="act"></div></section>
+</div>
 <section class="sec"><h3>Discovery</h3><div class="links mono"><a href="/.well-known/agent-card.json">/.well-known/agent-card.json</a><a href="/openapi.json">/openapi.json</a><a href="/.well-known/jwks.json">/.well-known/jwks.json</a></div></section>
 </main>
 <script src="/shell.js"></script>
 <script>
-var M={appr:2,audit:{seq:42,action:"order.placed",ts:"2026-11-14T00:12:00Z"},man:500};
+var MM={"hotel-aurora":2000,"hospital-tays":1500,"school-hervanta":800};
+var M={appr:[{order_id:"ord_demo1",customer:"hotel-aurora",total_net:2480.5,decision:{reasons:[{text:"Over per order limit"}]}},{order_id:"ord_demo2",customer:"hospital-tays",total_net:640,decision:{reasons:[{text:"Substitution needs approval"}]}}],audit:[{seq:42,ts:"2026-11-14T00:12:00Z",customer:"hotel-aurora",action:"order_placed",subject:"ord_demo0",why:"Within mandate, placed automatically",detail:{total_net:310}},{seq:41,ts:"2026-11-14T00:10:00Z",customer:"hotel-aurora",action:"quote_issued",subject:"q_demo",why:"Quote signed, valid until closing time",detail:{}}]};
+function esc(t){var d=document.createElement("div");d.textContent=t==null?"":t;return d.innerHTML}
+function eur(n){return n==null?"":Number(n).toFixed(2)}
+function evs(x){return Array.isArray(x)?x:(x&&x.events)||[]}
+function rows(el,h,empty){document.getElementById(el).innerHTML=h||'<p class="empty">'+empty+'</p>'}
 async function load(){
-var c=aimo.customer(),q=await Promise.all([aimo.api("/v1/approvals"),aimo.api("/v1/audit?customer="+encodeURIComponent(c)),aimo.api("/v1/mandate")]);
+var c=aimo.customer(),o={admin:true},q=await Promise.all([aimo.api("/v1/approvals",o),aimo.api("/v1/audit",o),aimo.api("/v1/mandate")]);
 var mock=q.some(function(x){return x===null})||/[?&]mock=1/.test(location.search);
-var ap=mock?null:q[0],au=mock?null:q[1],ma=mock?null:q[2];
-document.getElementById("n-appr").textContent=ap?ap.length:M.appr;
-var ev=au?(Array.isArray(au)?au:au.events||[]).slice(-1)[0]:M.audit;
-document.getElementById("n-audit").textContent=ev?"#"+ev.seq:"0";
-document.getElementById("d-audit").textContent=ev?ev.action+" "+String(ev.ts).slice(11,16):"no events";
-document.getElementById("n-man").textContent=ma?ma.per_order_eur:M.man;
+var ap=mock?M.appr:q[0],ev=mock?M.audit:evs(q[1]);
+document.getElementById("n-appr").textContent=ap.length;
+var last=ev.length?ev.reduce(function(a,b){return b.seq>a.seq?b:a}):null;
+document.getElementById("n-audit").textContent=last?"#"+last.seq:"0";
+document.getElementById("d-audit").textContent=last?last.action+" "+String(last.ts).slice(11,16):"no events";
+document.getElementById("n-man").textContent=mock||!q[2]?MM[c]:q[2].per_order_eur;
+rows("pend",ap.slice(0,3).map(function(o){var r=o.decision&&o.decision.reasons&&o.decision.reasons[0];return '<a class="row" href="/inbox.html"><span class="l mono">'+esc(o.order_id)+'</span><span class="w">'+esc(r?r.text:o.customer)+'</span><span class="r mono">'+eur(o.total_net)+'</span></a>'}).join(""),"Nothing waiting.");
+rows("act",ev.slice().sort(function(a,b){return b.seq-a.seq}).slice(0,8).map(function(e){var u=/^ord/.test(e.subject)?"/audit.html?order_id="+encodeURIComponent(e.subject):"/audit.html";return '<a class="row" href="'+u+'"><span class="l mono">#'+e.seq+'</span><span class="l mono">'+esc(String(e.ts).slice(11,16))+'</span><span class="w">'+esc(e.why||e.action)+'</span></a>'}).join(""),"No events yet.");
 aimo.mock(mock);
 }
 load();window.addEventListener("customer",load);

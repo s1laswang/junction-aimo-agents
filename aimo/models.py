@@ -74,6 +74,8 @@ class OfferGroup(BaseModel):
     need_item: NeedItem
     offers: list[Offer]
     shortfall: float = 0.0
+    alternatives: list[Offer] = Field(default_factory=list)
+    options: list[dict] = Field(default_factory=list)
 
 
 class OffersResponse(BaseModel):
@@ -144,6 +146,8 @@ class Order(BaseModel):
     status: OrderStatus
     decision: Decision
     substitutions: list[Substitution] = Field(default_factory=list)
+    delivery_date: date | None = None
+    valid_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

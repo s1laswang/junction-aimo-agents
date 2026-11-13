@@ -25,3 +25,10 @@ def test_links_shared_shell_and_mock():
     assert 'aria-current="page"' in html
     js = (WEB / "inbox.js").read_text()
     assert "mock=1" in js and "/v1/approvals" in js and "3000" in js
+
+
+def test_error_detail_and_audit_link():
+    js = (WEB / "inbox.js").read_text()
+    assert "lastError" in js and "Gateway offline" in js
+    assert "/audit.html?order_id=" in js
+    assert "Reason for rejecting" in js

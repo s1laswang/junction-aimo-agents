@@ -32,7 +32,7 @@ def test_milk_flow(client, agent_key):
     })
     assert quote["lines"] and quote["total_net"] > 0
     jwks = client.get("/.well-known/jwks.json").json()
-    assert jws.deserialize_compact(quote["jws"], KeySet.import_key_set(jwks))
+    assert jws.deserialize_compact(quote["jws"], KeySet.import_key_set(jwks), algorithms=["EdDSA"])
 
     order = call(client, "POST", "/v1/orders", agent_key, json={"quote_id": quote["quote_id"], "jws": quote["jws"]})
     assert order["decision"]["outcome"] in ("auto", "needs_approval", "blocked")
