@@ -265,9 +265,47 @@ def watch_orders(customer, key, url, today=None, state_path=None, client=None):
     return out
 
 
+def demo(url, admin_key="demo-admin"):
+    for cust in SEEDS:
+        print(f"== standing order check: {cust}")
+        r = check(cust, "demo-" + cust, url)
+        print(f"delivery {r['standing_order']['delivery_date']}, {len(r['flags'])} flag(s)")
+        for f in r["flags"]:
+            print(f"  [{f['route']}] {f['why']} -> {f['fix']['action']}")
+    cust = "hotel-aurora"
+    key = "demo-" + cust
+    c = httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=60)
+    adm = {"X-Admin-Key": admin_key}
+    line = SEEDS[cust]["lines"][0]
+    day = next_delivery(SEEDS[cust]["weekday"]).isoformat()
+    need = {"customer": cust, "deliver_by": day, "items": [{"query": line["name"], "quantity": 2, "unit": line["unit"], "constraints": {}}]}
+    offer = c.post("/v1/offers", json=need).raise_for_status().json()["items"][0]["offers"][0]
+    q = c.post("/v1/quotes", json={"offers": [{"product_id": offer["product_id"], "quantity": offer["units_needed"]}], "delivery_date": day}).raise_for_status().json()
+    o = c.post("/v1/orders", json={"quote_id": q["quote_id"], "jws": q["jws"]}).raise_for_status().json()
+    if o["status"] == "pending_approval":
+        by = c.get("/v1/mandate").json()["approvers"][0]
+        o = c.post(f"/v1/approvals/{o['order_id']}", headers=adm, json={"approve": True, "by": by, "note": "demo"}).raise_for_status().json()
+    print(f"== stock-out story: order {o['order_id']} is {o['status']} ({offer['product']['name']})")
+    pid = o["lines"][0]["product_id"]
+    httpx.post(url + "/v1/admin/simulate", headers=adm, json={"product_id": pid, "available_amount": 0}).raise_for_status()
+    try:
+        print(f"supplier stock-out simulated on {pid}")
+        after = c.get(f"/v1/orders/{o['order_id']}").json()
+        print(f"gateway reaction: order is now {after['status']}")
+        for rs in after["decision"]["reasons"]:
+            print(f"  {rs['code']}: {rs['text']}")
+        for sb in after.get("substitutions", []):
+            print(f"  substitution {sb['original_id']} -> {sb['substitute_id']}: {sb['reason']}")
+        for w in watch_orders(cust, key, url, state_path=os.path.join(os.environ.get("TMPDIR", "/tmp"), "drift-demo.json")):
+            print(f"watcher: {w.get('kind', w['fix']['action'])} on {w['order_id']}: {w['why']} (new order: {w['new_order_id']})")
+    finally:
+        httpx.delete(url + "/v1/admin/simulate", headers=adm)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--customer", required=True, choices=list(SEEDS))
+    ap.add_argument("--customer", choices=list(SEEDS))
+    ap.add_argument("--demo", action="store_true")
     ap.add_argument("--key", default=os.environ.get("AIMO_AGENT_KEY"))
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--hold", action="store_true")
@@ -275,6 +313,11 @@ def main():
     ap.add_argument("--url", default=os.environ.get("AIMO_URL", "http://127.0.0.1:8080"))
     ap.add_argument("--rebaseline", action="store_true")
     a = ap.parse_args()
+    if a.demo:
+        demo(a.url)
+        return
+    if not a.customer:
+        ap.error("--customer or --demo required")
     a.key = a.key or "demo-" + a.customer
     if a.watch:
         print(json.dumps(watch_orders(a.customer, a.key, a.url), indent=1))
