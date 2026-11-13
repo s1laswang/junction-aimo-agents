@@ -2,7 +2,7 @@
 var Q=new URLSearchParams(location.search);
 var MODE=Q.get("mock");
 var $=function(id){return document.getElementById(id)};
-var state={q2o:{},events:[],text:"",view:"ledger",bad:null,open:{}};
+var state={agent:"",q2o:{},events:[],text:"",view:"ledger",bad:null,open:{}};
 var ICON={
 shield:'<svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>',
 alert:'<svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M12 8v5M12 16h.01"/></svg>',
@@ -73,7 +73,7 @@ function dt(ts){var d=new Date(ts);return isNaN(d)?"":d.toISOString().slice(0,10
 
 function filtered(){
 var a=$("f-actor").value,x=$("f-action").value,c=$("f-customer").value,o=$("f-order").value.trim();
-return state.events.filter(function(e){return (!c||e.customer===c)&&(!o||orderOf(e)===o)&&(!a||e.actor.split(":")[0]===a)&&(!x||e.action===x)});
+return state.events.filter(function(e){return (!c||e.customer===c)&&(!o||orderOf(e)===o)&&(!a||e.actor.split(":")[0]===a)&&(!state.agent||e.actor==="agent:"+state.agent)&&(!x||e.action===x)});
 }
 function badge(){
 $("how-n").textContent=state.events.length;
@@ -95,7 +95,14 @@ if(my!==tseq)return;
 var t=d&&d.text;
 pl.textContent=t&&(evs.length||!t)?t:(evs.length?plainText(evs):"No audit events match these filters.");
 }
+function legend(){
+var c=$("f-customer").value,o=$("f-order").value.trim(),n={};
+state.events.forEach(function(e){if(e.actor.indexOf("agent:")!==0||(c&&e.customer!==c)||(o&&orderOf(e)!==o))return;n[e.actor.slice(6)]=(n[e.actor.slice(6)]||0)+1});
+var ids=Object.keys(n).sort(),on=$("f-actor").value==="agent";
+$("legend").innerHTML='<button type="button" class="chip" data-id="" aria-pressed="'+(on&&!state.agent)+'">All agents</button>'+(ids.length?ids.map(function(i){return '<button type="button" class="chip" data-id="'+esc(i)+'" aria-pressed="'+(state.agent===i)+'"><span class="mono">'+esc(i)+'</span><span class="n">'+n[i]+'</span></button>'}).join(""):'<span class="muted small">No agent calls in this view.</span>');
+}
 function render(){
+legend();
 var evs=filtered(),L=$("ledger");
 $("plain").hidden=state.view!=="text";L.hidden=state.view==="text";
 $("v-ledger").setAttribute("aria-pressed",state.view==="ledger");$("v-text").setAttribute("aria-pressed",state.view==="text");
@@ -172,7 +179,8 @@ $("f-order").value=Q.get("order_id")||"";
 $("filters").addEventListener("submit",function(e){e.preventDefault()});
 $("f-order").addEventListener("input",function(){var u=new URL(location);if(this.value.trim())u.searchParams.set("order_id",this.value.trim());else u.searchParams.delete("order_id");history.replaceState(null,"",u);refilter()});
 $("f-order").addEventListener("change",function(){receipt(state.live?{}:null)});
-["f-actor","f-action","f-customer"].forEach(function(i){$(i).addEventListener("change",refilter)});
+["f-actor","f-action","f-customer"].forEach(function(i){$(i).addEventListener("change",function(){if(i==="f-actor")state.agent="";refilter()})});
+$("legend").addEventListener("click",function(e){var b=e.target.closest(".chip");if(!b)return;var id=b.dataset.id;if(b.getAttribute("aria-pressed")==="true"){state.agent="";$("f-actor").value=""}else{state.agent=id;$("f-actor").value="agent"}refilter()});
 $("v-ledger").addEventListener("click",function(){state.view="ledger";render()});
 $("v-text").addEventListener("click",function(){state.view="text";render()});
 $("export").addEventListener("click",exportJson);

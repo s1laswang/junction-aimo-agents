@@ -58,3 +58,9 @@ def test_hash_recipe_matches_python(tmp_path, monkeypatch):
         b.close()
     srv.shutdown()
     assert bad["at"] == 2
+
+
+def test_agents_legend_wired():
+    h = (WEB / "audit.html").read_text()
+    j = (WEB / "audit.js").read_text()
+    assert 'id="legend"' in h and "function legend" in j and 'class="chip"' in j
