@@ -33,17 +33,18 @@ if(i>0&&s[i-1].seq===e.seq-1&&s[i-1].hash!==e.prev_hash)return {at:e.seq,why:"pr
 return null;
 }
 
+window.aimoAudit={verify:verify,hashOf:hashOf};
 var MOCK_RAW=[
-["agent:buyer-aurora","parse_request","need:n1","Read the request as 1000 L lactose-free milk, delivery by Monday 17 Nov.",{raw_text:"1000 litres lactose-free milk by Monday"},"ord_7f3a"],
-["agent:buyer-aurora","get_offers","need:n1","Found 4 lactose-free milk offers; the cheapest in stock covers 1000 L at 1.12 EUR/L.",{offers:4,best:"410008"},"ord_7f3a"],
-["agent:buyer-aurora","request_quote","quote:q_91c2","Signed a quote for 1000 L at 1,120.00 EUR net, valid until the 14:00 order cutoff.",{total_net:1120,valid_until:"2026-11-14T14:00:00Z"},"ord_7f3a"],
-["system","policy_check","order:ord_7f3a","Order total 1,120.00 EUR is above the 800 EUR per-order limit, so a human must approve.",{limit:800,total:1120,outcome:"needs_approval"},"ord_7f3a"],
+["agent:buyer-aurora","parse_request","need:n1","Read the request as 2000 L lactose-free milk, delivery by Monday 17 Nov.",{raw_text:"2000 litres lactose-free milk by Monday"},"ord_7f3a"],
+["agent:buyer-aurora","get_offers","need:n1","Found 4 lactose-free milk offers; the cheapest in stock covers 2000 L at 1.12 EUR/L.",{offers:4,best:"410008"},"ord_7f3a"],
+["agent:buyer-aurora","request_quote","quote:q_91c2","Signed a quote for 2000 L at 2,240.00 EUR net, valid until the 14:00 order cutoff.",{total_net:2240,valid_until:"2026-11-14T14:00:00Z"},"ord_7f3a"],
+["system","policy_check","order:ord_7f3a","Order total 2,240.00 EUR is above the 2,000 EUR per-order limit, so a human must approve.",{limit:2000,total:2240,outcome:"needs_approval"},"ord_7f3a"],
 ["agent:buyer-aurora","place_order","order:ord_7f3a","Placed the order against the signed quote; held for approval.",{quote_id:"q_91c2",status:"pending_approval"},"ord_7f3a"],
 ["human:kitchen-manager","approve_order","order:ord_7f3a","Approved: the milk is for Monday breakfast service.",{approve:true,note:"ok for Monday"},"ord_7f3a"],
 ["system","order_placed","order:ord_7f3a","Order passed to fulfilment and confirmed for delivery on 17 Nov.",{status:"confirmed"},"ord_7f3a"],
 ["agent:seller-valio","stock_alert","product:410008","Stock for lactose-free milk 1 L fell below the weekly average; offering oat drink as an alternative.",{available:620},null],
 ["agent:buyer-aurora","get_offers","need:n2","Found 3 offers for 40 kg unsalted butter; cheapest in stock 7.40 EUR/kg.",{offers:3},"ord_8b21"],
-["system","policy_check","order:ord_8b21","Order is within the 800 EUR limit and all allergen rules; no approval needed.",{outcome:"auto"},"ord_8b21"],
+["system","policy_check","order:ord_8b21","Order is within the 2,000 EUR limit and all allergen rules; no approval needed.",{outcome:"auto"},"ord_8b21"],
 ["agent:buyer-aurora","place_order","order:ord_8b21","Placed the order automatically within the mandate.",{status:"placed"},"ord_8b21"]
 ];
 async function buildMock(broken){
@@ -96,7 +97,7 @@ g.items.map(function(e){
 var bad=state.bad&&state.bad!=="pending"&&state.bad.at===e.seq,open=!!state.open[e.seq],kind=e.actor.split(":")[0];
 var pe=byHash[e.seq-1];
 return '<div class="row'+(bad?" bad":"")+'" id="e'+e.seq+'" data-open="'+open+'">'+
-'<button type="button" class="line" aria-expanded="'+open+'" data-seq="'+e.seq+'"><span class="seq"><b>#'+e.seq+'</b></span><span class="ts">'+tm(e.ts)+'</span><span class="actor '+kind+'">'+esc(e.actor)+'</span><span class="what"><span class="act">'+esc(e.action)+'</span><span class="why">'+esc(e.why)+'</span></span><span class="subj" title="'+esc(e.subject)+'">'+esc(e.subject)+'</span>'+ICON.chev+'</button>'+
+'<button type="button" class="line" aria-expanded="'+open+'" data-seq="'+e.seq+'"><span class="seq"><b>#'+e.seq+'</b></span><span class="ts">'+tm(e.ts)+'</span><span class="actor '+kind+'" title="'+esc(e.actor)+'">'+esc(e.actor)+'</span><span class="what"><span class="act">'+esc(e.action)+'</span><span class="why">'+esc(e.why)+'</span></span><span class="subj" title="'+esc(e.subject)+'">'+esc(e.subject)+'</span>'+ICON.chev+'</button>'+
 '<div class="detail"><pre>'+esc(JSON.stringify(e.detail,null,2))+'</pre><div class="hashes"><span class="h'+(bad?" bad":"")+'" title="'+esc(e.prev_hash)+'">'+short(e.prev_hash)+'</span>'+ICON.link+'<span class="h'+(bad?" bad":"")+'" title="'+esc(e.hash)+'">'+short(e.hash)+'</span>'+(pe?'<span class="muted">follows #'+pe.seq+'</span>':'')+'</div></div></div>';
 }).join("")+'</div>';
 }).join("");
@@ -118,7 +119,7 @@ fillActions();
 state.bad=await verify(evs);
 badge();scope();render();
 }
-function scope(){var c=$("f-customer").value,o=$("f-order").value.trim();$("scope").textContent=(c||"all customers")+(o?" / "+o:"")}
+function scope(){var c=$("f-customer").value,o=$("f-order").value.trim(),v=filtered().length,n=state.events.length;$("scope").textContent=(c||"all customers")+(o?" / "+o:"")+" \u00b7 showing "+v+" of "+n+" events"}
 function refilter(){scope();render()}
 function exportJson(){
 var b=new Blob([JSON.stringify(state.events,null,2)],{type:"application/json"}),a=document.createElement("a");
