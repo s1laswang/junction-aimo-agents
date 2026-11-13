@@ -395,3 +395,49 @@ def _llm_parse(text, customer, today):
 def parse_need(text: str, customer: str, today: date | None = None) -> Need:
     today = today or date.today()
     return _llm_parse(text, customer, today) or _rule_parse(text, customer, today)
+
+
+FI_NAME = {
+    "milk": "maito", "cream": "kerma", "butter": "voi", "potatoes": "peruna", "cheese": "juusto",
+    "yoghurt": "jogurtti", "egg": "kananmuna", "flour": "jauho", "sugar": "sokeri", "salt": "suola",
+    "rice": "riisi", "bread": "leipä", "beef": "naudanliha", "pork": "porsaanliha", "chicken": "kana",
+    "salmon": "lohi", "fish": "kala", "meat": "liha", "tomato": "tomaatti", "carrot": "porkkana",
+    "onion": "sipuli", "apple": "omena", "juice": "mehu", "water": "vesi", "coffee": "kahvi",
+    "oil": "öljy", "chocolate": "suklaa", "oat drink": "kaurajuoma", "sour cream": "kermaviili",
+    "whipping cream": "vispikerma", "ice cream": "jäätelö", "quark": "rahka", "ham": "kinkku",
+}
+FI_ALLERGEN = {
+    "nuts": "pähkinä", "egg": "muna", "milk": "maito", "soy": "soija", "fish": "kala",
+    "celery": "selleri", "mustard": "sinappi", "sesame": "seesami", "shellfish": "äyriäiset", "wheat": "vehnä",
+}
+FI_LABEL = {"organic": "luomu"}
+DAYS = {"en": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "fi": ["ma", "ti", "ke", "to", "pe", "la", "su"]}
+MON_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def describe_need(need: Need, lang: str = "en") -> str:
+    fi = lang == "fi"
+    parts = []
+    for it in need.items:
+        c = it.constraints
+        q = f"{it.quantity:g} {it.unit} " + (FI_NAME.get(it.query, it.query) if fi else it.query)
+        tags = []
+        if c.lactose_free:
+            tags.append("laktoositon" if fi else "lactose-free")
+        if c.gluten_free:
+            tags.append("gluteeniton" if fi else "gluten-free")
+        for a in c.exclude_allergens:
+            tags.append(f"ilman: {FI_ALLERGEN.get(a, a)}" if fi else f"no {a}")
+        for l in c.labels:
+            tags.append(FI_LABEL.get(l, l) if fi else l)
+        if c.origin:
+            tags.append("kotimainen" if fi and c.origin == "fi" else ("Finnish" if c.origin == "fi" else c.origin))
+        if c.brands:
+            tags.append(", ".join(c.brands))
+        if c.max_unit_price is not None:
+            tags.append(f"max {c.max_unit_price:g} EUR")
+        parts.append(", ".join([q] + tags))
+    d = need.deliver_by
+    wd = DAYS["fi" if fi else "en"][d.weekday()]
+    when = f"toimitus {wd} {d.day}.{d.month}.{d.year}" if fi else f"deliver by {wd} {d.day} {MON_EN[d.month - 1]} {d.year}"
+    return "; ".join(parts) + ", " + when if len(parts) == 1 else "; ".join(parts) + "; " + when
