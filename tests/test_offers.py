@@ -107,3 +107,31 @@ def test_cutoff_passed_shifts_date(monkeypatch):
     g = offers.get_offers(n).items[0]
     assert all(o.available_date <= tomorrow for o in g.offers + g.alternatives)
     assert g.shortfall > 0 and g.options and g.options[0]["date"] > tomorrow
+
+
+def test_past_delivery_rejected():
+    from datetime import timedelta
+    from aimo.quotes import QuoteError
+    with pytest.raises(QuoteError) as e:
+        offers.price_lines("hotel-aurora", date.today() - timedelta(days=1), [QuoteRequestLine(product_id="464073", quantity=1)])
+    assert e.value.code == "INVALID_QUOTE"
+
+
+def test_fillers_sized_to_shortfall():
+    offers.clear_simulation()
+    top = offers.get_offers(milk()).items[0].offers[0]
+    offers.simulate(SimulateStock(product_id=top.product_id, available_amount=50))
+    try:
+        g = offers.get_offers(milk()).items[0]
+        total_l = sum(o.units_needed for o in g.offers)
+        assert g.offers[0].units_needed == 50 and len(g.offers) > 1
+        assert all(o.available_date <= D and "2026-11-12" not in str(o.closing_time) for o in g.offers)
+        assert total_l < 50 + top.units_needed
+    finally:
+        offers.clear_simulation()
+
+
+def test_allergen_swap():
+    n = Need(customer="hotel-aurora", deliver_by=D, items=[NeedItem(query="lactose-free milk", quantity=20, unit="L", constraints=__import__("aimo.models", fromlist=["Constraint"]).Constraint(exclude_allergens=["milk"]))])
+    g = offers.get_offers(n).items[0]
+    assert g.offers and "swapped to" in g.offers[0].notes[0]

@@ -145,6 +145,12 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
     scores = {p.product_id: subst.match_score(item, p) if subst else 1.0 for p in cands}
     cands = [p for p in cands if scores[p.product_id] >= MIN_MATCH]
     offers = _priced(need.customer, need.deliver_by, item, cands, scores)
+    if subst and not offers:
+        for alt, why in subst.safe_alternatives(item, excl):
+            g = _item(need, alt, mandate)
+            if g.offers:
+                g.offers[0].notes.insert(0, f"{item.query} not allowed by allergens, swapped to {alt.query}: {why}")
+                return g.model_copy(update={"need_item": item})
     if allocate:
         chosen, shortfall = allocate.allocate(item, offers, need.deliver_by)
     else:
@@ -161,20 +167,16 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None) -> OfferGroup:
             o.notes.insert(0, subst.tradeoff(o, chosen[0]))
     if shortfall > 1e-9 and subst and offers:
         used = {o.product_id for o in chosen}
-        original = (chosen[0] if chosen else offers[0]).product
+        base = chosen[0] if chosen else offers[0]
+        original = base.product
         pool = [o for o in offers if o.available_date and o.available_date <= need.deliver_by and (o.product_id not in used or o.product_id == original.product_id)]
-        for s in subst.rank_substitutes(item, pool, excl, original=original, limit=3):
-            if s.product_id in used:
-                continue
-            units = _units(s.product, shortfall, item.unit)
-            if units is None:
-                continue
-            k = s.total_gross / s.total_net if s.total_net else 1.0
-            net = round(units * s.unit_price_net, 2)
-            chosen.append(s.model_copy(update={
-                "units_needed": units, "total_net": net, "total_gross": round(net * k, 2),
-                "substitute_for": original.product_id,
-            }))
+        subs = subst.rank_substitutes(item, pool, excl, original=original, limit=3)
+        subs = [x for x in subs if x.product_id not in used]
+        filled, _ = allocate.allocate(item.model_copy(update={"quantity": shortfall}), subs, need.deliver_by) if allocate and subs else ([], shortfall)
+        for x in filled:
+            x.substitute_for = original.product_id
+            x.notes.insert(0, subst.tradeoff(x, base))
+            chosen.append(x)
     alts = _alternatives(item, [o for o in offers if o.available_date and o.available_date <= need.deliver_by], chosen, excl, subst)
     opts = allocate.options(item, offers, need.deliver_by) if allocate and shortfall > 1e-9 else []
     return OfferGroup(need_item=item, offers=chosen, shortfall=shortfall, alternatives=alts, options=opts)
@@ -210,6 +212,9 @@ def _local_noon(day: date) -> datetime:
 
 
 def price_lines(customer: str, delivery_date: date, lines: list[QuoteRequestLine]):
+    if delivery_date < date.today():
+        from .quotes import QuoteError
+        raise QuoteError("INVALID_QUOTE", "Delivery date is in the past.")
     catalog = _mod("catalog")
     ids = [l.product_id for l in lines]
     prices = valio.price(customer, delivery_date, ids)
