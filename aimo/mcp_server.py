@@ -50,7 +50,7 @@ def search_products(ctx: Context, q: str = "", lactose_free: bool | None = None,
                     exclude_allergens: list[str] | None = None, labels: list[str] | None = None,
                     origin: str | None = None, max_unit_price: float | None = None,
                     brands: list[str] | None = None, limit: int = 50) -> list[dict]:
-    """Search the catalog. Returns a list of Product."""
+    """Find products in the catalog. Call first when you need product ids or want to check what exists. Pass q (text such as "milk") and optional constraints. Returns a list of Product. No key needed."""
     c = Constraint(lactose_free=lactose_free, gluten_free=gluten_free, exclude_allergens=exclude_allergens or [],
                    labels=labels or [], origin=origin, max_unit_price=max_unit_price, brands=brands or [])
     return _run(ctx, "none", api.search_products, q, c, limit)
@@ -58,67 +58,67 @@ def search_products(ctx: Context, q: str = "", lactose_free: bool | None = None,
 
 @mcp.tool()
 def get_product(ctx: Context, product_id: str) -> dict:
-    """One Product by id."""
+    """Read one product (allergens, labels, unit size) by product_id taken from search_products or an offer. No key needed."""
     return _run(ctx, "none", api.get_product, product_id)
 
 
 @mcp.tool()
 def parse_request(ctx: Context, text: str, customer: str) -> dict:
-    """Parse free text into a Need."""
+    """Turn the buyer's free-text request into a structured Need plus a one-line summary. Call this first for any natural-language request; pass the text and the customer id. Feed the Need to get_offers. No key needed."""
     return _run(ctx, "none", api.parse_request, ParseRequest(text=text, customer=customer))
 
 
 @mcp.tool()
 def get_offers(ctx: Context, customer: str, deliver_by: date, items: list[NeedItem], raw_text: str | None = None) -> dict:
-    """Ranked offers per need item: {items: [{need_item, offers, shortfall}]}."""
+    """Compare offers for a Need: ranked options with price, stock, delivery date, reliability, CO2, shortfall and allergen-safe substitutes. Pass the fields of the Need from parse_request. Needs the agent key."""
     return _run(ctx, "agent", api.get_offers, Need(customer=customer, deliver_by=deliver_by, items=items, raw_text=raw_text))
 
 
 @mcp.tool()
 def request_quote(ctx: Context, offers: list[QuoteRequestLine], delivery_date: date) -> dict:
-    """Signed Quote. offers is [{product_id, quantity, substitute_for?}]."""
+    """Lock chosen offers into a signed, single-use Quote valid until the supplier cutoff. Pass offers as [{product_id, quantity}] (add substitute_for when replacing an asked product) and delivery_date. Needs the agent key. Returns quote_id and jws for place_order."""
     return _run(ctx, "agent", api.request_quote, QuoteRequest(offers=offers, delivery_date=delivery_date))
 
 
 @mcp.tool()
 def place_order(ctx: Context, quote_id: str, jws: str, ask_human: bool = False, note: str | None = None) -> dict:
-    """Place an order from a signed quote. Returns Order with Decision. ask_human forces human approval."""
+    """Place an order from a quote. Pass quote_id and jws exactly as returned by request_quote. The mandate decides: auto means placed, needs_approval waits for a human, blocked is refused. Set ask_human true to force a human check, with a note. Needs the agent key."""
     return _run(ctx, "agent", api.place_order, PlaceOrderRequest(quote_id=quote_id, jws=jws, ask_human=ask_human, note=note))
 
 
 @mcp.tool()
 def get_order(ctx: Context, order_id: str) -> dict:
-    """Get one Order."""
+    """Check the status, lines and decision reasons of one order by order_id. Call after place_order to see whether a human approved it."""
     return _run(ctx, "any", api.get_order, order_id)
 
 
 @mcp.tool()
 def list_orders(ctx: Context, customer: str | None = None, status: str | None = None) -> list[dict]:
-    """List Orders, filtered by customer and status."""
+    """List orders of your customer, optionally filtered by status (pending_approval, placed, confirmed, rejected, blocked, expired)."""
     return _run(ctx, "any", api.list_orders, customer, status)
 
 
 @mcp.tool()
 def list_approvals(ctx: Context, customer: str | None = None) -> list[dict]:
-    """Orders waiting for human approval."""
+    """List orders waiting for a human approver. Call to see what is blocked on a person."""
     return _run(ctx, "any", api.list_approvals, customer)
 
 
 @mcp.tool()
 def decide_approval(ctx: Context, order_id: str, approve: bool, by: str, note: str | None = None) -> dict:
-    """Approve or reject a pending order. Needs the admin key."""
+    """Human side only: approve or reject a pending order. Pass order_id, approve, by (the approver's name from the mandate) and an optional note. Needs the admin key."""
     return _run(ctx, "admin", api.decide_approval, order_id, ApprovalDecision(approve=approve, by=by, note=note))
 
 
 @mcp.tool()
 def get_audit_trail(ctx: Context, customer: str | None = None, order_id: str | None = None) -> dict:
-    """Audit events and a plain-language summary text."""
+    """Explain what happened: hash-chained audit events with a plain-language text, a verification result and a signed checkpoint. Filter by order_id to explain one order."""
     return _run(ctx, "any", api.get_audit_trail, customer, order_id)
 
 
 @mcp.tool()
 def get_mandate(ctx: Context, customer: str | None = None) -> dict:
-    """The Mandate of this agent."""
+    """Read your own limits before ordering: per-order and per-week EUR, excluded allergens and substitution rule. Call to know what you may buy without a human."""
     return _run(ctx, "any", api.get_mandate, customer)
 
 

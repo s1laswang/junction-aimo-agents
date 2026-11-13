@@ -2,7 +2,8 @@ import functools
 import os
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Body, Depends, Header, Query, Security
+from fastapi.security import APIKeyHeader
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -88,15 +89,22 @@ def _guard(fn):
     return run
 
 
-def _auth(resolver, *headers):
-    def dep(x_agent_key: str | None = Header(None), x_admin_key: str | None = Header(None)):
-        return resolver(*[{"agent": x_agent_key, "admin": x_admin_key}[h] for h in headers])
-    return dep
+agent_scheme = APIKeyHeader(name="X-Agent-Key", scheme_name="AgentKey", auto_error=False,
+                            description="Key of a buyer agent, bound to one customer and its mandate. Demo: demo-hotel-aurora.")
+admin_scheme = APIKeyHeader(name="X-Admin-Key", scheme_name="AdminKey", auto_error=False,
+                            description="Human or admin side: approvals, mandates, simulation.")
 
 
-agent = _auth(resolve_agent, "agent")
-admin = _auth(resolve_admin, "admin", "agent")
-anyone = _auth(resolve_any, "agent", "admin")
+def agent(x_agent_key: str | None = Security(agent_scheme)):
+    return resolve_agent(x_agent_key)
+
+
+def admin(x_admin_key: str | None = Security(admin_scheme), x_agent_key: str | None = Header(None, include_in_schema=False)):
+    return resolve_admin(x_admin_key, x_agent_key)
+
+
+def anyone(x_agent_key: str | None = Security(agent_scheme), x_admin_key: str | None = Security(admin_scheme)):
+    return resolve_any(x_agent_key, x_admin_key)
 
 
 def domain(fn, *a, **kw):
@@ -240,7 +248,20 @@ def clear_simulation():
     return {"ok": True}
 
 
-@router.get("/products")
+def _ex(summary, value):
+    return {"milk": {"summary": summary, "value": value}}
+
+
+EX_PARSE = _ex("Milk request", {"text": "I need 1000 litres of lactose-free milk by Monday", "customer": "hotel-aurora"})
+EX_NEED = _ex("Parsed milk need", {"customer": "hotel-aurora", "deliver_by": "2026-11-16", "items": [
+    {"query": "milk", "quantity": 1000, "unit": "l", "constraints": {"lactose_free": True}}]})
+EX_QUOTE = _ex("Quote the chosen offer", {"offers": [{"product_id": "<product_id from an offer>", "quantity": 1000}],
+                                          "delivery_date": "2026-11-16"})
+EX_PLACE = _ex("Place the signed quote", {"quote_id": "<quote_id>", "jws": "<jws from the quote>", "ask_human": False})
+EX_DECIDE = _ex("Approve a pending order", {"approve": True, "by": "Laura Virtanen", "note": "ok"})
+
+
+@router.get("/products", summary="Search products", description="Search the catalog by text and constraints such as lactose free, allergens, origin and brand. No key needed.", tags=["catalog"])
 @_guard
 def r_search_products(q: str = "", lactose_free: bool | None = None, gluten_free: bool | None = None,
                       exclude_allergens: list[str] = Query(default=[]), labels: list[str] = Query(default=[]),
@@ -251,85 +272,85 @@ def r_search_products(q: str = "", lactose_free: bool | None = None, gluten_free
     return search_products(q, c, limit)
 
 
-@router.get("/products/{product_id}")
+@router.get("/products/{product_id}", summary="Get one product", description="Read one product by id, including allergens and labels. No key needed.", tags=["catalog"])
 @_guard
 def r_product(product_id: str):
     return get_product(product_id)
 
 
-@router.post("/needs/parse", response_model=ParseResponse)
+@router.post("/needs/parse", response_model=ParseResponse, summary="Parse a purchase request", description="Turn free text such as '1000 litres of lactose-free milk by Monday' into a structured Need. Send the Need to /v1/offers.", tags=["offers"])
 @_guard
-def r_parse(req: ParseRequest, x_agent_key: str | None = Header(None)):
+def r_parse(req: ParseRequest = Body(openapi_examples=EX_PARSE), x_agent_key: str | None = Security(agent_scheme)):
     return parse_request(req, x_agent_key)
 
 
-@router.post("/offers")
+@router.post("/offers", summary="Compare offers", description="Ranked offers per need item with price, stock, delivery date, reliability, CO2, shortfall and allergen-safe substitutes. Needs X-Agent-Key.", tags=["offers"])
 @_guard
-def r_offers(need: Need, p=Depends(agent)):
+def r_offers(need: Need = Body(openapi_examples=EX_NEED), p=Depends(agent)):
     return get_offers(p, need)
 
 
-@router.post("/quotes")
+@router.post("/quotes", summary="Request a signed quote", description="Lock chosen offers into a signed, single-use quote valid until the supplier cutoff. Needs X-Agent-Key.", tags=["quotes"])
 @_guard
-def r_quotes(req: QuoteRequest, p=Depends(agent)):
+def r_quotes(req: QuoteRequest = Body(openapi_examples=EX_QUOTE), p=Depends(agent)):
     return request_quote(p, req)
 
 
-@router.post("/orders")
+@router.post("/orders", summary="Place an order", description="Redeem a signed quote. The mandate decides auto-placed, needs_approval or blocked; set ask_human to force a human check. Needs X-Agent-Key.", tags=["orders"])
 @_guard
-def r_place(req: PlaceOrderRequest, p=Depends(agent)):
+def r_place(req: PlaceOrderRequest = Body(openapi_examples=EX_PLACE), p=Depends(agent)):
     return place_order(p, req)
 
 
-@router.get("/orders")
+@router.get("/orders", summary="List orders", description="List orders of your customer, filter by status. Admin key sees all customers.", tags=["orders"])
 @_guard
 def r_orders(customer: str | None = None, status: str | None = None, p=Depends(anyone)):
     return list_orders(p, customer, status)
 
 
-@router.get("/orders/{order_id}")
+@router.get("/orders/{order_id}", summary="Get an order", description="Order status, lines and the decision with plain-language reasons.", tags=["orders"])
 @_guard
 def r_order(order_id: str, p=Depends(anyone)):
     return get_order(p, order_id)
 
 
-@router.get("/approvals")
+@router.get("/approvals", summary="List pending approvals", description="Orders waiting for a human approver. Agents see their own customer, admin sees all.", tags=["approvals"])
 @_guard
 def r_approvals(customer: str | None = None, p=Depends(anyone)):
     return list_approvals(p, customer)
 
 
-@router.post("/approvals/{order_id}")
+@router.post("/approvals/{order_id}", summary="Decide an approval", description="A named human approves or rejects a pending order. Needs X-Admin-Key.", tags=["approvals"])
 @_guard
-def r_decide(order_id: str, body: ApprovalDecision, p=Depends(admin)):
+def r_decide(order_id: str, body: ApprovalDecision = Body(openapi_examples=EX_DECIDE), p=Depends(admin)):
     return decide_approval(order_id, body)
 
 
-@router.get("/audit")
+@router.get("/audit", summary="Get the audit trail", description="Hash-chained audit events with a plain-language summary, a verification result and a signed checkpoint.", tags=["audit"])
 @_guard
 def r_audit(customer: str | None = None, order_id: str | None = None, p=Depends(anyone)):
     return get_audit_trail(p, customer, order_id)
 
 
-@router.get("/mandate")
+@router.get("/mandate", summary="Get the mandate", description="The spending, allergen and substitution limits that apply to your agent.", tags=["approvals"])
 @_guard
 def r_mandate(customer: str | None = None, p=Depends(anyone)):
     return get_mandate(p, customer)
 
 
-@router.put("/mandate")
+@router.put("/mandate", summary="Update a mandate", description="Replace a customer mandate; the change is audited. Needs X-Admin-Key.", tags=["admin"])
 @_guard
 def r_put_mandate(m: Mandate, p=Depends(admin)):
     return put_mandate(m)
 
 
-@router.post("/admin/simulate")
+@router.post("/admin/simulate", summary="Simulate a stock-out", description="Override availability for one product to demo stock-outs and substitutions. Needs X-Admin-Key.", tags=["admin"])
 @_guard
 def r_simulate(body: SimulateStock, p=Depends(admin)):
     return simulate(body)
 
 
-@router.delete("/admin/simulate")
+@router.delete("/admin/simulate", summary="Clear stock simulation", description="Remove all stock overrides. Needs X-Admin-Key.", tags=["admin"])
 @_guard
 def r_clear(p=Depends(admin)):
     return clear_simulation()

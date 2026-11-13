@@ -153,3 +153,21 @@ def test_upstream_unavailable(client, agent_key, monkeypatch):
     init(client)
     out = rpc(client, "tools/call", {"name": "get_offers", "arguments": need}, {"X-Agent-Key": agent_key}, id=11)
     assert out["result"]["isError"] and "UPSTREAM_UNAVAILABLE" in json.dumps(out["result"]["content"])
+
+
+def test_openapi_documented(client):
+    o = client.get("/openapi.json").json()
+    assert {"AgentKey", "AdminKey"} <= set(o["components"]["securitySchemes"])
+    for path, ops in o["paths"].items():
+        if path.startswith("/v1"):
+            for op in ops.values():
+                assert op.get("summary") and op.get("description") and op.get("tags"), path
+    card = client.get("/.well-known/agent-card.json").json()
+    assert card["endpoints"]["openapi"] == "/openapi.json" and card["endpoints"]["mcp"] == "/mcp"
+    assert card["policies"]["quote_verification"]["steps"]
+
+
+def test_mcp_descriptions():
+    from aimo.mcp_server import mcp
+    tools = asyncio.run(mcp.list_tools())
+    assert all(len(t.description or "") > 60 for t in tools)
