@@ -59,3 +59,20 @@ def test_total_not_unit():
 
 def test_usual_items_count_only():
     assert usual_items([{"detail": {"lines": 1, "quote_id": "q"}}]) == []
+
+
+def test_origin_and_note(monkeypatch):
+    import agents.seller as sl
+    base = offer("1", 5, 500, 0.8)
+
+    def fake(method, path, key, url, **kw):
+        if path == "/mandate":
+            return M
+        if path == "/orders":
+            return [{"lines": [{"product_id": 1, "name": "milk", "quantity": 100}]}]
+        return {"items": [{"offers": [base]}]}
+
+    monkeypatch.setattr(sl, "_call", fake)
+    notes, ps = sl.explain("hotel-aurora", "k", "u")
+    assert notes and "already the best offer" in notes[0]
+    assert ps and ps[0]["origin"] == "catalog suggestion"
