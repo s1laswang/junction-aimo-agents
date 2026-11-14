@@ -285,9 +285,27 @@ PY
         else
           record FAIL "qa_milk_flow.py" "exit $mec (see /tmp/aimo-accept-milk.txt)"
         fi
+        if [ -f docs/pitch/requote_beat.py ]; then
+          set +e
+          uv run python docs/pitch/requote_beat.py --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-requote.txt 2>&1
+          rqec=$?
+          set -e
+          requote_line=$(grep -E "^REQUOTE " /tmp/aimo-accept-requote.txt | grep -v "^REQUOTE BEAT OK" | tail -1 || true)
+          if [ "$rqec" -eq 0 ] && grep -q "REQUOTE BEAT OK" /tmp/aimo-accept-requote.txt; then
+            record PASS "requote_beat.py" "409 requote_needed -> fresh quote -> AP + audit verify ($mode_label)"
+            if [ -n "$requote_line" ]; then
+              say "  $requote_line"
+            fi
+          else
+            record FAIL "requote_beat.py" "exit $rqec (see /tmp/aimo-accept-requote.txt)"
+          fi
+        fi
       else
         record SKIP "conformance suite" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
         record SKIP "qa_milk_flow.py" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
+        if [ -f docs/pitch/requote_beat.py ]; then
+          record SKIP "requote_beat.py" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
+        fi
       fi
 
       if has_gemini_key; then
