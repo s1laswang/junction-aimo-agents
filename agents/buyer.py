@@ -36,8 +36,27 @@ Claude Desktop (claude_desktop_config.json, stdio):
 }"""
 
 
+ALLERGEN_ALIASES = {
+    "nuts": {"nuts", "peanuts", "peanut", "tree nuts"},
+    "nut": {"nuts", "peanuts", "peanut", "tree nuts"},
+    "peanut": {"peanut", "peanuts"},
+    "peanuts": {"peanut", "peanuts"},
+    "milk": {"milk", "lactose"},
+    "dairy": {"milk", "lactose"},
+    "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
+}
+
+
 def _day(s):
     return str(s)[:10] if s else None
+
+
+def _allergen(a):
+    s = str(a).strip().lower()
+    for p in ("may_contain:", "may:"):
+        if s.startswith(p):
+            return s[len(p):].strip()
+    return s
 
 
 def usable(offer, need_item, deliver_by):
@@ -49,8 +68,11 @@ def usable(offer, need_item, deliver_by):
     d = _day(offer.get("available_date"))
     if d and deliver_by and d > _day(deliver_by):
         return False
-    banned = {a.lower() for a in (need_item.get("constraints") or {}).get("exclude_allergens") or []}
-    if banned & {a.lower() for a in offer["product"].get("allergens") or []}:
+    banned = set()
+    for a in (need_item.get("constraints") or {}).get("exclude_allergens") or []:
+        k = _allergen(a)
+        banned |= {k} | ALLERGEN_ALIASES.get(k, set())
+    if banned & {_allergen(a) for a in offer["product"].get("allergens") or []}:
         return False
     return True
 
@@ -87,7 +109,10 @@ def pick(need_item, offers, deliver_by, first=None):
             qty = min(qty, math.floor(amt))
         if qty < 1:
             continue
-        chosen.append({"product_id": o["product_id"], "quantity": qty, "offer": o})
+        item = {"product_id": o["product_id"], "quantity": qty, "offer": o}
+        if o.get("substitute_for"):
+            item["substitute_for"] = o["substitute_for"]
+        chosen.append(item)
         left -= min(qty / need_units, left)
     return chosen, max(left, 0.0)
 
@@ -154,7 +179,11 @@ async def _run(text, customer, key, url, log, poll, interval, stdio=False):
         if not chosen:
             log.append("Nothing to order.")
             return out
-        lines = [{"product_id": c["product_id"], "quantity": c["quantity"]} for c in chosen]
+        lines = [
+            {"product_id": c["product_id"], "quantity": c["quantity"],
+             **({"substitute_for": c["substitute_for"]} if c.get("substitute_for") else {})}
+            for c in chosen
+        ]
         quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(need["deliver_by"])})
         out["quote"] = quote
         log.append(f"Signed quote {quote['quote_id']}: {quote['total_net']:.2f} {quote['currency']} net, valid until {quote['valid_until']}.")
