@@ -1,5 +1,7 @@
+import io
 from pathlib import Path
 import re
+import tokenize
 
 import pytest
 from fastapi.testclient import TestClient
@@ -306,6 +308,159 @@ def test_page_specific_polish_and_print_rules():
     assert len(mobile_blocks) == 1, f"Expected 1 merged mobile @media block in admin.css, got {len(mobile_blocks)}"
     assert ".panel.form+.panel.form" in admin_css
     assert ".chip button:focus-visible" in admin_css
+
+
+def test_all_css_variables_defined_in_root():
+    style_css = (WEB / "style.css").read_text(encoding="utf-8")
+    root_defs = set()
+    for kind, header, body in _iter_blocks(style_css):
+        if kind == "leaf" and ":root" in [s.strip() for s in header.split(",")]:
+            for m in re.finditer(r"(--[a-zA-Z0-9_-]+)\s*:", body):
+                root_defs.add(m.group(1))
+    assert len(root_defs) >= 15, f"Expected full design token set in style.css :root, got {root_defs}"
+
+    var_re = re.compile(r"var\(\s*(--[a-zA-Z0-9_-]+)")
+    for label, css in _all_css_sources():
+        used = set(var_re.findall(_strip_strings(css)))
+        missing = sorted(used - root_defs)
+        assert not missing, f"Undefined CSS var(s) in {label}: {missing}"
+        if label != "style.css":
+            for kind, header, body in _iter_blocks(css):
+                if kind == "leaf" and ":root" in header:
+                    local_defs = {m.group(1) for m in re.finditer(r"(--[a-zA-Z0-9_-]+)\s*:", body)}
+                    extra = sorted(local_defs - root_defs)
+                    assert not extra, f"Non-canonical :root token(s) in {label}: {extra}"
+
+    for html_path in sorted(WEB.glob("*.html")):
+        html = html_path.read_text(encoding="utf-8")
+        used_inline = set(var_re.findall(html))
+        missing_inline = sorted(used_inline - root_defs)
+        assert not missing_inline, f"Undefined inline CSS var(s) in {html_path.name}: {missing_inline}"
+
+    for js_path in sorted(WEB.glob("*.js")):
+        js = js_path.read_text(encoding="utf-8")
+        used_js = set(var_re.findall(js))
+        missing_js = sorted(used_js - root_defs)
+        assert not missing_js, f"Undefined CSS var(s) in {js_path.name}: {missing_js}"
+
+
+def test_console_checkbox_reset_and_blocked_banner_wrapping():
+    style_css = (WEB / "style.css").read_text(encoding="utf-8")
+    assert re.search(r"input\s*,\s*select\s*,\s*textarea\s*\{[^}]*height\s*:\s*32px", style_css)
+
+    console_css = (WEB / "console.css").read_text(encoding="utf-8")
+    cb = re.search(r'input\[type="checkbox"\]\s*\{([^}]+)\}', console_css)
+    assert cb, "Missing input[type=\"checkbox\"] reset in console.css"
+    cb_body = cb.group(1)
+    assert re.search(r"width\s*:\s*15px", cb_body)
+    assert re.search(r"height\s*:\s*(?:15px|auto)", cb_body)
+    assert "32px" not in cb_body
+    assert re.search(r"padding\s*:\s*0", cb_body)
+    assert re.search(r"margin\s*:\s*0", cb_body)
+    assert "accent-color:var(--valio)" in cb_body.replace(" ", "")
+
+    ask = re.search(r"label\.ask-h\s*\{([^}]+)\}", console_css)
+    assert ask, "Missing label.ask-h rule in console.css"
+    ask_body = ask.group(1).replace(" ", "")
+    for expected in (
+        "display:inline-flex",
+        "align-items:center",
+        "gap:6px",
+        "font-size:12px",
+        "color:var(--ink-2)",
+        "cursor:pointer",
+    ):
+        assert expected in ask_body, f"Missing {expected} in label.ask-h"
+
+    assert re.search(r"\.dec\s*\{[^}]*overflow-wrap\s*:\s*anywhere", console_css)
+    assert re.search(r"\.dec\s+code\s*\{[^}]*overflow-wrap\s*:\s*anywhere", console_css)
+    assert re.search(r"\.dec\.blocked\s+code\s*\{[^}]*color\s*:\s*var\(--stop\)", console_css)
+    assert re.search(r"\.dec\s+li\s*\{[^}]*flex-wrap\s*:\s*wrap", console_css)
+    mobile = re.search(r"@media\s*\(\s*max-width\s*:\s*640px\s*\)\s*\{([\s\S]*?)\n\}", console_css)
+    assert mobile and "min-width:0" in mobile.group(1).replace(" ", "")
+
+
+def test_inbox_reason_tags_and_expired_quote_badge():
+    inbox_css = (WEB / "inbox.css").read_text(encoding="utf-8")
+    assert re.search(r"\.why\s+li\s*\{[^}]*flex-wrap\s*:\s*wrap", inbox_css)
+    tag_rule = re.search(r"\.why\s+li\s+\.tag\s*\{([^}]+)\}", inbox_css)
+    assert tag_rule, "Missing .why li .tag in inbox.css"
+    tag_body = tag_rule.group(1).replace(" ", "")
+    assert "height:auto" in tag_body
+    assert "overflow-wrap:anywhere" in tag_body
+    assert "white-space:normal" in tag_body
+    for variant in (".why li .tag.warn", ".why li .tag.stop", ".why li .tag.ok"):
+        assert variant in inbox_css, f"Missing {variant} in inbox.css"
+
+    kv_stop = re.search(r"\.kv\s+\.tag\.stop\s*\{([^}]+)\}", inbox_css)
+    assert kv_stop, "Missing .kv .tag.stop rule in inbox.css"
+    kv_stop_body = kv_stop.group(1).replace(" ", "")
+    assert "color:var(--stop)" in kv_stop_body
+    assert "border:" in kv_stop_body
+    assert "font-weight:600" in kv_stop_body
+
+
+def test_audit_filter_reset_checkpoint_jws_and_print_rules():
+    audit_css = (WEB / "audit.css").read_text(encoding="utf-8")
+    f_reset_sel = "\x23f-reset"
+    cp_box_sel = "\x23cp-box"
+    cp_jws_sel = "\x23cp-jws"
+    jump_sel = "\x23jump"
+
+    assert re.search(r"\.filters\s*\{[^}]*align-items\s*:\s*flex-end", audit_css)
+    reset_matches = list(re.finditer(rf"{re.escape(f_reset_sel)}\s*\{{([^}}]+)\}}", audit_css))
+    assert len(reset_matches) >= 2, "Expected desktop and mobile f-reset rules in audit.css"
+    for m in reset_matches:
+        body = m.group(1).replace(" ", "")
+        assert "align-self:flex-end" in body
+        assert "height:32px" in body
+
+    assert cp_box_sel in audit_css
+    assert re.search(rf"{re.escape(cp_box_sel)}:not\(\[hidden\]\)\s*\{{[^}}]*flex-wrap\s*:\s*wrap", audit_css)
+    cp_jws = re.search(rf"{re.escape(cp_jws_sel)}\s*\{{([^}}]+)\}}", audit_css)
+    assert cp_jws, "Missing cp-jws wrapping rule in audit.css"
+    cp_jws_body = cp_jws.group(1).replace(" ", "")
+    assert "max-width:100%" in cp_jws_body
+    assert "overflow-wrap:anywhere" in cp_jws_body
+    assert "word-break:break-all" in cp_jws_body
+
+    print_block = re.search(r"@media\s+print\s*\{([\s\S]*)\}", audit_css)
+    assert print_block, "Missing @media print block in audit.css"
+    pbody = print_block.group(1)
+    for hidden_sel in (".top", ".filters", f_reset_sel, ".legend", ".how", jump_sel, ".chev"):
+        assert hidden_sel in pbody, f"Expected {hidden_sel} hidden in @media print"
+    assert "display:none!important" in pbody.replace(" ", "")
+    assert "display:block!important" in pbody.replace(" ", "")
+    assert "break-inside:avoid" in pbody.replace(" ", "")
+
+
+def test_admin_quick_chips_and_sim_picks_states():
+    admin_css = (WEB / "admin.css").read_text(encoding="utf-8")
+    sim_picks = "\x23sim-picks"
+    assert f".quick,.picks,{sim_picks}" in admin_css.replace(" ", "")
+    for sel in (".quick button", "button.chip", "button.pick", f"{sim_picks} button"):
+        assert sel in admin_css, f"Missing {sel} in admin.css"
+    for token in ("var(--paper)", "var(--sheet)", "var(--well)", "var(--valio)"):
+        assert token in admin_css, f"Expected Nordic token {token} in admin.css"
+    assert 'button.chip[aria-pressed="true"]' in admin_css
+    assert 'button.pick[aria-pressed="true"]' in admin_css
+    assert f'{sim_picks} button[aria-pressed="true"]' in admin_css
+    assert "button.chip:hover" in admin_css
+    assert "button.pick:hover" in admin_css
+    assert "button.chip:focus-visible" in admin_css
+    assert "button.pick:focus-visible" in admin_css
+    assert f"{sim_picks} button:focus-visible" in admin_css
+    reduced = re.search(r"@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{([^}]+)\}", admin_css)
+    assert reduced and "button.chip" in reduced.group(1) and "button.pick" in reduced.group(1) and sim_picks in reduced.group(1)
+
+
+def test_self_test_file_has_zero_comments_or_forbidden_chars():
+    src = Path(__file__).read_text(encoding="utf-8")
+    tokens = list(tokenize.generate_tokens(io.StringIO(src).readline))
+    assert not [t for t in tokens if t.type == tokenize.COMMENT]
+    assert "\u2014" not in src and "\u2013" not in src
+    assert not EMOJI_RE.search(src)
+    assert GRAD_WORD not in src.lower()
 
 
 @pytest.fixture
