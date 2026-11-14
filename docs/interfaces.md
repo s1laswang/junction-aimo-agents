@@ -106,3 +106,21 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
 - Tiers without a usual product: best = all query concepts in name, better = ≥ half, good = rest that passes hard filters.
 - `plan_need(need, offers_fn=None)`; `UpstreamError` from `get_offers` propagates (gateway → 503).
 - CLI: `python -m aimo.catalog build|search <q>|demo`. Built artifacts in data/ (gitignored): catalog.sqlite, embeddings.npy + embeddings_ids.json, cache/gemini_allergens.json. `aimo serve` must build if missing.
+
+## Buyer conventions (landed Sat ~16:30, from team/buyer; see aimo/buyer/)
+- Router: `from aimo.buyer.runs import router` (prefix `/v1/agent`). `POST /v1/agent/runs` body
+  `{text, customer_id="hotel-aurora", model?, thinking? (MINIMAL|LOW|MEDIUM|HIGH), transport? (auto|mcp|inproc|fake), escalate=true, faults?}`
+  → `{run_id, events_url}`. `GET /v1/agent/runs` (recent runs), `GET /v1/agent/runs/{id}` → `{run_id, status, summary, order_status, latency_s, steps[]}`.
+- SSE `GET /v1/agent/runs/{id}/events`: each event has `id: <seq>`, `event: <AgentStep.kind>`, `data: <AgentStep JSON>`; replays from the
+  start (or after `Last-Event-ID`), closes after `final`. Step `data` keys the UI can rely on:
+  `thought` (+`need` on the parse step), `tool_call` {name, args, model, thinking, latency_s} or {name, blocked},
+  `tool_result` {name, result, latency_s}, `plan` {plan, rationale}, `quote` {quote}, `decision` {order_id, status, decision},
+  `approval_wait` {order_id, approver_role, quote_id, quote_hash, hits}, `order` {order}, `error` {error}, `final`
+  {summary, status, audit_report, latency_s, models_used, escalated, injections}. `final.status` is the order status or `no_order` / `needs_confirmation` / `error`.
+- Server-side runs reach the gateway over MCP by default: env `AIMO_BUYER_TRANSPORT` (auto) and `AIMO_MCP_URL` (http://localhost:8000/mcp). Max 8 concurrent runs (`AIMO_BUYER_MAX_RUNS`).
+- Identity: the buyer sends `X-Agent-Id: buyer-1` (bare agent name) and `X-Customer-Id`; optional `X-Aimo-Faults` per scenario.
+- Screen results go to `need.preferences["injection_flags"]` on `create_quote` (trust convention).
+- CLI: `aimo demo [...]` → `aimo.buyer.run_demo:main()` (argparse over sys.argv). Flags: `--scenario happy|stockout|school-allergen|injection|drift|event`,
+  `--auto-approve-as EMAIL`, `--reject`, `--transport`, `--base-url`, `--via-server`, `--model`, `--thinking`, `--no-escalate`, `--faults`, `--json PATH`.
+
+- Decisions (CEO): trust sends > 3× usual week to approval; agent itself holds at ≥ 10× (likely unit error) as needs_confirmation. Hydrogen-HIGH escalation stays on in the hero demo (visible Gemini thinking control).
