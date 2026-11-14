@@ -1,0 +1,21 @@
+{
+ "time_now": "2026-11-14T23:50:28+0200",
+ "dates": [
+  "2026-11-16",
+  "2026-11-17",
+  "2026-11-18",
+  "2026-11-19",
+  "2026-11-20"
+ ],
+ "n_ids": 669,
+ "n_catalog_products": 669,
+ "upstream_calls": 10,
+ "recorded_with": "scripts/record_replay.py",
+ "flows": [
+  "scenarios s0..s7",
+  "conformance",
+  "docs/pitch/qa_milk_flow.py",
+  "buyer agent (mock model): UI defaults + montage requests"
+ ],
+ "source": "public Valio Aimo mock API responses (junction26.valioaimo.fi), raw; catalog subset from the public challenge files"
+}
