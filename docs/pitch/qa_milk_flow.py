@@ -134,8 +134,8 @@ def main() -> None:
     check(r.status_code == 200, f"{len(r.text.splitlines())} lines of markdown")
     print("\n".join("       " + s for s in r.text.splitlines()[:25]))
 
-    step("GET /v1/orders/{order_id}/peppol (UBL 2.3 Order Response, Peppol T116)")
-    r = c.get(f"/v1/orders/{o['order_id']}/peppol")
+    step("GET /v1/orders/{order_id}/peppol-order-response.xml (UBL 2.3 Order Response, Peppol T116)")
+    r = c.get(f"/v1/orders/{o['order_id']}/peppol-order-response.xml")
     import re
     m = re.search(r"<cbc:OrderResponseCode[^>]*>([^<]+)<", r.text)
     peppol = m.group(1).strip() if m else None
