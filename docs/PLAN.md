@@ -1,6 +1,6 @@
 # PLAN: Valio Aimo Trusted Trade Agents (Junction 2026)
 
-Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:00 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
+Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:30 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
 
 ## Questions for Silas
 1. **Momin's code: approve the merge plan in [docs/MERGE-MOMIN.md](MERGE-MOMIN.md).** I reviewed it read-only: `junction26-valio` dev on freighter. It's a solid deterministic gateway with all 8 brief scenarios as runnable acceptance scripts, but it runs with no LLM by default.
@@ -14,15 +14,19 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:00 Helsinki. Deadline: **
 
 Everything else is decided below. Change it here if you disagree.
 
-## Status (Sat 17:00)
-- **M1 and M2 are met early.** Everything is on main: gateway, trust, catalog, the Gemini buyer agent and the approval UI. The full browser flow works live: Run agent (Gemini over MCP), plan (cut-off reject, then best 464306), signed quote checked in the browser against JWKS, needs approval (3 rules), Approve, order placed AP, audit chain verified (15 events). 90 tests pass.
-- **Round 2 in progress:**
-  - gateway: actor id fix, injected-text fault, demo tamper routes, fresh-checkout setup;
-  - catalog: allergen text no longer misleads product-type inference (school scenario);
-  - frontend: live tamper button, hospital story, presenter mode;
-  - wind tunnel: scenarios and numbers;
-  - pitch: README, DEMO, GEMINI, SUBMISSION.
-- **FR8 freighter:** SSH is flaky, and /data/silas is missing (see Questions). We use ~/junction-aimo-agents-data.
+## Status (Sat 15:30)
+- **M1 and M2 are met, hours early.** Everything is on main and verified live against the mock API: gateway (REST, MCP, otap.json, faults, demo tamper routes), trust (directory-only human approvals, server-verified tiers, signed hash-chained audit), catalog (hybrid Gemini search, allergen tri-state plus Gemini inference, good-better-best, preference bug fixed), Gemini buyer agent (6/6 montage scenarios PASS: docs/demo-montage.md) and the approval UI (live tamper, presenter mode). 137 tests pass.
+- **In progress:**
+  - buyer: token trim, plus cost per order;
+  - wind tunnel: scenario numbers;
+  - port: Momin's recipe → order, seller agent, drift detector, s0–s7 suite, Dockerfile.
+- **Next:**
+  - merge those three;
+  - fill the TODO numbers in DEMO, deck, SUBMISSION and GEMINI;
+  - take fresh screenshots;
+  - record the video (Chintufp);
+  - freeze at Sun 06:00.
+- **FR8 freighter:** SSH from the venue Wi-Fi is flaky, and /data/silas is missing (see Questions). We use ~/junction-aimo-agents-data.
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.
