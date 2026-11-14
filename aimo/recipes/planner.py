@@ -319,9 +319,18 @@ def _plan_summary(plan: Plan, include_candidates: bool) -> dict[str, Any]:
     d = plan.model_dump(mode="json")
     if not include_candidates:
         ok = [c for c in d["candidates"] if c["tier"] != "rejected"][:3]
-        d["candidates"] = [{"product_id": c["product"]["id"], "name": c["product"]["name"], "tier": c["tier"],
-                            "unit_price": (c.get("offer") or {}).get("unit_price"), "reasons": c["reasons"][:2]}
-                           for c in ok]
+        d["candidates"] = [
+            {
+                "product_id": c["product"]["id"],
+                "name": c["product"]["name"],
+                "tier": c["tier"],
+                "unit_price": (c.get("offer") or {}).get("unit_price"),
+                "reasons": list(dict.fromkeys([*c["reasons"][:2], *(r for r in c["reasons"] if "prompt-injection screen" in r.lower())])),
+                "flags": c["flags"],
+                "injection_screen": c.get("injection_screen"),
+            }
+            for c in ok
+        ]
         d["candidates_rejected"] = sum(1 for c in plan.candidates if c.tier == "rejected")
     return d
 
@@ -383,11 +392,22 @@ def plan_recipe(recipe: Optional[str] = None, portions: Optional[int] = None, de
     lines = [{"product_id": pid, "qty_sales_units": q} for pid, q in qty_by.items()]
     names = ", ".join(f"{d['en']} x{rn.portions[d['id']]}" for d in rn.dishes)
     covered = len(rn.items) - len(uncovered)
+    injection_flagged_lines = [
+        {"ingredient": ing["ingredient"], "product_id": ln["product_id"], "product_name": ln["product_name"],
+         "injection_screen": ln.get("injection_screen"), "flags": ln["flags"]}
+        for ing in ingredients
+        for ln in ing["plan"]["lines"]
+        if (ln.get("injection_screen") or {}).get("suspicious")
+        or "supplier_text_injection_suspected" in (ln.get("flags") or [])
+    ]
+    flagged_pids = list(dict.fromkeys(ln["product_id"] for ln in injection_flagged_lines))
     summary = (f"{names} for {customer_id}, delivery by {rn.delivery_by:%a %d %b}: {len(rn.items)} ingredient(s), "
                f"{covered} fully covered, {len(lines)} product line(s), est. €{total:,.2f} net"
                + (f"; excluded allergens {', '.join(rn.excluded_allergens)}" if rn.excluded_allergens else "")
                + (f"; swaps: " + "; ".join(f"{s['ingredient']} -> {s['to'] or 'none'}" for s in swaps) if swaps else "")
-               + (f"; NOT covered: " + ", ".join(u["ingredient"] for u in uncovered) if uncovered else "") + ".")
+               + (f"; NOT covered: " + ", ".join(u["ingredient"] for u in uncovered) if uncovered else "")
+               + (f"; prompt-injection screen flagged supplier text on {', '.join(flagged_pids)} (human approval required)"
+                  if flagged_pids else "") + ".")
     return {
         "recipe": {"ids": [d["id"] for d in rn.dishes], "names": [d["en"] for d in rn.dishes], "portions": rn.portions},
         "customer_id": customer_id,
@@ -395,6 +415,7 @@ def plan_recipe(recipe: Optional[str] = None, portions: Optional[int] = None, de
         "excluded_allergens": rn.excluded_allergens,
         "swaps": swaps,
         "ingredients": ingredients,
+        "injection_flagged_lines": injection_flagged_lines,
         "uncovered": uncovered,
         "total_net_estimate": round(total, 2),
         "summary": summary,
