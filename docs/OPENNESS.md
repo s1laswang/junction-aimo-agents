@@ -44,12 +44,14 @@ AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0
 - **Output:** it prints a PASS/FAIL table, writes JSON, and exits with the number of FAILs.
 - **Side effects:** it places **test orders**, so run it against a demo or staging gateway.
 
-**Verified results (44/44 checks including `A6` human approver credential check; initial Sat 19:10 JSON artifacts recorded at 43/43 prior to `A6`):**
+**Recorded results (Sat 14 Nov, 23:20; the suite has 44 checks, including the human-only approval checks A2, A3 and A6):**
 
 | Wholesaler | Result | Report |
 |---|---|---|
-| Valio Aimo Trusted Trade Gateway (live mock API) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) (43/43 pre-A6 snapshot) |
-| Nordic Bakery Supply (synthetic, static backend) | **44/44 PASS** (0.3 s) | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) (43/43 pre-A6 snapshot) |
+| Valio Aimo Trusted Trade Gateway (replay of recorded mock-API responses, `AIMO_REPLAY=tests/fixtures/snapshot`) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
+| Nordic Bakery Supply (synthetic, static backend) | **44/44 PASS** | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) |
+
+The earlier run (Sat 19:10, 43 checks, Valio against the live mock API) also passed in full. Both gateways and the suite need the same `AIMO_APPROVER_PIN` in their environment, because the suite's approval checks act as a human.
 
 `uv run pytest -q tests/test_openness.py` boots Nordic Bakery Supply and runs all 44 conformance checks fully offline (no network, no keys), while `tests/test_toywholesaler_scripted_buyer.py` verifies keyless MCP ordering end to end.
 

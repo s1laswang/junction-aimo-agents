@@ -1,6 +1,6 @@
 # Deck outline: Trusted Trade Agents (8 slides)
 
-For Chintufp to build the visual deck and record the video. Every number has a source in brackets ([docs/NUMBERS.md](../NUMBERS.md)). Keep slides sparse: one idea, one visual, at most 15 words of text. The live demo (docs/DEMO.md) replaces slide 3 when presenting live; the video uses the screen recording there.
+For Chintufp to build the visual deck and record the video. Every number has a source in brackets ([docs/NUMBERS.md](../NUMBERS.md)). Hard questions and answers: [QA.md](QA.md). Keep slides sparse: one idea, one visual, at most 15 words of text. The live demo ([docs/DEMO.md](../DEMO.md)) replaces slide 3 when presenting live; the video uses the screen recording there.
 
 Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots: `docs/pitch/img/approval-ui.png`, plus fresh captures from `/ui` after the freeze.
 
@@ -28,7 +28,7 @@ Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the
 **On slide:** four boxes in a row:
 1. **Mandate**: who may act (scopes).
 2. **Policy**: what runs alone (customer-owned YAML, strictest rule wins).
-3. **Signed quote + approval bound to its hash** (Ed25519 JWS, 15-min price lock).
+3. **Signed quote + human-only approval bound to its hash** (Ed25519 JWS, 15-min price lock; a human signs in, agents get 403).
 4. **Hash-chained, signed audit**: readable, verifiable offline.
 Bottom line: *Unknown is never safe. AI can add warnings, never remove them.*
 **Numbers:** 3 demo customers with different rules (hotel €500 auto limit; school blocks milk and nuts and unknown allergens; hospital needs a dietitian for any substitution) [docs/TRUST.md §3].
@@ -44,8 +44,8 @@ Second half (or a build): wind tunnel table, "Trusted gateway vs naive agent wit
 | Policy violations | **1** | 372 |
 | Allergen violations | **0** | 193 |
 | Injection block rate | 56.2% | 0% |
-Source: `docs/windtunnel-results.md` § "Gemini-written scenarios (wt640)" (snapshot `2f2fef829c50`). Honest caveat for Q&A: escalation precision is 54.0% vs 90.8% for the naive agent, so the gateway asks a human more often than it strictly needs to. That's the price of 1 vs 372 violations. The target of 0 policy violations was missed by one (an over-spend-limit auto-approval in split_order). Scale run on template text: 2,560 scenarios, 11 vs 1,452 policy violations, 0 vs 728 allergen violations [same file, § wt2560]. Injection screen: regex alone 44.4% recall, regex + Gemini 94.4% (35% false positives on buyer requests, 0/60 on supplier texts) [same file].
-Footnote facts already measured: 0 false positives on 34,159 catalog supplier texts [docs/TRUST.md]; 591 passed, 7 skipped, 2 xfailed across 600 pytest checks, 8/8 acceptance scenarios, and 44/44 conformance checks on two wholesalers [docs/NUMBERS.md, docs/OPENNESS.md].
+Source: `docs/windtunnel-results.md` § "Gemini-written scenarios (wt640)" (snapshot `2f2fef829c50`). Honest caveat for Q&A: escalation precision is 54.0% vs 90.8% for the naive agent, so the gateway asks a human more often than it strictly needs to. That's the price of 1 vs 372 violations. The target of 0 policy violations was missed by one (an over-spend-limit auto-approval in `split_order`). Scale run on template text: 2,560 scenarios, 11 vs 1,452 policy violations, 0 vs 728 allergen violations [same file, § wt2560]. Injection screen: regex alone 44.4% recall, regex + Gemini 94.4% (Gemini flags 42/60 buyer requests, 0/60 supplier texts; a flag only means a human looks) [same file].
+Footnote facts already measured: 0 false positives on 34,159 catalog supplier texts [docs/TRUST.md]; 739 passed, 7 skipped, 2 xfailed across 748 pytest checks, 8/8 acceptance scenarios, and 44/44 conformance checks on two wholesalers [docs/NUMBERS.md, docs/OPENNESS.md]; an agent that tries to approve as the real manager gets 403 and the refusal is audited [docs/pitch/permissions_attack.py].
 **Speaker notes (25 s):** "We didn't test one happy path. Six live scenarios, end to end with the Gemini agent against the live challenge mock API: stock-out, school allergens, prompt injection, standing-order drift, a last-minute event. All six pass. And our wind tunnel replays recorded API data across 640 Gemini-written customers, scored against an independent oracle: one policy violation for us, 372 for a naive agent with direct API access, and zero allergen violations."
 
 ## Slide 6: Openness and production path
@@ -55,11 +55,11 @@ Footnote facts already measured: 0 false positives on 34,159 catalog supplier te
 
 ## Slide 7: Gemini
 **On slide:** "Gemini on both sides of the gateway" with 6 small tiles: buyer agent (function calling over MCP) · need parsing (structured output) · hybrid search over 17,546 products (gemini-embedding-2) · allergen inference for 4,076 products from Finnish ingredient text (can only block) · injection screen layer 2 · wind tunnel customers and judge.
-**Numbers:** **$0.034 per order** in Gemini calls, down 59% from $0.082 after a token trim; hero run 87k → 27k input tokens; 31% of input from Gemini's implicit cache [docs/demo-montage.md]. Escalation to gemini-4-hydrogen (thinking HIGH) on only the quote-decision turn: 19% of agent steps [same]. Team usage snapshot: 3,449 Gemini calls, 9.8M input tokens across 8 worktree ledgers [docs/GEMINI.md §5]. Embedding the whole catalog took 44 s, allergen inference 49 s [catalog report].
+**Numbers:** **$0.034 per order** in Gemini calls, down 59% from $0.082 after a token trim; hero run 87k → 27k input tokens; 31% of input from Gemini's implicit cache [docs/demo-montage.md]. Escalation to gemini-4-hydrogen (thinking HIGH) on only the quote-decision turn: 19% of agent steps [same]. Team usage: 4,255 Gemini calls, 14.2M input tokens [docs/GEMINI.md §5, Sat 23:10 snapshot; refresh at the freeze]. Cost numbers recompute offline from `docs/evidence/`. Embedding the whole catalog took 44 s, allergen inference 49 s [catalog report].
 **Speaker notes (20 s):** "Gemini reads Finnish, embeds the catalog, runs the buyer, screens for injection and plays thousands of customers. We use thinking levels as a policy knob: deep reasoning only on the one decision a human later has to defend, 19% of the steps. And a whole order costs about three cents in Gemini calls."
 
 ## Slide 8: Team and ask
-**On slide:** team names and roles; the ask: *"Pilot with one Valio Aimo customer segment: schools or hotels."* Repo link and QR code (`https://github.com/s1laswang/junction-aimo-agents`).
+**On slide:** team names and roles; the ask: *"Pilot with one Valio Aimo customer segment: schools or hotels."* Repo link and QR code: https://github.com/s1laswang/junction-aimo-agents (tag `aimo-v1`).
 **Speaker notes (15 s):** "We're Silas, Momin, Ivar and Chintufp, with a team of Claude Code agents. Our ask: let us pilot this with one customer segment, behind your real webshop API, with the trust layer exactly as you've seen it."
 
 ---

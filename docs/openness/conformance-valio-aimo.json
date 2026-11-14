@@ -1,11 +1,11 @@
 {
  "profile": "otap/0.1",
- "target": "http://127.0.0.1:8830",
+ "target": "http://127.0.0.1:8044",
  "name": "Valio Aimo Trusted Trade Gateway",
  "customer": "hotel-aurora",
  "agent": "buyer-1",
- "ran_at": "2026-11-14T17:03:18+00:00",
- "duration_s": 1.3,
+ "ran_at": "2026-11-14T21:18:43+00:00",
+ "duration_s": 2.0,
  "mcp_tools": [
   "check_standing_order_drift",
   "create_quote",
@@ -22,10 +22,10 @@
   "search_products"
  ],
  "summary": {
-  "pass": 43,
+  "pass": 44,
   "fail": 0,
   "skip": 0,
-  "total": 43
+  "total": 44
  },
  "results": [
   {
@@ -56,19 +56,19 @@
    "id": "D5",
    "check": "otap.json names a streamable-HTTP MCP endpoint",
    "status": "PASS",
-   "detail": "{'url': 'http://127.0.0.1:8830/mcp', 'transport': 'streamable-http', 'server_name': 'valio-aimo-trusted-trade', 'stdio': 'python -m aimo.gateway.mcp_server'}"
+   "detail": "{'url': 'http://127.0.0.1:8044/mcp', 'transport': 'streamable-http', 'server_name': 'valio-aimo-trusted-trade', 'stdio': 'python -m aimo.gateway.mcp_server', 'protocol_version': '2026-07-28', 'handshake_protocol_version': '2025-11-25', 'sdk': 'mcp 2.3.0 (python-sdk)', 'sdk_supported_versions': ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28']}"
   },
   {
    "id": "D6",
    "check": "JWKS has Ed25519 OKP keys with kid",
    "status": "PASS",
-   "detail": "[{'kty': 'OKP', 'crv': 'Ed25519', 'x': 'gv1fjZyCa_g990Vfn1BYBPGiJmFzpHok2jkFRD_qQ9Q', 'kid': 'Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM', 'alg': 'EdDSA', 'use': 'sig'}]"
+   "detail": "[{'kty': 'OKP', 'crv': 'Ed25519', 'x': 'f-6GwkLvM0QfocxnJKoH6AQ8W2X_4TGKayfMkCELNLs', 'kid': 'sLhO1icRsx80BrQdO3lWZKr6y_sJBDKHL5joEaWHDe4', 'alg': 'EdDSA', 'use': 'sig'}]"
   },
   {
    "id": "D7",
    "check": "every kid is the RFC 7638 thumbprint",
    "status": "PASS",
-   "detail": "[('Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM', 'Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM')]"
+   "detail": "[('sLhO1icRsx80BrQdO3lWZKr6y_sJBDKHL5joEaWHDe4', 'sLhO1icRsx80BrQdO3lWZKr6y_sJBDKHL5joEaWHDe4')]"
   },
   {
    "id": "D8",
@@ -158,13 +158,13 @@
    "id": "Q5",
    "check": "JWS header alg EdDSA, kid matches quote.kid",
    "status": "PASS",
-   "detail": "{'alg': 'EdDSA', 'kid': 'Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM', 'typ': 'quote+jws'}"
+   "detail": "{'alg': 'EdDSA', 'kid': 'sLhO1icRsx80BrQdO3lWZKr6y_sJBDKHL5joEaWHDe4', 'typ': 'quote+jws'}"
   },
   {
    "id": "Q6",
    "check": "price lock: expires_at after created_at",
    "status": "PASS",
-   "detail": "('2026-11-14T17:03:18Z', '2026-11-14T17:18:18Z')"
+   "detail": "('2026-11-14T12:29:04Z', '2026-11-14T12:44:04Z')"
   },
   {
    "id": "Q7",
@@ -194,7 +194,7 @@
    "id": "O4",
    "check": "the quoting agent's order is decided by policy",
    "status": "PASS",
-   "detail": "{\"order_id\":\"ORD-20261114-acc1f9c8\",\"quote_id\":\"Q-20261114-5a4a5dba\",\"quote_hash\":\"89d9d55db30aba0f50d240cdaad2e9af365c40ff31fc7e0758d2ff2e81465128\",\"customer_id\":\"hotel-aurora\",\"agent_id\":\"buyer-1\",\""
+   "detail": "{\"order_id\":\"ORD-20261114-767088b8\",\"quote_id\":\"Q-20261114-4f3269da\",\"quote_hash\":\"c63f3ac9073f9c1ff4770f7b2fc77a7b1577c706cdc649d26135ae749c5147e6\",\"customer_id\":\"hotel-aurora\",\"agent_id\":\"buyer-1\",\""
   },
   {
    "id": "O5",
@@ -239,6 +239,12 @@
    "detail": "403"
   },
   {
+   "id": "A6",
+   "check": "a human without the approver credential cannot approve (401)",
+   "status": "PASS",
+   "detail": "401"
+  },
+  {
    "id": "A4",
    "check": "approval bound to the quote hash (wrong hash -> 409)",
    "status": "PASS",
@@ -248,7 +254,7 @@
    "id": "A5",
    "check": "a named human approver with the right role -> placed",
    "status": "PASS",
-   "detail": "{\"order_id\":\"ORD-20261114-acc1f9c8\",\"quote_id\":\"Q-20261114-5a4a5dba\",\"quote_hash\":\"89d9d55db30aba0f50d240cdaad2e9af365c40ff31fc7e0758d2ff2e81465128\",\"customer_id\":\"hotel-aurora\",\"agent_id\":\"buyer-1\",\""
+   "detail": "{\"order_id\":\"ORD-20261114-767088b8\",\"quote_id\":\"Q-20261114-4f3269da\",\"quote_hash\":\"c63f3ac9073f9c1ff4770f7b2fc77a7b1577c706cdc649d26135ae749c5147e6\",\"customer_id\":\"hotel-aurora\",\"agent_id\":\"buyer-1\",\""
   },
   {
    "id": "P2",
@@ -260,13 +266,13 @@
    "id": "U1",
    "check": "GET /v1/audit/verify reports an intact chain",
    "status": "PASS",
-   "detail": "{'ok': True, 'checked': 11, 'broken_at': None, 'reason': None, 'head': 'c4b6df9e83741e2b9e28e7598b21122462006510ce92d047f6dfa4b326a45f5e', 'kids': ['Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM']}"
+   "detail": "{'ok': True, 'checked': 45, 'broken_at': None, 'reason': None, 'head': '14930602097ffa3ab39c8fc07ad3b28bc4e38b193e05baf9adde7df3403ba9ab', 'kids': ['sLhO1icRsx80BrQdO3lWZKr6y_sJBDKHL5joEaWHDe4']}"
   },
   {
    "id": "U2",
    "check": "the order's audit trail has signed, human-readable events",
    "status": "PASS",
-   "detail": "11"
+   "detail": "12"
   },
   {
    "id": "U3",
