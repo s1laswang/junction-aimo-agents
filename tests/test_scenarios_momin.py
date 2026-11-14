@@ -66,8 +66,10 @@ def test_lasagne_for_120_scales_and_converts_units():
     rn = recipe_needs(text="Lasagne for 120 on Friday", customer_id="hotel-aurora", delivery_by="2026-11-20")
     q = {it.query: (it.quantity, it.unit) for it in rn.items}
     assert rn.portions == {"lasagne": 120} and rn.delivery_by == D
-    assert q["lasagne"] == (7.2, "KG") and q["ground beef"] == (9.6, "KG") and q["milk"] == (12.0, "L")
+    assert q["lasagne"] == (7.2, "KG") and q["ground beef"] == (9.6, "KG")
     assert rn.excluded_allergens == []          # hotel policy excludes nothing
+    # hotel's usual milk (463038) is lactose-free, so the recipe plans lactose-free dairy (gateway requires the claim)
+    assert q["lactose-free milk"] == (12.0, "L") and q["lactose-free grated cheese"] == (4.8, "KG")
 
 
 def test_school_milk_allergy_gets_dairy_free_swaps():
@@ -125,7 +127,7 @@ def test_plan_recipe_batches_offers_and_builds_quote_request():
     assert r["quote_request"]["delivery_date"] == "2026-11-20"
     beef = next(i for i in r["ingredients"] if i["query"] == "ground beef")
     assert all("liver" not in l["product_name"].lower() for l in beef["plan"]["lines"])
-    milk = next(i for i in r["ingredients"] if i["query"] == "milk")
+    milk = next(i for i in r["ingredients"] if i["ingredient"] == "milk")
     assert all("cleaner" not in l["product_name"].lower() for l in milk["plan"]["lines"])
     assert "Momin" in r["provenance"]["credit"]
 

@@ -42,6 +42,7 @@ CATEGORY_HINTS: dict[str, list[str]] = {
     "gluten-free oats": ["2137", "2138"], "gluten-free pasta": ["21380"], "grated cheese": ["1060"],
     "ground beef": ["41702"], "iceberg lettuce": ["17403"], "lactose free margarine": ["1051"],
     "lactose-free butter": ["10500"], "lactose-free cheese": ["106"], "lactose-free cream": ["10401"],
+    "lactose-free grated cheese": ["10603"], "lactose-free cooking cream": ["10401"], "lactose-free whipping cream": ["10401"],
     "lactose-free milk": ["10400"], "lasagne": ["21380"], "leek": ["17405", "41731"], "lingonberry jam": ["21450"],
     "macaroni": ["21380"], "meatballs": ["17300", "41705"], "milk": ["10400"], "oat cooking": ["10402", "10406"],
     "oat drink": ["10402"], "oat flakes": ["21370"], "onion": ["17405"], "pasta": ["21380"], "pepper red": ["17406"],
@@ -56,6 +57,7 @@ NAME_EXCLUDE: dict[str, list[str]] = {
     "ground beef": ["liver", "maksa", "patty", "burger", "meatball", "bolognese", "cooked"],
     "milk": ["cleaner", "jug", "powder"],
     "onion": ["mix"],
+    "pasta": ["gnocchi", "plate", "bowl"],
 }
 
 
@@ -135,7 +137,13 @@ def choose_swap(ingredient: str, diet: dict[str, bool]) -> Optional[dict[str, An
             return {"rule": r["id"], "query": None, "ratio": 1.0,
                     "why": "no dairy-free swap in the recipe data; planned with milk excluded, a human must confirm"}
     o = opts[0]
-    return {"rule": r["id"], "query": o["query"], "ratio": float(o.get("ratio", 1.0)), "why": o.get("why", "")}
+    query = o["query"]
+    q = ingredient.lower().strip()
+    term = next((m for m in sorted(r["match"], key=len) if q == m or q.endswith(" " + m)), q)
+    qualifier = q[: len(q) - len(term)].strip()
+    if qualifier and query.startswith("lactose-free "):  # keep the use: "grated cheese" -> "lactose-free grated cheese"
+        query = f"lactose-free {qualifier} {query[len('lactose-free '):]}"
+    return {"rule": r["id"], "query": query, "ratio": float(o.get("ratio", 1.0)), "why": o.get("why", "")}
 
 
 # ------------------------------------------------------------------ dates and policy
@@ -172,6 +180,22 @@ def policy_exclusions(customer_id: str) -> list[str]:
         return list(policy_excluded_allergens(customer_id))
     except Exception:  # noqa: BLE001
         return []
+
+
+def house_lactose_free(customer_id: str) -> bool:
+    """True when the customer's usual products (trust policy preferred_products) include a FREE_FROM_LACTOSE
+    product: the gateway then verifies any same-kind line (e.g. milk) against that usual product and requires
+    the claim, so the recipe must plan lactose-free dairy (Hotel Aurora's house milk is lactose-free)."""
+    try:
+        from aimo.catalog import get_product
+        from aimo.gateway.verify import usual_products
+        for pid in usual_products(customer_id):
+            p = get_product(pid)
+            if p is not None and "FREE_FROM_LACTOSE" in (p.claims or []):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 # ------------------------------------------------------------------ needs
@@ -228,7 +252,7 @@ def recipe_needs(recipe: Optional[str] = None, portions: Optional[int] = None, d
     except Exception:  # noqa: BLE001
         pass
     excl = list(dict.fromkeys([*policy_exclusions(customer_id), *excl]))
-    diet = _dietary(excl, text, lactose_free, gluten_free)
+    diet = _dietary(excl, text, lactose_free or house_lactose_free(customer_id), gluten_free)
     when = resolve_delivery(delivery_by, text)
 
     totals: dict[tuple[str, str], dict[str, Any]] = {}

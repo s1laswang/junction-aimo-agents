@@ -68,6 +68,7 @@ SEEDS: dict[str, dict[str, Any]] = {
 
 # Plain-language unit words (sales unit codes as used in the product data).
 UNIT_WORDS = {"CS": "cases", "KI": "boxes", "ST": "units", "KG": "kg", "L": "litres", "BAG": "bags", "PAK": "packs"}
+UNIT_WORD = {"CS": "case", "KI": "box", "ST": "unit", "KG": "kg", "L": "litre", "BAG": "bag", "PAK": "pack"}
 
 _SCHEMA = """create table if not exists port_drift_baseline (
   customer_id text not null, product_id text not null, unit_price real not null, observed_at text not null,
@@ -165,7 +166,7 @@ def price_flag(line: dict[str, Any], old: float, since: str, new: float) -> Opti
     pct = round((new - old) / old * 100, 1)
     if abs(pct) < PRICE_PCT:
         return None
-    unit = UNIT_WORDS.get(line["unit"], line["unit"]).rstrip("s") or line["unit"]
+    unit = UNIT_WORD.get(line["unit"], line["unit"])
     route = "auto" if pct < 0 or pct <= AUTO_PRICE_PCT else "approval"
     verb = "rose" if pct > 0 else "fell"
     day = since[:10]
