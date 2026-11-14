@@ -72,6 +72,15 @@ async function boot() {
   const pill = $("mode-pill");
   pill.textContent = MOCK ? "MOCK DATA · no backend" : `LIVE · ${api.base.replace(/^https?:\/\//, "")}`;
   pill.className = `mode-pill ${MOCK ? "mock" : "live"}`;
+  if (!MOCK) {
+    fetch(`${api.base}/healthz`).then((r) => r.json()).then((h) => {
+      const rp = h && h.replay;
+      if (!rp || !rp.forced) return;
+      pill.textContent = `REPLAY · served_from: replay · recorded ${String(rp.time_now || "").slice(0, 16).replace("T", " ")}`;
+      pill.className = "mode-pill mock";
+      pill.title = `No AIMO_API_KEY: price and availability come from the committed snapshot (${(rp.dates || []).join(", ")}). Simulated clock: ${h.clock && h.clock.now}`;
+    }).catch(() => {});
+  }
   for (const k of ["docs", "otap", "jwks", "mcp"]) $(`lnk-${k}`).href = api.links[k];
   $("btn-connect").addEventListener("click", openConnect);
   api.setSignInHandler?.(openSignIn);

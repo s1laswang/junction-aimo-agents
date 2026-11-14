@@ -26,7 +26,9 @@ def earliest_feasible(offer: Optional[Offer], now: Optional[datetime] = None) ->
         return None, False
     if not offer.cutoff_passed:
         return offer.available_date, False
-    now = now or datetime.now().astimezone()
+    if now is None:
+        from aimo.backend import clock
+        now = clock.now().astimezone(clock.HELSINKI_TZ)
     if offer.available_date and offer.closing_time:
         lead = max(1, (offer.available_date - offer.closing_time.date()).days)
     else:

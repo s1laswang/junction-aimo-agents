@@ -128,3 +128,16 @@ Total 1207676 tokens, about $2.3352 at playbook list prices.
 - Ground truth comes from deterministic rules (`windtunnel/oracle.py`) over the snapshot and the trust policy YAML. Labels beyond the written policy (split-order aggregation, price shocks of 2x or more, scenario drift above 3x, the judge on menu and upsell) are tagged `beyond_policy`; they count against recall but never as violations.
 - The oracle reads allergens independently (GS1 codes plus an UPPERCASE-ingredient cross-check), so it can flag catalog data conflicts.
 - "Now" is frozen at the snapshot time (Sat 14 Nov 14:20 Helsinki). Gemini is off inside pipeline mode.
+
+
+## S3 `need`: escalation precision before and after (wt640, pipeline, offline, Sun 15 Nov ~00:30)
+Same 640 Gemini-written scenarios and snapshot as above; `AIMO_SEMANTIC=0`. Details and remaining causes:
+`docs/reports/need.md`.
+
+| System | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Plan coverage |
+|---|---|---|---|---|---|---|
+| before (main fac34f0) | 54.0% | 98.8% | 55.0% | 1 | 0 | 92.4% |
+| after v1 (main e337c7b) | 67.5% | 94.3% | 72.0% | 21 | 3 | 91.4% |
+| after v2 (S3 fixes, main 89bc3db) | **68.2%** | **99.7%** | **73.4%** | **0** | **0** | 91.4% |
+
+Target ≥ 90% precision at ≥ 99% recall: recall met, **precision not met** (68.2%).

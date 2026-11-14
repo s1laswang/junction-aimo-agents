@@ -39,6 +39,17 @@ The stopped frontend worktree (`agent-a382899e20328ded2`, uncommitted) was 3-way
   `Voice (<engine>): “<transcript>”`.
 - Inbox auto-refresh pauses while a voice decision is open.
 
+### Re-quote is reachable from the UI
+The old decision form disabled Approve once the 15-minute price lock expired, so the gateway's 409 `requote_needed`
+could never be reached. Now an expired order shows **"Price lock expired: re-price and review"**; clicking it gets the
+new signed quote + new pending order and shows the old-vs-new diff (heading follows `detail.reason`), then
+**Approve new quote** approves the new order with its own hash. Verified live on ORD-20261114-35cf6376 →
+ORD-20261114-f30ca431 (old order `expired`, `provenance.requoted_as`).
+
+### Presenter mode
+Checked at 1280×800 `&present=1`: top bar no longer wraps (interface label + brand subtitle hide below 1480 px),
+voice card and decision bar fit, voice card survives the inbox refresh.
+
 ### Evidence
 - `uv run --extra dev pytest -q tests/test_voice.py` → 18 passed (intent table incl. negations, Gemini overruled by
   negation, routes need a session and refuse agents, voice changes nothing until the decision call, ElevenLabs TTS/STT
@@ -56,4 +67,4 @@ The stopped frontend worktree (`agent-a382899e20328ded2`, uncommitted) was 3-way
 ## Requests
 - S4 (docs): DEMO.md beat "a human signs in, agents never can" now uses the header chip "Sign in as approver";
   voice beat: Approvals → "Decide by voice" → say "approve" → Confirm.
-- Contracts: no change to `aimo/models.py`. New routes `/v1/voice/*` (append to docs/interfaces.md if S4 wants them listed).
+- Contracts: no change to `aimo/models.py`. Appended a "Voice approval" section to `docs/interfaces.md` (`/v1/voice/*`).

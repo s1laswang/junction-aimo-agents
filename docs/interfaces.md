@@ -57,6 +57,7 @@ Headers: `X-Agent-Id`, `X-Customer-Id` (demo identity; production: OAuth 2.1 bea
 | GET | `/v1/customers` | | demo customers + mandates + policy summaries [trust] |
 
 ## MCP tools (server name `valio-aimo-trusted-trade`, mounted at `/mcp`, also `python -m aimo.gateway.mcp_server` stdio)  [gateway]
+13 tools in total (9 core profile tools here plus 4 port additions below: `list_recipes`, `plan_recipe`, `check_standing_order_drift`, `propose_offer`):
 `search_products(query, claims?, limit?)`, `get_product(product_id)`, `get_offers(product_ids, requested_date)`,
 `plan_need(need)`, `create_quote(delivery_date, lines, need?)`, `place_order(quote_id, quote_hash)`,
 `get_order_status(order_id)`, `get_audit_trail(subject_id)`, `list_policies()`.
@@ -192,3 +193,11 @@ click on `POST /v1/approvals/{order_id}/decision` (same `X-Approver-Session`, th
 All except status need `X-Approver-Session` (401 `approver_session_required`); any `X-Agent-Id` gets 403 `agent_cannot_approve`.
 Env: `ELEVENLABS_API_KEY`, optional `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODEL` (eleven_flash_v2_5), `ELEVENLABS_STT_MODEL` (scribe_v1).
 Gemini ledger feature: `voice.intent`. A negated or mixed answer is never returned as `approve`.
+
+## S3 `need` (Sat night): allergen block in planning, fewer escalations, split orders, price jump
+- **Planning applies the customer's policy allergens.** `plan_need`, `rank_substitutes` (every caller: gateway verification, deterministic planner) merge the `allergen_block.excluded` groups of the customer's policy into `need.excluded_allergens` (aliases normalised: dairy/maito → milk, tree nuts/almond → nuts, wheat → gluten …). `Plan.need.excluded_allergens` shows the merged list. Helpers: `aimo.catalog.substitution.normalize_allergens`, `with_policy_allergens`; `aimo.trust.policy.planning_profile(customer_id)` → `{policy_id, excluded_allergens, allergen_reason, usual_products, approved_alternatives, customer_name}`.
+- **Usual products first:** when the request names no usual product and no brand/fat/organic/pack preference, the planner uses the policy's `preferred_products` that match the request (unit, claims, allergens, product phrase). Internally marked `need.preferences.usual_from_profile` (not returned in `Plan.need`).
+- **New PlanLine/Candidate flags:** `allergen_safe_alternative` (the request names an excluded allergen, e.g. school "milk"; the line is an allergen-free replacement a human confirms) and `supplier_text_injection_suspected` (trust's regex screen hit the product's supplier text; reason text starts "Supplier text contains instructions aimed at AI agents"). Both make the policy return `needs_approval`; the policy also detects the excluded-allergen request from `quote.need` by itself, so gateway-derived quote flags are enough.
+- **Policy keys (append-only):** `substitution.new_product` (allow|needs_approval; first purchase with no usual product of that kind and an exact catalog match), `substitution.auto_approve_alternatives_below_eur` (hotel: 50). New rule types `split_order {window_days, max_factor, near_limit_share}` and `price_jump {max_increase_pct, lookback_days}`. `quantity_drift.window_days` (default 7) adds earlier placed volume. Substitution tiers are now re-checked with `aimo.catalog.substitution.rank_substitutes` inside `evaluate` (`policy.catalog_verify`).
+- **`aimo.trust.learned`:** `remember_swap(...)` (signature as in Gateway round 5), `forget_swap(customer_id, to_product_id, from_product_id=None, scope=None)`, `list_learned(customer_id)`, `match(customer_id, product_id, reference_id, facts)`. Table `learned_swaps` in `config.STATE_DB`. A matching swap makes the `substitution` line `allow`; all other rules still apply.
+- **Last paid price** for `price_jump`: newest `order.placed` audit event joined to its `quote.created` event; the buyer may report `need.preferences.reference_unit_price {product_id: price}` (the lower reference wins).

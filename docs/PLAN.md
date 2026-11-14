@@ -25,8 +25,8 @@ Tick a box only with evidence: a command, a test or a file. Updated Sun 15 Nov 0
 - [x] The browser hero flow works live: Gemini agent -> MCP -> plan -> signed quote -> needs approval -> approve -> AP -> audit verified, plus keyless scripted buyer fallback in `uv run aimo demo` (`aimo/buyer/mock_model.py`, `tests/test_scripted_buyer.py`).
 - [x] Montage 6/6 live (`docs/demo-montage.md`); s0-s7 8/8 live (`docs/SCENARIOS.md`).
 - [x] The demo runs after Sun 17:00 and offline: `AIMO_NOW` simulated clock (`aimo/backend/clock.py`) plus replay mode (`aimo/backend/replay.py`, `tests/fixtures/snapshot`, `docs/DEMO.md` checklist step 5).
-- [ ] Public URL through the laptop tunnel, smoke-tested from a phone (filled at Sun 06:00 freeze in `docs/SUBMISSION.md`, D-ops).
-- [ ] Backup video recorded at the freeze; 3 green rehearsals with a stopwatch (filled at Sun 06:00 freeze in `docs/SUBMISSION.md`, Chintufp).
+- [ ] Public URL through optional laptop `cloudflared` tunnel, smoke-tested from a phone (submission documents the one-command local/replay run `make accept` and `uv run aimo serve` -> `http://localhost:8000/ui` in `docs/SUBMISSION.md`, D-ops).
+- [x] Committed backup video `docs/demo-backup.mp4` (`uv run python scripts/record_demo_video.py`, linked in `docs/SUBMISSION.md`; optional live stopwatch rehearsals by Chintufp).
 
 **2. Solving the user need (20%): matches what the buyer asked, least manual correction**
 - [x] The hero request needs zero correction; recipe -> order, event, school and hospital all work live, with customer policy allergen hard-blocks enforced inside `plan_need` (`aimo/catalog/plan.py`, `tests/test_allergen_plan.py`).
@@ -92,10 +92,10 @@ Everything else is decided below. Change it here if you disagree.
   - customer policy allergen hard-blocks enforced inside `plan_need`, pre-planning quantity validation (`quantity <= 0` -> 4xx) and `/v1` fuzzing (`tests/test_fuzz.py`), and `injection_screen` surfaced on `PlanLine` and `Candidate`;
   - Gemini buyer montage 6/6 PASS at $0.0339 per order (`docs/demo-montage.md`), `s0-s7` acceptance suite 8/8 PASS (`docs/SCENARIOS.md`), and `otap/0.1` conformance 44/44 on both Valio Aimo and Nordic Bakery Supply (`docs/OPENNESS.md`);
   - wind tunnel `wt640` (640 Gemini scenarios: 0 policy and 0 allergen violations, 99.7% recall, 68.2% precision after S3 policy update, vs 372 policy and 193 allergen violations for the naive baseline) and `wt2560` folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md` and `NUMBERS.md`;
-  - 752 pytest checks in `tests/` (743 passed with catalog JSON, 645 passed keyless; 344 passed on standalone `main`).
+  - 753 pytest checks in `tests/` (743 passed with catalog JSON on `2468bdd`, 646 passed keyless on `ffd8e9a`; 344 passed on standalone `main`).
 - **Remaining before freeze (Sun 06:00, tag `aimo-v1`):**
   - final sync between `fr8/valio/main`, `combined` and `main` (see [docs/COMBINE.md](COMBINE.md));
-  - record backup video (Chintufp) and paste video + optional tunnel URL into `docs/SUBMISSION.md`.
+  - committed headless Playwright backup video `docs/demo-backup.mp4` (`uv run python scripts/record_demo_video.py`) and one-command local/replay run (`make accept`, `uv run aimo serve` -> `http://localhost:8000/ui`) documented in `docs/SUBMISSION.md`.
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.

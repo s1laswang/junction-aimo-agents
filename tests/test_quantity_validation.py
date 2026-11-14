@@ -78,5 +78,7 @@ def test_service_and_mcp_plan_need_quantity_zero_is_service_error_422():
 
 def test_positive_quantity_still_plans(api):
     r = api.post("/v1/plan", headers=H, json={**NEED, "quantity": 10})
+    if r.status_code == 503 and r.json().get("error") == "catalog_missing":
+        pytest.skip("product data not present")
     assert r.status_code == 200, r.text
     assert json.loads(r.text)["need"]["quantity"] == 10

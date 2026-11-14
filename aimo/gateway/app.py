@@ -184,6 +184,19 @@ def _upstream_state() -> dict[str, Any]:
             "retry_in_s": max(0, round(down - _t.time())), "last_error": getattr(c, "last_error", None)}
 
 
+def _require_catalog() -> None:
+    """503 catalog_missing (not a 500) when the product data is absent and no replay subset applies."""
+    try:
+        _cat = service._catalog()
+    except Exception:
+        return
+    if _cat is None or not hasattr(_cat, "catalog_available"):
+        return
+    if not _cat.catalog_available():
+        raise service.ServiceError(503, "catalog_missing", _cat.CATALOG_MISSING_MESSAGE,
+                                   {"fix": "uv run aimo fetch-data", "needs": "AIMO_API_KEY"})
+
+
 def _prov_headers(meta: dict[str, Any]) -> dict[str, str]:
     h = {"X-Aimo-Source": str(meta.get("source")), "X-Aimo-Served-From": str(meta.get("served_from")),
          "X-Aimo-Fetched-At": str(meta.get("fetched_at")), "X-Aimo-Valid-For": str(meta.get("valid_for_s"))}
@@ -225,6 +238,7 @@ def build_router() -> APIRouter:
         auth.resolve_customer_identity(x_customer_id=x_customer_id, body_customer_id=customer_id, x_agent_key=x_agent_key)
         if not q.strip():
             raise service.ServiceError(422, "empty_query", "q must not be blank")
+        _require_catalog()
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
         return JSONResponse([p.model_dump(mode="json") for p in res])
@@ -285,6 +299,7 @@ def build_router() -> APIRouter:
             raise service.ServiceError(422, "empty_need", "product_query or preferred_product_ids is required")
         if len(need.raw_text or "") > 4000:
             raise service.ServiceError(422, "invalid_need", "raw_text exceeds 4,000 characters")
+        _require_catalog()
         return service.plan_need(need.model_copy(update={"customer_id": who.customer_id}), identity=who)
 
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
