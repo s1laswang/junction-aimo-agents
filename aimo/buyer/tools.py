@@ -240,7 +240,7 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
                 if kind == "auto":  # fast probe so auto mode falls back quickly when no server runs
                     import httpx
                     httpx.get(mcp_url, timeout=1.5)  # any HTTP status means something listens
-                return MCPTransport(mcp_url, headers=headers, timeout=20)
+                return MCPTransport(mcp_url, headers=headers, timeout=60)  # create_quote re-fetches live prices; the mock API can be slow
             if k == "inproc":
                 return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":

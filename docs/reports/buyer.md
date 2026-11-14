@@ -1,6 +1,32 @@
 # Buyer agent: status report
 
-Owner: buyer engineer (Claude). Branch `team/buyer`. Updated Sat 14 Nov 15:15 Helsinki (round 2).
+Owner: buyer engineer (Claude). Branch `team/buyer`. Updated Sat 14 Nov 18:35 Helsinki (round 3 done).
+
+## Round 3: token trim and cost per order (done)
+- **What the model sees is compacted.** `compact_for_model()` reduces each tool result the model sees.
+  - A plan becomes its chosen lines plus the top 3 candidates per tier, with shortened reasons.
+  - Search, offers, product, quote and order results keep only the fields the agent decides on.
+  - The full results still go to the AgentStep stream for the UI.
+- **Shorter tool descriptions.** Only the first paragraph of each tool description is sent, at most 320 characters. The Args/Returns sections duplicated the parameter schema.
+- **The loop stops once the order is final** (placed, approved, rejected, timed out, or held for drift). buyer.summary writes the buyer-facing text, so the last agent turn (~9k input tokens) is gone.
+- **Smaller explain and summary facts.**
+- **Stable prefix.** The system prompt and tool declarations are identical on every step, so Gemini's implicit cache applies. Cached tokens are logged in the ledger and the montage table.
+- **Timeouts.** The MCP call timeout is now 60 s, because create_quote re-prices live and the mock API was once slow enough to time out a quote. The approval wait polls through `approved` until `placed` (up to ~30 s).
+- **Costing.** `aimo/buyer/costs.py` uses the playbook prices, a 10% rate for cached input, and bills thinking as output. `aimo demo --montage --baseline-pid <pid>` writes the before/after table into docs/demo-montage.md.
+- **Catalog workaround kept.** Catalog's reference_spec fix is on main and the montage passes with it. I kept the spec-only preference filter because it is defence in depth and sends fewer tokens. Reverting it is a one-line change (`PLANNER_PREF_KEYS`).
+- 36 tests pass.
+
+**Montage after the trim (Sat 18:3x, live gateway, MCP): 6/6 PASS.**
+
+| | Runs | Orders placed | Gemini calls | Input tokens per run | Hero input | Cost per run | Cost per order | Escalated to hydrogen-HIGH |
+|---|---|---|---|---|---|---|---|---|
+| Before (round 2 montage, ledger pid 33508) | 6 | 5 | 55 | 99,373 | 87,184 | $0.0685 | **$0.0822** | 6/6 runs, 6/36 agent steps (17%) |
+| After (round 3 montage) | 6 | 5 | 50 | 30,533 | **27,403** | $0.0283 | **$0.0339** | 6/6 runs, 6/31 agent steps (19%) |
+
+Input tokens fell 69%, the hero run met the target of under 30k, and cost per order fell 59%. Behaviour did not change: same verdicts, same orders.
+Escalation is 6/6 runs because every montage plan involves a substitution or a split. Only the one quote-decision turn per run goes to gemini-4-hydrogen.
+
+Note: an earlier post-trim attempt is not counted. The laptop went to sleep in the middle of it: one Gemini call returned after 7,165 s, and a quote timed out at the old 20 s limit. The montage now runs under `caffeinate -i`.
 
 ## Round 2 (Sat afternoon)
 - **Montage:** `uv run aimo demo --montage` runs happy, stockout, school-allergen, injection, drift and event in sequence, with HTTP auto-approval by the policy's named approvers.
