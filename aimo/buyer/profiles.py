@@ -23,7 +23,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "approver": "anna@aurora (Procurement Manager)",
         # 463038 = "Valio Eila semi skimmed milk drink 10 l novobox lactose free" (product data JSON)
         "preferred_product_ids": ["463038"],
-        "usual_match": r"milk|maito|eila",
+        "usual_match": r"^(?!.*\b(?:oat|kaura\w*|havre\w*|soy|soija\w*|almond|manteli\w*|coconut|kookos\w*|rice|riisi\w*)\b).*(?:milk|mai[dt]o|mjölk|eila)",
         "preferences": {"brand": "Valio", "pack": "10 l novobox for the milk dispenser",
                         "fat_pct": 1.5},
         "excluded_allergens": [],
