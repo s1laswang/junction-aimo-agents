@@ -34,11 +34,13 @@ def main(argv: list[str]) -> None:
         for p in search(" ".join(argv[1:]) or "lactose-free milk", limit=15):
             print(f"{p.id}  {p.score:>7}  {p.content_amount} {p.content_unit}/{p.sales_unit}  {p.name}")
     elif cmd == "demo":
+        from aimo.backend.clock import next_delivery_day
         from aimo.catalog import plan_need
         from aimo.models import Need
         p = plan_need(Need(customer_id="hotel-aurora", product_query="lactose-free milk",
                            required_claims=["FREE_FROM_LACTOSE"], quantity=1000, unit="L",
-                           delivery_by=date(2026, 11, 16), preferred_product_ids=["463038"]))
+                           delivery_by=next_delivery_day(),
+                           preferred_product_ids=["463038"]))
         print(p.explanation)
         for c in p.candidates:
             print(f"  {c.tier:9} {c.product.id} {c.rank_score:.3f} {','.join(c.flags):40} {c.reasons[0][:90]}")
