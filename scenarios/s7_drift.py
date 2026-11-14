@@ -1,11 +1,12 @@
+import os
+import sys
 import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _common import *
 
-base = parse_base()
-r = Run("s7_drift", base)
 
-
-def go():
+def run_scenario(base, r):
     from agents import drift
     for cust in ("hotel-aurora", "school-hervanta"):
         st = os.path.join(tempfile.mkdtemp(), "drift.json")
@@ -23,10 +24,15 @@ def go():
     drift.check("hotel-aurora", KEYS["hotel-aurora"], base, state_path=st)
     c = Client(base, "hotel-aurora")
     pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
-    simulate(c, "stockout", product_id=pid, available_amount=0)
-    flags = drift.check("hotel-aurora", KEYS["hotel-aurora"], base, state_path=st)["flags"]
-    clear_simulation(c)
+    try:
+        simulate(c, "stockout", product_id=pid, available_amount=0)
+        flags = drift.check("hotel-aurora", KEYS["hotel-aurora"], base, state_path=st)["flags"]
+    finally:
+        clear_simulation(c)
     r.check("injected stock-out is flagged for that product", any(f["product_id"] == pid for f in flags))
 
 
-r.guard(go)
+if __name__ == "__main__":
+    base = parse_base()
+    r = Run("s7_drift", base)
+    r.guard(lambda: run_scenario(base, r))

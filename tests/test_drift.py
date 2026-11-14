@@ -307,3 +307,184 @@ def test_quote_error_means_not_offered(tmp_path):
 def test_match_across_all_groups(tmp_path):
     r = drift.check("school-hervanta", "k", "", today=date(2026, 11, 13), state_path=tmp_path / "d.json", client=exact_client(False, True))
     assert len([f for f in r["flags"] if f["kind"] == "unavailable"]) == 2
+
+
+def aurora_stockout_client(quotes_called, stockout_group=None, mandate_override=None):
+    import json
+
+    aurora_mandate = mandate_override or {"exclude_allergens": [], "substitutions": "within_prefs", "per_order_eur": 2500.0}
+    lines = SEEDS["hotel-aurora"]["lines"]
+
+    def handler(req):
+        p = req.url.path
+        if p == "/v1/mandate":
+            return httpx.Response(200, json=aurora_mandate)
+        if p.startswith("/v1/products/"):
+            pid = p.rsplit("/", 1)[1]
+            ln = next(l for l in lines if l["product_id"] == pid)
+            return httpx.Response(200, json={"product_id": pid, "name": ln["name"], "allergens": ["egg"] if pid == "463982" else []})
+        body = json.loads(req.content)
+        if p == "/v1/quotes":
+            ln = body["offers"][0]
+            quotes_called.append(ln["product_id"])
+            return httpx.Response(200, json={"lines": [{"product_id": ln["product_id"], "unit_price_net": 10.0}]})
+        items = []
+        for i, it in enumerate(body["items"]):
+            ln = lines[i]
+            if i == 0 and stockout_group is not None:
+                items.append({"need_item": it, **stockout_group})
+            else:
+                items.append({
+                    "need_item": it,
+                    "shortfall": 0,
+                    "offers": [{
+                        "product_id": ln["product_id"],
+                        "product": {"name": ln["name"], "allergens": ["egg"] if ln["product_id"] == "463982" else []},
+                        "unit_price_net": 10.0,
+                        "available_amount": 50,
+                        "available_date": "2026-11-19",
+                        "sales_block": None,
+                        "notes": [],
+                    }],
+                    "alternatives": [],
+                    "options": [],
+                })
+        return httpx.Response(200, json={"items": items})
+
+    return httpx.Client(base_url="http://t", transport=httpx.MockTransport(handler))
+
+
+def test_baseline_offered_then_omitted_flags_unavailable_without_exact_quote(tmp_path):
+    st = tmp_path / "d.json"
+    quotes_called = []
+    drift.check("hotel-aurora", "k", "", today=date(2026, 11, 13), state_path=st, client=aurora_stockout_client(quotes_called))
+    assert quotes_called == []
+    saved = drift.load_state(st)["hotel-aurora"]["baseline"]
+    assert saved["463982"]["offered"] is True
+    grp = {
+        "shortfall": 0,
+        "offers": [{
+            "product_id": "469999",
+            "product": {"name": "Free Range Eggs L180", "allergens": ["egg"]},
+            "unit_price_net": 11.0,
+            "available_amount": 20,
+            "available_date": "2026-11-19",
+            "sales_block": None,
+            "notes": [],
+        }],
+        "alternatives": [],
+        "options": [],
+    }
+    r = drift.check("hotel-aurora", "k", "", today=date(2026, 11, 13), state_path=st, client=aurora_stockout_client(quotes_called, grp))
+    assert quotes_called == []
+    by_pid = {f["product_id"]: f for f in r["flags"]}
+    assert by_pid["463982"]["kind"] == "unavailable"
+    assert by_pid["463982"]["fix"] == {"action": "substitute", "product_id": "469999", "name": "Free Range Eggs L180", "price": 11.0, "quantity": 4}
+
+
+def test_first_run_shortfall_and_signals_skip_exact_quote(tmp_path):
+    sub_alt = {
+        "product_id": "469999",
+        "product": {"name": "Free Range Eggs L180", "allergens": ["egg"]},
+        "unit_price_net": 11.0,
+        "available_amount": 20,
+        "available_date": "2026-11-19",
+        "sales_block": None,
+        "notes": [],
+    }
+    cases = [
+        {"shortfall": 4, "offers": [], "alternatives": [sub_alt], "options": []},
+        {"shortfall": 0, "offers": [{**sub_alt, "notes": ["skipped Kieku Barn Eggs L180 12300g (463982): no stock"]}], "alternatives": [], "options": []},
+        {"shortfall": 0, "offers": [{**sub_alt, "substitute_for": "463982"}], "alternatives": [], "options": []},
+        {"shortfall": 0, "offers": [], "alternatives": [sub_alt], "options": [{"kind": "late", "date": "2026-11-21"}]},
+    ]
+    for idx, grp in enumerate(cases):
+        quotes_called = []
+        r = drift.check("hotel-aurora", "k", "", today=date(2026, 11, 13), state_path=tmp_path / f"d{idx}.json", client=aurora_stockout_client(quotes_called, grp))
+        assert quotes_called == []
+        by_pid = {f["product_id"]: f for f in r["flags"]}
+        assert by_pid["463982"]["kind"] == "unavailable"
+        assert by_pid["463982"]["fix"]["product_id"] == "469999"
+
+
+def test_allergen_unsafe_product_still_calls_exact_quote_and_flags_mandate(tmp_path):
+    st = tmp_path / "d.json"
+    quotes_called = []
+    drift.check("hotel-aurora", "k", "", today=date(2026, 11, 13), state_path=st, client=aurora_stockout_client(quotes_called))
+    safe_sub = {
+        "product_id": "469888",
+        "product": {"name": "Oat Scramble Base", "allergens": []},
+        "unit_price_net": 9.0,
+        "available_amount": 20,
+        "available_date": "2026-11-19",
+        "sales_block": None,
+        "notes": [],
+    }
+    grp = {"shortfall": 4, "offers": [], "alternatives": [safe_sub], "options": []}
+    mandate_no_egg = {"exclude_allergens": ["egg"], "substitutions": "within_prefs", "per_order_eur": 2500.0}
+    r = drift.check("hotel-aurora", "k", "", today=date(2026, 11, 13), state_path=st, client=aurora_stockout_client(quotes_called, grp, mandate_override=mandate_no_egg))
+    assert quotes_called == ["463982"]
+    by_pid = {f["product_id"]: f for f in r["flags"]}
+    assert by_pid["463982"]["kind"] == "mandate"
+    assert by_pid["463982"]["route"] == "approval"
+    assert by_pid["463982"]["fix"]["product_id"] == "469888"
+
+
+def test_snapshot_alternatives_and_dedupe():
+    lines = [{"product_id": "463982", "name": "Eggs", "unit": "KI", "weeks": [4, 4]}]
+    a1 = {"product_id": "469001", "product": {"name": "Alt 1", "allergens": ["egg"]}, "unit_price_net": 9.5, "available_amount": 10, "sales_block": None}
+    a2 = {"product_id": "469002", "product": {"name": "Alt 2", "allergens": ["egg"]}, "unit_price_net": 10.5, "available_amount": 15, "sales_block": None}
+    mine_zero = {"product_id": "463982", "product": {"name": "Eggs", "allergens": ["egg"]}, "unit_price_net": 10.0, "available_amount": 0, "available_date": "2026-11-19", "sales_block": None}
+    snap = drift.snapshot([{"offers": [a1], "alternatives": [a1, a2, mine_zero]}], lines)
+    assert snap["463982"]["found"] is True
+    assert snap["463982"]["offered"] is True
+    assert snap["463982"]["available_amount"] == 0
+    assert [x["product_id"] for x in snap["463982"]["alternatives"]] == ["469001", "469002"]
+    fl = drift_rules(lines[0], {"price": 10.0}, snap["463982"], {"exclude_allergens": [], "substitutions": "within_prefs"}, "2026-11-19")
+    assert any(f["product_id"] == "463982" and f["kind"] == "short" for f in fl)
+    snap_missing = drift.snapshot([{"offers": [a1], "alternatives": [a2]}], lines)
+    assert snap_missing["463982"]["found"] is False
+    assert snap_missing["463982"]["offered"] is False
+
+
+def test_s7_run_scenario_clears_simulation_on_success_and_error(monkeypatch):
+    from scenarios import s7_drift
+    from scenarios._common import Run
+
+    calls = {"sim": 0, "clear": 0, "checks": 0}
+
+    class FakeClient:
+        def __init__(self, base, cust):
+            self.cust = cust
+
+        def j(self, method, path, **kw):
+            return {"exclude_allergens": ["peanut", "nuts"] if self.cust == "school-hervanta" else []}
+
+    def fake_check_ok(cust, key, base, state_path=None):
+        calls["checks"] += 1
+        pid = SEEDS[cust]["lines"][0]["product_id"]
+        flags = []
+        if calls["sim"] > calls["clear"]:
+            flags.append({"product_id": pid, "kind": "unavailable", "why": "not offered", "route": "auto", "fix": {"action": "none"}})
+        return {"standing_order": {"lines": SEEDS[cust]["lines"]}, "flags": flags}
+
+    monkeypatch.setattr(s7_drift, "Client", FakeClient)
+    monkeypatch.setattr(s7_drift, "violates", lambda pid, excl: False)
+    monkeypatch.setattr(s7_drift, "simulate", lambda c, kind, **kw: calls.__setitem__("sim", calls["sim"] + 1))
+    monkeypatch.setattr(s7_drift, "clear_simulation", lambda c: calls.__setitem__("clear", calls["clear"] + 1))
+    monkeypatch.setattr(drift, "check", fake_check_ok)
+
+    r = Run("s7_drift", "http://t")
+    s7_drift.run_scenario("http://t", r)
+    assert calls["sim"] == 1 and calls["clear"] == 1
+    assert all(ok for _, ok, _ in r.results)
+
+    def fake_check_boom(cust, key, base, state_path=None):
+        if calls["sim"] > calls["clear"]:
+            raise RuntimeError("boom during check")
+        return {"standing_order": {"lines": SEEDS[cust]["lines"]}, "flags": []}
+
+    monkeypatch.setattr(drift, "check", fake_check_boom)
+    with pytest.raises(RuntimeError, match="boom"):
+        s7_drift.run_scenario("http://t", Run("s7_drift", "http://t"))
+    assert calls["sim"] == 2 and calls["clear"] == 2
