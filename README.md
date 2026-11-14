@@ -56,7 +56,7 @@ Requirements: see Prerequisites.
 
 ```bash
 cp .env.example .env    # fill AIMO_PORTAL_URL, AIMO_PORTAL_PASSWORD, AIMO_API_KEY, GEMINI_API_KEY
-uv run aimo serve       # downloads the challenge data on first run (needs AIMO_API_KEY), builds the catalog, serves on :8000
+uv run aimo serve       # or `make serve`: downloads the challenge data on first run (needs AIMO_API_KEY), builds the catalog, serves on :8000
 ```
 
 Without `AIMO_API_KEY` the download is skipped. This checkout's `aimo serve` still binds :8000 so you can open `/ui?mock=1`, `/docs`, `/healthz` and `/.well-known/otap.json`. The live catalog, most tests and the milk-flow script need the downloaded product file.
@@ -82,7 +82,7 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q`. Result: **743 passed, 7 skipped, 2 xfailed** with the catalog JSON (and **645 passed, 105 skipped, 2 xfailed** in a keyless clone without the catalog JSON, 752 tests in `tests/`; standalone `main` `81e730d` runs 344 passed, 7 skipped, 1 xfailed, 1 xpassed). Without the challenge product JSON, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8** with the live mock API, 88 checks). Conformance suite: `uv run python -m conformance` (**44/44** checks on both Valio Aimo and `toywholesaler`, and offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `uv run --extra dev pytest -q` (or `make test`). Result: **743 passed, 7 skipped, 2 xfailed** with the catalog JSON (`646 passed, 105 skipped, 2 xfailed` keyless offline on `fr8/valio/docs` `ffd8e9a`, 753 tests in `tests/`; standalone `main` `89bc3db` / `81e730d`: `344 passed, 7 skipped, 1 xfailed, 1 xpassed`). Without the challenge product JSON, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8** with the live mock API, 88 checks). Conformance suite: `uv run python -m conformance` or `make conformance` (**44/44** checks on both Valio Aimo and `toywholesaler`, and offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (or `make fetch-data`, needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
 
 ### Approving as a human
 
@@ -185,7 +185,7 @@ MCP tools (13, from `build_mcp().list_tools()`): `search_products`, `get_product
 }
 ```
 
-Check the server from the terminal: `uv run aimo mcp-check` (HTTP) or `uv run aimo mcp-check stdio`. The server advertises 13 tools (the nine trade tools plus `list_recipes`, `plan_recipe`, `check_standing_order_drift` and `propose_offer`). `mcp-check` also calls `search_products` and `get_offers` when the catalog file is present. The three client config snippets follow each client's documented format and have not been tried in those clients yet.
+Check the server from the terminal: `uv run aimo mcp-check` (HTTP, or `make mcp-check`) or `uv run aimo mcp-check stdio`. The server advertises 13 tools (the 9 core `otap/0.1` profile tools plus `list_recipes`, `plan_recipe`, `check_standing_order_drift` and `propose_offer`). `mcp-check` also calls `search_products` and `get_offers` when the catalog file is present. The three client config snippets follow each client's documented format and have not been tried in those clients yet.
 
 **REST with curl** (the 1,000 L milk flow; every command below was run against a live gateway):
 ```bash
@@ -287,7 +287,7 @@ Pilot KPIs:
 | `web/` | No-build approval UI served at `/ui` (approver sign-in, voice confirm, recipes, Valio ops, `?mock=1` offline mode) |
 | `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline ([results](docs/windtunnel-results.md)) |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | 752 pytest cases across gateway, catalog, trust, buyer, voice, per-approver and known-customer auth, input/quantity validation, openness and scenarios (plus `/v1` route fuzzing in `main` `81e730d`); `tests/fixtures/snapshot` is the recorded mock-API replay |
+| `tests/` | 753 pytest cases across gateway, catalog, trust, buyer, voice, per-approver and known-customer auth, input/quantity validation, openness and scenarios (plus `/v1` route fuzzing in `main` `81e730d`); `tests/fixtures/snapshot` is the recorded mock-API replay |
 | `docs/evidence/` | Sanitized Gemini ledgers behind the montage cost numbers (`montage_stats.py`) |
 | `docs/` | [OPENNESS](docs/OPENNESS.md), [COMBINE](docs/COMBINE.md), [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [QA](docs/pitch/QA.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
