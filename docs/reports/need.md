@@ -62,13 +62,31 @@ Branch `team/need` (worktree `~/junction-aimo-team/sessions/need`). Owner files:
   "Supplier text contains instructions aimed at AI agents (…)" to the candidate and the plan line, so the UI and
   the agent see it before any order decision.
 
-### 5. Wind tunnel: escalation precision before and after
-See the table below (also in `docs/windtunnel-results.md`).
+### 5. Wind tunnel: escalation precision before and after (wt640, pipeline, `AIMO_SEMANTIC=0`)
+| | Escalation precision | Recall | Policy violations | Allergen violations |
+|---|---|---|---|---|
+| before (main fac34f0) | 54.0% | 98.8% | 1 (split order) | 0 |
+| after (team/need) | **not measured yet** | | | |
+
+The "after" run was stopped by Claude Code because the laptop ran critically low on memory (load ~28 from
+parallel sessions); it was not restarted, per the no-heavy-compute rule. Re-run when the laptop is quiet:
+`AIMO_SEMANTIC=0 uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team`
+then `uv run python -m windtunnel.score --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --runs
+data/windtunnel/runs/wt640_gem__pipeline__team__0of1.jsonl --labels after --name need_after --no-md`
+(about 40 s on an idle laptop; 15+ min under the current load). `AIMO_SEMANTIC=0` keeps it offline: without it,
+each query waits on a Gemini embedding call.
+
+Before-run breakdown of escalations where the oracle expected no human (my FP script, all non-must cases):
+substitution 283 (any product outside the usual list counted as an unverified swap), category_scope 79 (hotel
+flour/pasta/beans/frozen bread), injection 30 (request-screen hits), empty plans 16, spend 7. The changes above
+target the first two. Misses (recall): 3 price shocks (≥2×) and split_order-00346, both now covered by
+`price_jump` and `split_order` (unit tests reproduce both).
 
 ## Gate
-- `uv run --extra dev pytest -q`: see the merge entry below.
+Rebased on main dfe58ef, Sun 00:00 Helsinki:
+- `uv run --extra dev pytest -q`: 342 passed, 7 skipped, 1 xfailed, 1 xpassed (19 new in tests/test_need.py).
 - `uv run python -m scenarios.run_all`: 8/8.
-- `make accept`: PASS.
+- `make accept`: PASS=15 FAIL=0 SKIP=1 (live Gemini demo skipped by design).
 
 ## Open items
 - Request-text screen false positives (injection rule) and empty plans are now the largest remaining false
