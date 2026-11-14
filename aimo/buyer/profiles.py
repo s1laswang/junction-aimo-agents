@@ -27,7 +27,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "preferences": {"brand": "Valio", "pack": "10 l novobox for the milk dispenser",
                         "fat_pct": 1.5},
         "excluded_allergens": [],
-        "standing_order": {"product_id": "463038", "qty_per_week": 1000, "unit": "L"},  # demo persona,
+        "standing_order": {"product_id": "463038", "qty_per_week": 300, "unit": "L"},  # = trust policies/hotel-aurora.yaml standing_orders.milk
         # From docs/interfaces.md "Demo customers" (owned by trust). Fallback only.
         "mandate_summary": (
             "Auto-approve orders up to EUR 500 net. EUR 500-5,000 needs the procurement_manager. "
