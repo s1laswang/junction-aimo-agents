@@ -100,7 +100,8 @@ def compact_for_model(name: str, result: Any) -> Any:
         return out
     if name == "plan_need" and isinstance(result, dict) and "lines" in result:
         lines = [{**_pick(l, ("product_id", "product_name", "tier", "qty_sales_units", "sales_unit", "covered_amount",
-                              "unit_price", "line_total", "flags")), "reasons": _rs(l.get("reasons"))}
+                              "unit_price", "line_total", "flags", "injection_screen")),
+                  "reasons": _rs(l.get("reasons"))}
                  for l in result.get("lines", [])]
         by_tier: dict[str, list] = {}
         for cd in result.get("candidates", []):
@@ -109,9 +110,12 @@ def compact_for_model(name: str, result: Any) -> Any:
         for t in _TIER_ORDER + [t for t in by_tier if t not in _TIER_ORDER]:
             for cd in by_tier.get(t, [])[:3]:
                 p, o = cd.get("product") or {}, cd.get("offer") or {}
-                cands.append({"id": p.get("id"), "name": p.get("name"), "tier": t,
-                              **_pick(o, ("unit_price", "available_amount", "cutoff_passed")),
-                              "flags": cd.get("flags") or [], "reasons": _rs(cd.get("reasons"))})
+                item = {"id": p.get("id"), "name": p.get("name"), "tier": t,
+                        **_pick(o, ("unit_price", "available_amount", "cutoff_passed")),
+                        "flags": cd.get("flags") or [], "reasons": _rs(cd.get("reasons"))}
+                if cd.get("injection_screen"):
+                    item["injection_screen"] = cd.get("injection_screen")
+                cands.append(item)
         return {"lines": lines, "covered_amount": result.get("covered_amount"), "shortfall": result.get("shortfall"),
                 "total_net": result.get("total_net"), "explanation": str(result.get("explanation") or "")[:400],
                 "candidates_top3_per_tier": cands, "candidates_total": len(result.get("candidates", []))}
@@ -269,6 +273,21 @@ class BuyerAgent:
             self.emit("thought", f"{MOCK_LABEL} Running the demo without Gemini", mock=True)
         if self.image and not self.mock:
             text = self._read_image(text, now)
+        elif self.image and self.mock:
+            from aimo.buyer.mock_model import MOCK_LABEL
+            if (text or "").strip():
+                self.emit("thought", f"{MOCK_LABEL} Image OCR requires GEMINI_API_KEY; using typed request text",
+                          mock=True, has_image=True)
+            else:
+                self.emit("error", "Image OCR requires GEMINI_API_KEY",
+                          error="Cannot extract an order from an image without GEMINI_API_KEY or accompanying text.",
+                          mock=True)
+                summary = (f"{MOCK_LABEL} Reading an order from a photo requires GEMINI_API_KEY or accompanying "
+                           "request text. Nothing was ordered.")
+                self.emit("final", "Done: no_order", summary=summary, status="no_order",
+                          latency_s=round(time.time() - self.t0, 2), models_used=self.models_used,
+                          escalated=False, injections=[])
+                return self.result(summary, status="no_order")
         t = time.time()
         self.needs = parse_request(text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
         self.need = n = self.needs[0]
@@ -735,7 +754,7 @@ class BuyerAgent:
                      for k in ("product_query", "quantity", "unit", "delivery_by", "required_claims",
                                "excluded_allergens", "preferred_product_ids")},
             "lines": [{k: l.get(k) for k in ("product_id", "product_name", "tier", "qty_sales_units", "sales_unit",
-                                             "covered_amount", "unit_price", "line_total", "flags")}
+                                             "covered_amount", "unit_price", "line_total", "flags", "injection_screen")}
                       | {"reasons": _rs(l.get("reasons"), 3, 140)} for l in plan.get("lines", [])],
             "candidates": compact_for_model("plan_need", plan).get("candidates_top3_per_tier", [])[:8],
             "covered_amount": plan.get("covered_amount"), "shortfall": plan.get("shortfall"),

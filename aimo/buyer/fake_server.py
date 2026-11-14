@@ -80,18 +80,35 @@ def build_app(scenario: str = "happy", customer: str = "hotel-aurora"):
     app = FastAPI(title="FAKE buyer dev gateway", lifespan=lifespan)
     app.include_router(router)
 
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True, "fake": True, "scenario": scenario, "customer": customer}
+
+    @app.get("/v1/audit/verify")
+    def audit_verify() -> dict:
+        return {"ok": True, "events": len(gw.audit), "_fake": True}
+
     @app.get("/v1/approvals")
     def approvals(status: str = "pending") -> list[dict]:
-        return [{"order": o, "quote": gw.quotes.get(o["quote_id"]), "decision": o["decision"]} for o in gw.pending()]
+        if status == "pending":
+            orders = gw.pending()
+        elif status == "all":
+            orders = list(gw.orders.values())
+        else:
+            orders = [o for o in gw.orders.values() if o["status"] == status]
+        return [{"order": o, "quote": gw.quotes.get(o["quote_id"]), "decision": o["decision"]} for o in orders]
 
     @app.post("/v1/approvals/{order_id}/decision")
     def decide(order_id: str, body: dict) -> dict:
+        decision = body.get("decision", "approve")
+        if decision not in ("approve", "reject"):
+            raise HTTPException(422, "decision must be approve or reject")
         o = gw.orders.get(order_id)
         if not o:
             raise HTTPException(404, "unknown order")
         if body.get("quote_hash") and body["quote_hash"] != o["quote_hash"]:
             raise HTTPException(409, "approval is bound to a different quote hash")
-        return gw.decide(order_id, body.get("decision", "approve"), body.get("approver", "human"), body.get("note", ""))
+        return gw.decide(order_id, decision, body.get("approver", "human"), body.get("note", ""))
 
     @app.get("/v1/audit/report/{subject_id}")
     def report(subject_id: str) -> list[dict]:
