@@ -61,7 +61,9 @@ def generate(feature: str, model: str, contents: Any, config: Any = None, run_id
             record(feature, model, latency_s=time.time() - t0, ok=False, error=type(e).__name__, run_id=run_id,
                    meta=meta)
             msg = str(e)
-            if not any(s in msg for s in ("429", "RESOURCE_EXHAUSTED", "500", "503", "UNAVAILABLE", "DEADLINE")):
+            retryable_type = any(s in type(e).__name__ for s in ("Timeout", "ConnectError", "RemoteProtocolError"))
+            if not retryable_type and not any(s in msg for s in ("429", "RESOURCE_EXHAUSTED", "500", "503", "UNAVAILABLE",
+                                                                 "DEADLINE", "timed out")):
                 raise
             time.sleep(min(60, (2 ** attempt) + random.random()))
     raise last  # type: ignore[misc]

@@ -122,7 +122,7 @@ class BuyerAgent:
     def _text_call(self, feature: str, prompt: str, thinking: str = "LOW") -> str:
         from google.genai import types
         cfg = types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_level=thinking),
-                                          max_output_tokens=4096)
+                                          max_output_tokens=4096, http_options=types.HttpOptions(timeout=45_000))
         for _ in range(2):
             r = self.generate(feature, self.model, prompt, cfg, meta={"thinking_level": thinking})
             txt = (getattr(r, "text", None) or "").strip()
@@ -193,7 +193,8 @@ class BuyerAgent:
             cfg = types.GenerateContentConfig(
                 system_instruction=system, tools=tools,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                thinking_config=types.ThinkingConfig(thinking_level=level), max_output_tokens=8192)
+                thinking_config=types.ThinkingConfig(thinking_level=level), max_output_tokens=8192,
+                http_options=types.HttpOptions(timeout=90_000))  # ms; a hung call is retried by aimo.gemini
             t = time.time()
             try:
                 r = self.generate("buyer.agent_step", model, contents, cfg,
