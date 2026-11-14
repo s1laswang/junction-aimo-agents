@@ -30,7 +30,8 @@ from aimo.buyer.tools import ToolTransport
 from aimo.models import AgentStep, Need
 
 DRIFT_RATIO = 10.0  # harness hold (likely unit mix-up); moderate drift (>3x) is trust policy -> needs_approval
-UNTRUSTED_FIELDS = ("marketing_text", "ingredients_text", "description", "text")
+PLANNER_PREF_KEYS = {"brand", "fat_pct", "organic", "pack", "use"}
+UNTRUSTED_FIELDS =("marketing_text", "ingredients_text", "description", "text")
 _INJECTION_RE = re.compile(
     r"ignore (all |your |previous |the )*(instructions|limits|rules|policy)|system (note|prompt|message)|"
     r"to (ai|llm) agents?|approval is not required|disregard|you are now|order \d[\d,. ]* (units|pcs)",
@@ -314,7 +315,10 @@ class BuyerAgent:
             self._plan_idx = idx = self._match_need(given)
             locked = self.needs[idx].model_dump(mode="json") if self.needs else n.model_dump(mode="json")
             merged = {**locked, **{k: v for k, v in given.items() if k in ("product_query", "preferences")}}
-            merged["preferences"] = {**locked.get("preferences", {}), **(given.get("preferences") or {})}
+            prefs = {**locked.get("preferences", {}), **(given.get("preferences") or {})}
+            # Only spec preferences go to the planner; bookkeeping (parsed_by, notes, site, drift ratios)
+            # made the catalog drop its top-hit reference and return 0 candidates (reported to catalog).
+            merged["preferences"] = {k: v for k, v in prefs.items() if k in PLANNER_PREF_KEYS}
             # quantity/unit/date and the hard constraints may only come from the parsed need
             return {"need": merged}
         if name == "create_quote":
