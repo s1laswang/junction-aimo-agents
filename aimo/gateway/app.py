@@ -183,6 +183,19 @@ def _upstream_state() -> dict[str, Any]:
             "retry_in_s": max(0, round(down - _t.time())), "last_error": getattr(c, "last_error", None)}
 
 
+def _require_catalog() -> None:
+    """503 catalog_missing (not a 500) when the product data is absent and no replay subset applies."""
+    try:
+        _cat = service._catalog()
+    except Exception:
+        return
+    if _cat is None or not hasattr(_cat, "catalog_available"):
+        return
+    if not _cat.catalog_available():
+        raise service.ServiceError(503, "catalog_missing", _cat.CATALOG_MISSING_MESSAGE,
+                                   {"fix": "uv run aimo fetch-data", "needs": "AIMO_API_KEY"})
+
+
 def _prov_headers(meta: dict[str, Any]) -> dict[str, str]:
     h = {"X-Aimo-Source": str(meta.get("source")), "X-Aimo-Served-From": str(meta.get("served_from")),
          "X-Aimo-Fetched-At": str(meta.get("fetched_at")), "X-Aimo-Valid-For": str(meta.get("valid_for_s"))}
@@ -222,6 +235,7 @@ def build_router() -> APIRouter:
         x_agent_key: Optional[str] = Header(None),
     ):
         auth.resolve_customer_identity(x_customer_id=x_customer_id, body_customer_id=customer_id, x_agent_key=x_agent_key)
+        _require_catalog()
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
         return JSONResponse([p.model_dump(mode="json") for p in res])
@@ -270,6 +284,7 @@ def build_router() -> APIRouter:
             x_agent_id=x_agent_id,
             x_agent_key=x_agent_key,
         )
+        _require_catalog()
         return service.plan_need(need.model_copy(update={"customer_id": who.customer_id}), identity=who)
 
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
@@ -402,15 +417,22 @@ def build_router() -> APIRouter:
     @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
     def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
                                                                                  "'approved' to 'rejected')"),
+                    x_agent_id: Optional[str] = Header(None),
                     cred: HumanCred = Depends(human_cred)):
         """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
         broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs a signed-in approver; 404 when
         AIMO_ENV=production."""
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(f"audit:{seq}", f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, f"audit:{seq}", "human:demo-tamper")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
-    def demo_untamper(seq: int, cred: HumanCred = Depends(human_cred)):
+    def demo_untamper(seq: int, x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(f"audit:{seq}", f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, f"audit:{seq}", "human:demo-untamper")
         return service.demo_untamper(seq)
 

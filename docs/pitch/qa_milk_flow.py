@@ -21,7 +21,7 @@ import httpx
 HOTEL = {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "buyer-1"}
 NEED = {"customer_id": "hotel-aurora", "product_query": "lactose-free milk",
         "required_claims": ["FREE_FROM_LACTOSE"], "quantity": 1000, "unit": "L",
-        "delivery_by": "2026-11-16", "preferred_product_ids": ["463038"]}
+        "delivery_by": None, "preferred_product_ids": ["463038"]}
 
 
 def step(name: str) -> float:
@@ -35,13 +35,44 @@ def check(cond: bool, msg: str) -> None:
         sys.exit(1)
 
 
+def _approver_pin() -> str:
+    root = str(Path(__file__).resolve().parents[2])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from aimo.gateway.human_auth import local_pin
+        pin = local_pin("anna@hotel-aurora.example")
+        if pin:
+            return pin
+    except Exception:
+        pass
+    env_pin = os.environ.get("AIMO_APPROVER_PIN", "").strip()
+    if env_pin:
+        return env_pin
+    key_dir = Path(os.environ.get("AIMO_KEY_DIR") or (Path(os.environ.get("AIMO_DATA_DIR", "data")) / "keys"))
+    pins_file = key_dir / "approver_pins.json"
+    if pins_file.exists():
+        pins = json.loads(pins_file.read_text(encoding="utf-8"))
+        if isinstance(pins, dict) and pins:
+            return str(pins.get("anna@hotel-aurora.example") or next(iter(pins.values()))).strip()
+    return (key_dir / "approver_pin").read_text(encoding="utf-8").strip()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8020")
-    ap.add_argument("--date", default=NEED["delivery_by"])
+    ap.add_argument("--date", default=None, help="delivery date (default: next feasible weekday on the gateway's clock)")
     a = ap.parse_args()
-    NEED["delivery_by"] = a.date
     c = httpx.Client(base_url=a.base, headers=HOTEL, timeout=60)
+    if not a.date:
+        root = str(Path(__file__).resolve().parents[2])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from aimo.backend import clock
+        now = clock.parse(c.get("/healthz").json().get("clock", {}).get("now"))
+        a.date = clock.next_delivery_day(now).isoformat()
+    NEED["delivery_by"] = a.date
+    print(f"delivery date {a.date} (gateway clock)")
 
     t = step("GET /healthz")
     h = c.get("/healthz").json()
@@ -110,7 +141,7 @@ def main() -> None:
     check(r.status_code == 403, f"status {r.status_code} {r.json().get('error')}")
 
     # the human approver: no agent identity, plus the operator's approver credential
-    pin = os.environ.get("AIMO_APPROVER_PIN") or (Path(os.environ.get("AIMO_DATA_DIR", "data")) / "keys" / "approver_pin").read_text().strip()
+    pin = _approver_pin()
     human = {"X-Agent-Id": "", "X-Customer-Id": "", "X-Approver-Pin": pin}
     step("POST decision with a wrong quote_hash (expect 409)")
     r = c.post(f"/v1/approvals/{o['order_id']}/decision", json=dict(bad, quote_hash="0" * 64), headers=human)
@@ -128,9 +159,20 @@ def main() -> None:
     check(r.status_code == 200, f"{len(r.text.splitlines())} lines of markdown")
     print("\n".join("       " + s for s in r.text.splitlines()[:25]))
 
+    step("GET /v1/orders/{order_id}/peppol-order-response.xml (UBL 2.3 Order Response, Peppol T116)")
+    r = c.get(f"/v1/orders/{o['order_id']}/peppol-order-response.xml")
+    import re
+    m = re.search(r"<cbc:OrderResponseCode[^>]*>([^<]+)<", r.text)
+    peppol = m.group(1).strip() if m else None
+    check(r.status_code == 200 and bool(peppol), f"OrderResponseCode={peppol} ({len(r.text)} bytes of XML)")
+
     step("GET /v1/audit/verify")
     v = c.get("/v1/audit/verify").json()
     check(v.get("ok") is True, json.dumps(v))
+    served = h.get("replay", {}).get("mode") if h.get("replay", {}).get("forced") else "live"
+    print(f"\nORDER {o['order_id']} placed for {a.date}; total_net EUR {q.get('total_net')}; Peppol OrderResponseCode "
+          f"{peppol}; audit verify ok={v.get('ok')} ({v.get('events', v.get('n', v.get('checked', '?')))} events); "
+          f"served_from={'replay' if served != 'live' else 'live'}")
     print("\nMILK FLOW OK")
 
 

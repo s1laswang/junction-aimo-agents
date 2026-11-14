@@ -32,8 +32,35 @@ def known_customer_ids() -> set[str]:
     return ids
 
 
+MAX_CUSTOMER_ID_LEN = 128
+
+
+def _clean_customer_id(customer_id: Optional[str]) -> str:
+    if customer_id is None:
+        return ""
+    return str(customer_id).strip(" \t\r\n")
+
+
+def _is_unsafe_customer_id(cid: str) -> bool:
+    return (
+        len(cid) > MAX_CUSTOMER_ID_LEN
+        or ".." in cid
+        or "/" in cid
+        or "\\" in cid
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in cid)
+    )
+
+
+def _safe_customer_preview(cid: str) -> str:
+    cleaned = "".join(ch if ord(ch) >= 32 and ord(ch) != 127 else "?" for ch in cid)
+    return cleaned[:80]
+
+
 def is_known_customer(customer_id: Optional[str]) -> bool:
-    return bool(customer_id and str(customer_id).strip() in known_customer_ids())
+    cid = _clean_customer_id(customer_id)
+    if not cid or _is_unsafe_customer_id(cid):
+        return False
+    return cid in known_customer_ids()
 
 
 def require_known_customer(
@@ -41,12 +68,20 @@ def require_known_customer(
     *,
     missing_message: str = "A known customer is required (send X-Customer-Id).",
 ) -> str:
-    cid = str(customer_id).strip() if customer_id is not None else ""
+    cid = _clean_customer_id(customer_id)
     if not cid:
         raise service.ServiceError(401, "identity_required", missing_message)
+    if _is_unsafe_customer_id(cid):
+        preview = _safe_customer_preview(cid)
+        raise service.ServiceError(
+            403,
+            "unknown_customer",
+            f"unknown customer {preview!r}; call GET /v1/customers for valid customer ids",
+            {"customer_id": preview},
+        )
     known = known_customer_ids()
     if cid not in known:
-        preview = cid[:80]
+        preview = _safe_customer_preview(cid)
         raise service.ServiceError(
             403,
             "unknown_customer",
@@ -74,9 +109,15 @@ def _configured_agent_keys() -> dict[str, str]:
     out: dict[str, str] = {}
     for entry in raw.split(","):
         part = entry.strip()
-        if ":" not in part:
+        if ":" in part and "=" in part:
+            sep = ":" if part.index(":") < part.index("=") else "="
+        elif "=" in part:
+            sep = "="
+        elif ":" in part:
+            sep = ":"
+        else:
             continue
-        k, v = part.split(":", 1)
+        k, v = part.split(sep, 1)
         ks, vs = k.strip(), v.strip()
         if ks and vs:
             out[ks] = vs
@@ -116,23 +157,26 @@ def resolve_customer_identity(
     require_headers: bool = False,
     defer_unknown_customer: bool = False,
 ) -> service.Identity:
-    if require_headers and (
-        not (x_agent_id and x_agent_id.strip())
-        or not (x_customer_id and x_customer_id.strip())
-    ):
+    hc = _clean_customer_id(x_customer_id)
+    bc = _clean_customer_id(body_customer_id)
+    if require_headers and (not (x_agent_id and x_agent_id.strip()) or not hc):
         raise service.ServiceError(
             401,
             "identity_required",
             "Quotes and orders need X-Customer-Id and X-Agent-Id (production: OAuth 2.1 bearer).",
         )
-    hc = (x_customer_id or "").strip()
-    bc = (body_customer_id or "").strip()
     if not hc and not bc:
         raise service.ServiceError(
             401,
             "identity_required",
             "A known customer is required (send X-Customer-Id).",
         )
+    if hc and _is_unsafe_customer_id(hc):
+        require_known_customer(hc)
+    if bc and _is_unsafe_customer_id(bc):
+        if hc and not defer_unknown_customer and not is_known_customer(hc):
+            require_known_customer(hc)
+        require_known_customer(bc)
     cid = hc or bc
     if hc and bc and hc != bc:
         if not defer_unknown_customer and not is_known_customer(hc):

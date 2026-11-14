@@ -54,13 +54,24 @@ def load_gold(paths: list[str]) -> list[dict]:
     return out
 
 
-def _now() -> datetime | None:
+def _now(base_url: str | None = None) -> datetime | None:
     v = os.environ.get("AIMO_NOW")
-    if not v:
-        return None
-    from aimo.buyer.need import HELSINKI
-    d = datetime.fromisoformat(v)
-    return d if d.tzinfo else d.replace(tzinfo=HELSINKI)
+    if v:
+        from aimo.buyer.need import HELSINKI
+        d = datetime.fromisoformat(v)
+        return d if d.tzinfo else d.replace(tzinfo=HELSINKI)
+    if base_url:
+        try:
+            import httpx
+            from aimo.backend.clock import parse
+            r = httpx.get(f"{base_url.rstrip('/')}/healthz", timeout=2)
+            if getattr(r, "status_code", 200) < 400:
+                body = r.json()
+                if isinstance(body, dict) and isinstance(body.get("clock"), dict):
+                    return parse(body["clock"].get("now"))
+        except Exception:
+            return None
+    return None
 
 
 def _ranges(qr: Any, n: int) -> list[list[float] | None]:
@@ -123,30 +134,45 @@ def score(example: dict, result: dict, allergen_lookup) -> dict:
 class Approver(threading.Thread):
     """Simulated humans: approve every pending order of the customers under evaluation."""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, poll_s: float = 1.0):
         super().__init__(daemon=True)
-        self.base, self.stop = base_url, threading.Event()
+        self.base, self.poll_s, self.stop = base_url, poll_s, threading.Event()
 
     def run(self) -> None:
         import httpx
+        from aimo.gateway.human_auth import local_pin
         seen: set[str] = set()
         while not self.stop.is_set():
             try:
-                from aimo.gateway.human_auth import local_pin
                 human = {"X-Approver-Pin": local_pin()}
-                items = httpx.get(f"{self.base}/v1/approvals", params={"status": "pending"}, headers=human, timeout=5).json()
+                r = httpx.get(f"{self.base}/v1/approvals", params={"status": "pending"}, headers=human, timeout=5)
+                items = r.json() if getattr(r, "status_code", 200) < 400 else []
                 for it in items if isinstance(items, list) else []:
                     o = it.get("order", it)
                     oid, cust = o.get("order_id"), o.get("customer_id")
                     if not oid or oid in seen or cust not in APPROVERS:
                         continue
-                    seen.add(oid)
-                    httpx.post(f"{self.base}/v1/approvals/{oid}/decision", timeout=10, headers=human,
-                               json={"decision": "approve", "approver": APPROVERS[cust], "note": "gold eval",
-                                     "quote_hash": o.get("quote_hash") or (it.get("quote") or {}).get("quote_hash")})
-            except Exception:  # noqa: BLE001
+                    approver = APPROVERS[cust]
+                    decision_headers = {"X-Approver-Pin": local_pin(approver)}
+                    try:
+                        resp = httpx.post(
+                            f"{self.base}/v1/approvals/{oid}/decision",
+                            timeout=10,
+                            headers=decision_headers,
+                            json={
+                                "decision": "approve",
+                                "approver": approver,
+                                "note": "gold eval",
+                                "quote_hash": o.get("quote_hash") or (it.get("quote") or {}).get("quote_hash"),
+                            },
+                        )
+                    except Exception:
+                        continue
+                    if getattr(resp, "status_code", 200) < 500:
+                        seen.add(oid)
+            except Exception:
                 pass
-            self.stop.wait(1.0)
+            self.stop.wait(self.poll_s)
 
 
 def gold_answer(example: dict):
@@ -169,16 +195,27 @@ def run_one(example: dict, a, lookup) -> dict:
     prof = get_profile(cust)
     t0 = time.time()
     transport = None
+    fake_stop = threading.Event()
     try:
         transport = connect(a.transport, agent_id=prof["agent_id"], customer_id=cust,
                             mcp_url=f"{a.base_url}/mcp", mandate=mandate_for(cust))
+        gw = getattr(transport, "gw", None) if a.transport == "fake" else None
+        if gw is not None and cust in APPROVERS:
+            def _approve_fake() -> None:
+                while not fake_stop.is_set():
+                    for o in gw.pending():
+                        gw.decide(o["order_id"], "approve", APPROVERS[cust], "gold eval")
+                    fake_stop.wait(0.02)
+            threading.Thread(target=_approve_fake, daemon=True).start()
         agent = BuyerAgent(transport, cust, model=a.model, thinking=a.thinking, escalate=not a.no_escalate,
-                           approval_timeout_s=a.approval_timeout, now=_now(), answer_fn=gold_answer(example),
-                           audit_base_url=a.base_url)
+                           approval_timeout_s=a.approval_timeout, poll_s=0.05 if a.transport == "fake" else 2.0,
+                           now=_now(a.base_url if a.transport == "mcp" else None), answer_fn=gold_answer(example),
+                           audit_base_url=a.base_url if a.transport != "fake" else "")
         result = agent.run(example["request"])
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         result = {"status": "error", "error": f"{type(e).__name__}: {e}"[:300], "steps": []}
     finally:
+        fake_stop.set()
         if transport is not None:
             transport.close()
     s = score(example, result, lookup)
@@ -223,13 +260,15 @@ def summarize(rows: list[dict]) -> dict:
 
 
 def write_report(out: Path, rows: list[dict], summ: dict, a, started: str, cost: dict | None) -> None:
+    from aimo.buyer.mock_model import MOCK_MODEL_NAME, mock_wanted
+    model_name = MOCK_MODEL_NAME if (mock_wanted() and not a.model) else (a.model or "gemini-3.8-flash")
     out.mkdir(parents=True, exist_ok=True)
     (out / "results.json").write_text(json.dumps({"summary": summ, "cost": cost, "rows": rows, "args": vars(a),
-                                                  "started": started}, indent=1, default=str))
+                                                  "model": model_name, "started": started}, indent=1, default=str))
     o = summ["overall"]
     md = [f"# Buyer agent gold eval", "",
           f"Started {started}; gold: {', '.join(a.gold)}; gateway {a.base_url} ({a.transport}); model "
-          f"{a.model or 'gemini-3.8-flash'} thinking {a.thinking}; AIMO_NOW={os.environ.get('AIMO_NOW', '(real clock)')}.", "",
+          f"{model_name} thinking {a.thinking}; AIMO_NOW={os.environ.get('AIMO_NOW', '(real clock)')}.", "",
           f"**Zero-correction {o['zero_correction']:.0%}**, escalation match {o['escalation_match']:.0%}, "
           f"allergen-safe {o['allergen_safe']:.0%} over {o['n']} examples ({o['asked']} asked a clarifying question; "
           f"{summ['errors']} errors).", ""]
@@ -252,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="eval_gold")
     ap.add_argument("gold", nargs="+")
     ap.add_argument("--base-url", default=os.environ.get("AIMO_BASE", "http://localhost:8000"))
-    ap.add_argument("--transport", default="mcp", choices=["mcp", "inproc"])
+    ap.add_argument("--transport", default="mcp", choices=["mcp", "inproc", "fake"])
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--model")
@@ -267,14 +306,16 @@ def main(argv: list[str] | None = None) -> int:
     started = datetime.now().strftime("%Y-%m-%d %H:%M")
     out = Path(a.out or f"data/eval/gold-{datetime.now():%Y%m%d-%H%M}")
     print(f"Gold eval: {len(examples)} examples, concurrency {a.concurrency}, gateway {a.base_url}", flush=True)
-    approver = Approver(a.base_url)
-    approver.start()
+    approver = Approver(a.base_url) if a.transport != "fake" else None
+    if approver is not None:
+        approver.start()
     lookup, lt = make_lookup(a)
     try:
         with ThreadPoolExecutor(a.concurrency) as pool:
             rows = list(pool.map(lambda e: run_one(e, a, lookup), examples))
     finally:
-        approver.stop.set()
+        if approver is not None:
+            approver.stop.set()
         lt.close()
     from aimo.buyer.costs import ledger_rows, summarize as cost_sum
     run_ids = [r["run_id"] for r in rows if r.get("run_id")]

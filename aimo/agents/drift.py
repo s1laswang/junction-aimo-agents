@@ -88,7 +88,9 @@ def _now() -> datetime:
 
 def next_delivery(weekday: int, today: Optional[date] = None) -> date:
     """Momin's next_delivery: the next such weekday strictly after today."""
-    today = today or date.today()
+    if today is None:
+        from aimo.backend import clock
+        today = clock.today_local()
     return today + timedelta(days=(weekday - today.weekday()) % 7 or 7)
 
 

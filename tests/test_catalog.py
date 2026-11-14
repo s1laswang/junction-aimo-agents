@@ -402,6 +402,7 @@ def test_semantic_switch_off_is_immediate(monkeypatch):
     from aimo.catalog import netcheck, textsearch
     monkeypatch.setenv("AIMO_SEMANTIC", "0")
     assert not netcheck.gemini_online()
+    import aimo.catalog.embeddings
     t0 = _t.time()
     assert textsearch.semantic_hits("some query nobody cached before 123") == []
     assert _t.time() - t0 < 0.5

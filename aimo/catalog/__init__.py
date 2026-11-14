@@ -8,11 +8,80 @@ See docs/interfaces.md. Public API:
 """
 from __future__ import annotations
 
+import gzip
+import hashlib
+import os
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from aimo.models import Candidate, Need, Offer, Plan, Product, ProductSummary
 
-__all__ = ["search", "get_product", "rank_substitutes", "plan_need", "load_catalog"]
+__all__ = ["search", "get_product", "rank_substitutes", "plan_need", "load_catalog", "catalog_available",
+           "catalog_source", "CATALOG_MISSING_MESSAGE"]
+
+FIXTURE_CATALOG_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "snapshot" / "replay" / "catalog"
+CATALOG_MISSING_MESSAGE = ("product catalog not found (data/valio_aimo_junction26_product_data.json). Set AIMO_API_KEY "
+                           "in .env and run `uv run aimo fetch-data`, or unset AIMO_API_KEY to run the bundled "
+                           "replay demo")
+_SOURCE = "full"
+
+
+def _use_fixture_catalog() -> str:
+    """Point aimo.config at the committed catalog subset when the full catalog is absent and replay is on
+    (AIMO_CATALOG_FIXTURE=1 forces it, =0 disables it). Returns 'full', 'fixture-subset' or 'missing'."""
+    from aimo import config
+
+    if config.PRODUCT_JSON.exists():
+        return "full"
+    flag = os.environ.get("AIMO_CATALOG_FIXTURE", "").strip()
+    src = FIXTURE_CATALOG_DIR / (config.PRODUCT_JSON.name + ".gz")
+    if flag == "0" or not src.exists():
+        return "missing"
+    if flag != "1":
+        try:
+            from aimo.backend import replay
+            if replay.replay_dir() is None:
+                return "missing"
+        except Exception:
+            return "missing"
+    dst = config.DATA_DIR / "catalog-fixture"
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        for name in (config.PRODUCT_JSON.name, config.RELIABILITY_CSV.name, config.CO2_CSV.name):
+            gz = FIXTURE_CATALOG_DIR / (name + ".gz")
+            if not gz.exists():
+                continue
+            raw = gz.read_bytes()
+            stamp = dst / (name + ".md5")
+            digest = hashlib.md5(raw).hexdigest()
+            if not (dst / name).exists() or not stamp.exists() or stamp.read_text() != digest:
+                tmp = dst / (name + ".tmp")
+                tmp.write_bytes(gzip.decompress(raw))
+                tmp.replace(dst / name)
+                stamp.write_text(digest)
+    except OSError:
+        return "missing"
+    config.PRODUCT_JSON = dst / config.PRODUCT_JSON.name
+    config.RELIABILITY_CSV = dst / config.RELIABILITY_CSV.name
+    config.CO2_CSV = dst / config.CO2_CSV.name
+    config.CATALOG_DB = dst / "catalog.sqlite"
+    return "fixture-subset"
+
+
+_SOURCE = _use_fixture_catalog()
+
+
+def catalog_source() -> str:
+    """'full' (challenge files in data/), 'fixture-subset' (keyless replay) or 'missing'."""
+    from aimo import config
+
+    if not config.PRODUCT_JSON.exists():
+        return "missing"
+    return "fixture-subset" if _SOURCE == "fixture-subset" else "full"
+
+
+def catalog_available() -> bool:
+    return catalog_source() != "missing"
 
 
 def load_catalog() -> None:
