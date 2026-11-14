@@ -462,7 +462,7 @@ def _require_scope(ident: Identity, scope: str) -> Mandate:
     """403 unless the agent's mandate (trust) grants `scope`. Fallback mandates carry the default scopes."""
     mandate = mandate_for(ident)
     if scope not in (mandate.scopes or []):
-        audit(ident.actor, "request.refused", f"refused-{ident.customer_id}",
+        audit(ident.actor, "order.refused" if scope == "order:submit" else "request.refused", f"refused-{ident.customer_id}",
               f"Agent {ident.full_agent_id} has no '{scope}' permission from {ident.customer_id}; request refused.",
               {"scope": scope, "agent_id": ident.full_agent_id, "customer_id": ident.customer_id})
         raise ServiceError(403, "scope_missing",
@@ -641,8 +641,22 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
 
 def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
     quote = get_quote(quote_id)
+    # Only the agent that obtained the quote may submit it. Checked before ANY order row exists, so a
+    # refused caller can never create the per-quote idempotency record and block the real buyer.
     if quote.customer_id != ident.customer_id:
+        audit(ident.actor, "order.refused", quote_id,
+              f"{ident.full_agent_id} tried to submit quote {quote_id} of customer {quote.customer_id}; refused (wrong customer).",
+              {"reason": "customer_mismatch", "quote_customer": quote.customer_id}, related_ids=[quote_id])
         raise ServiceError(403, "customer_mismatch", "this quote belongs to another customer")
+    owner = Identity(agent_id=quote.agent_id, customer_id=quote.customer_id)
+    if ident.agent_id != owner.agent_id:
+        audit(ident.actor, "order.refused", quote_id,
+              f"{ident.full_agent_id} tried to submit quote {quote_id}, which was issued to {owner.full_agent_id}; "
+              f"refused: only the quoting agent may order it. No order was created.",
+              {"reason": "agent_mismatch", "quote_agent": owner.full_agent_id, "caller": ident.full_agent_id},
+              related_ids=[quote_id])
+        raise ServiceError(403, "agent_mismatch",
+                           f"quote {quote_id} was issued to {owner.full_agent_id}; only that agent may place it")
     _check_quote(quote, quote_hash)
 
     existing = store.order_for_quote(quote_id)
@@ -658,13 +672,7 @@ def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
         raise ServiceError(409, "quote_expired", "re-quote needed: the quote's price lock has expired",
                            {"expires_at": quote.expires_at.isoformat()})
 
-    mandate = mandate_for(ident)
-    trust_policy = integration_status()["trust.evaluate"] == "aimo.trust"
-    if not trust_policy and "order:submit" not in (mandate.scopes or []):
-        raise ServiceError(403, "scope_missing", "agent mandate lacks scope order:submit")
-    mexp = mandate.expires_at
-    if mexp and (mexp if mexp.tzinfo else mexp.replace(tzinfo=timezone.utc)) <= _now():
-        raise ServiceError(403, "mandate_expired", "agent mandate has expired")
+    mandate = _require_scope(ident, "order:submit")  # 403 + audit, no order row
 
     products: dict[str, Any] = {}
     for ln in quote.lines:

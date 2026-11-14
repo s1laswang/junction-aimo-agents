@@ -2,6 +2,12 @@
 
 Branch `team/gateway`. Last updated Sat 14 Nov, around 17:30 Helsinki. **M1 gateway slice: done. Round 2: done** (merged main 57140c4; full suite 97 passed).
 
+## Round 4 (Sat night): quote ownership. Done, merged main a4a4cf9, full suite 165 passed
+- **Fix:** `submit_order` now refuses with 403 `agent_mismatch` unless the caller (normalised agent id + customer) is the agent that created the quote. The check runs before any order row exists and is audited as `order.refused`, so an intruder can no longer burn the buyer's idempotency slot.
+- **Scope too:** a missing `order:submit` scope now gets 403 `scope_missing` before any order row is created. Before, trust's scope rule stored a rejected order.
+- **Verified live:** `valio-aimo/seller-1` submitting the buyer's quote gets 403, and the buyer then places normally. The hero flow is unchanged: pending_approval with spend + substitution + drift.
+- **Tests:** 6 new, 32 gateway tests in total. They cover planner-1, buyer-2 and the seller being refused with no order row created and the buyer then placing, the seller with its own customer header, a quote owner without order scope, and both agent-id forms being treated as the same owner.
+
 ## Round 3 (Sat night): pitch QA fixes. Done, merged main 94dc5a2, full suite 112 passed
 1. **HIGH, tier and flags are now computed server-side** (`aimo/gateway/verify.py`). The caller's `tier` and `flags` are ignored. They are kept in `provenance.client_claims` and audited as `quote.claims_corrected` when they differ.
    - **How tiers are derived:** `preferred` only for the customer's usual products. Other lines go through `catalog.substitution.rank_substitutes` against the usual product of the same kind, using the quote's need without the caller's preferences or preferred ids.
