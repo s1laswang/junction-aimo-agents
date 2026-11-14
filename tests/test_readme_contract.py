@@ -13,6 +13,7 @@ EXPLICIT_PITCH_DOCS = (
     "pitch/PITCH.md",
     "pitch/DEMO.md",
     "pitch/DECK.md",
+    "pitch/QA.md",
     "pitch/NUMBERS.md",
 )
 

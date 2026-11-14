@@ -72,6 +72,7 @@ See [Open standards](docs/STANDARDS.md) and [Trust protocol](docs/TRUST.md) for 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Trust protocol](docs/TRUST.md)
 - [Open standards](docs/STANDARDS.md)
+- [Verification scenarios](docs/SCENARIOS.md)
 - [Judging checklist](docs/JUDGING.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 - [Production path](docs/PRODUCTION.md)
@@ -85,4 +86,5 @@ See [Open standards](docs/STANDARDS.md) and [Trust protocol](docs/TRUST.md) for 
 - [3-minute pitch](pitch/PITCH.md)
 - [Demo script](pitch/DEMO.md)
 - [Slide outline](pitch/DECK.md)
+- [Judge Q&A crib sheet](pitch/QA.md)
 - [Measured numbers](pitch/NUMBERS.md)
