@@ -176,6 +176,14 @@ main() {
     fi
 
     say "-- aimo serve --"
+    if [ -z "${AIMO_APPROVER_PIN:-}" ]; then
+      AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(f"{secrets.randbelow(10**6):06d}")')"
+    fi
+    export AIMO_APPROVER_PIN
+    if ! has_aimo_key && [ -z "${AIMO_REPLAY:-}" ] && [ -d tests/fixtures/snapshot ]; then
+      export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot"
+      say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot"
+    fi
     mkdir -p "$TMP_ACCEPT/keys"
     export AIMO_STATE_DB="$TMP_ACCEPT/state.sqlite" AIMO_KEY_DIR="$TMP_ACCEPT/keys"
     if [ -z "${AIMO_APPROVER_PIN:-}" ]; then
