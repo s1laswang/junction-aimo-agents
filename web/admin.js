@@ -1,4 +1,4 @@
-var MOCK={"hotel-aurora":{customer:"hotel-aurora",agent_id:"buyer-aurora",per_order_eur:2500,per_week_eur:15000,exclude_allergens:[],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["head.chef"]},"hospital-tays":{customer:"hospital-tays",agent_id:"buyer-tays",per_order_eur:1500,per_week_eur:8000,exclude_allergens:["peanut","nuts","egg"],allowed_categories:null,substitutions:"ask",preferred_brands:["Valio"],approvers:["kitchen.manager","dietitian"]},"school-hervanta":{customer:"school-hervanta",agent_id:"buyer-hervanta",per_order_eur:600,per_week_eur:3000,exclude_allergens:["peanut","nuts"],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["school.cook"]}};
+var MOCK={"hotel-aurora":{customer:"hotel-aurora",agent_id:"buyer-aurora",per_order_eur:2500,per_week_eur:15000,exclude_allergens:[],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["Laura Virtanen","Mikko Heikkinen"]},"hospital-tays":{customer:"hospital-tays",agent_id:"buyer-tays",per_order_eur:1500,per_week_eur:8000,exclude_allergens:["peanut","nuts","egg"],allowed_categories:null,substitutions:"ask",preferred_brands:["Valio"],approvers:["Helena Korhonen","Antti Lahtinen"]},"school-hervanta":{customer:"school-hervanta",agent_id:"buyer-hervanta",per_order_eur:600,per_week_eur:3000,exclude_allergens:["peanut","nuts"],allowed_categories:null,substitutions:"within_prefs",preferred_brands:["Valio"],approvers:["Sari Nieminen"]}};
 var LIST=["exclude_allergens","allowed_categories","preferred_brands","approvers"];
 var cur={},orig={};
 var X='<svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M18 6L6 18M6 6l12 12"/></svg>';
@@ -43,6 +43,7 @@ $("reset").onclick=function(){cur=JSON.parse(JSON.stringify(orig));$("msg").text
 $("f").addEventListener("submit",async function(e){
 e.preventDefault();
 cur.per_order_eur=Number($("per_order_eur").value);cur.per_week_eur=Number($("per_week_eur").value);cur.substitutions=$("substitutions").value;
+if(!(cur.per_order_eur>0)||!(cur.per_week_eur>0)){$("msg").textContent="Limits must be greater than zero.";return}
 if(cur.per_order_eur>cur.per_week_eur){$("msg").textContent="Per order limit exceeds weekly limit.";return}
 var body=Object.assign({},cur);if(!body.allowed_categories.length)body.allowed_categories=null;
 var r=await aimo.api("/v1/mandate",{method:"PUT",body:body,admin:true});
