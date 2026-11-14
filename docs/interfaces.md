@@ -67,6 +67,31 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
 - `school-tampere`: excluded allergens milk, nuts; auto ≤ €300; any substitution → `kitchen_manager`; allergen unknown → reject the line.
 - `hospital-meilahti`: excluded gluten; `dietitian` approves any substitution; unknown allergen → needs approval by dietitian.
 
+## Gateway additions (appended Sat 14 Nov by gateway; all optional / additive)
+- **Models (optional fields appended):** `Offer.provenance`, `Quote.provenance`, `Quote.availability_snapshot`, `Order.provenance`.
+  Provenance = `{source, upstream, endpoints, served_from: live|cache, fetched_at, valid_for_s, upstream_time_now, faults}`.
+  Quote provenance also has `price_locked_until`. These are part of the signed quote body.
+- **`BackendClient.price/availability`** take an optional third arg `customer` (passed upstream as `customer`).
+  `get_offers(ids, date, customer_id=None, quantities=None)`: with `quantities`, `partial_stock` is tagged when stock < qty.
+  `aimo.backend.client.get_offers_with_meta()` also returns the provenance dict. `aimo.backend.set_client()` swaps the client (tests).
+- **Offer.issues vocabulary:** `cutoff_passed`, `terminal_unknown_qty` (Terminal 999999 sentinel -> `available_amount=None`),
+  `limited_stock` (real stock limit < 100,000), `partial_stock`, `out_of_stock`, `sales_block`, `late_delivery`,
+  `price_error`, `availability_not_found`, `no_schedule`, `injected:<kind>` for fault injection.
+  Stock sentinels 9999999999 / 666666666 are passed through unchanged (effectively unlimited).
+- **Fault injection:** env `AIMO_FAULTS` or header `X-Aimo-Faults` (HTTP and MCP): `stockout:<id|*>`, `partial:<id|*>:<n>`,
+  `price_shock:<id|*>:<factor>`, `price_error:<id|*>`, `cutoff:<id|*>`, `sales_block:<id|*>`, `error_rate:<p>` (503),
+  `rate_limit:<p>` (429), `latency_ms:<n>`. Upstream failures -> HTTP 503 with `Retry-After` and `detail.retry_after`.
+- **HTTP:** `POST /v1/quotes` returns **409 `lines_unavailable`** with `detail.refused[] {product_id, reason: unavailable|partial_stock, issues, available_amount?}`.
+  `POST /v1/orders` is idempotent per quote (and retries placement if an earlier placement failed upstream); 409 `quote_hash_mismatch` / `quote_expired`; 403 `customer_mismatch`.
+  `POST /v1/approvals/{order_id}/decision` accepts optional `approver_role` (defaults to the approver directory role, then `decision.approver_role`); 409 `quote_hash_mismatch` / `quote_expired` (order -> `expired`) / `not_pending`; 403 `approval_refused` (trust.check_approval reason).
+  `GET /v1/approvals?status=pending|placed|rejected|expired|all` returns `[{order, quote, decision, expired, approvals}]`. `GET /healthz` shows which integrations are live vs fallback.
+  Errors are `{"error": code, "message", "detail"?}`. Offers responses carry `X-Aimo-Source/Served-From/Fetched-At/Valid-For` headers.
+- **Order response:** supplier RE on every line -> `status=rejected, response_code=RE`; otherwise `status=placed` with AP or CA. Auto-approved orders have `approved_by="auto (policy <id>)"`.
+- **In-process tool layer:** `aimo.gateway.service.<mcp_tool_name>(**args, identity={agent_id, customer_id})` returns exactly the MCP JSON
+  (`search_products -> {products}`, `get_offers -> {offers, provenance}`, `create_quote -> Quote`, `place_order -> Order`,
+  `get_order_status -> Order`, `get_audit_trail -> {events, report, verify}`, `list_policies -> {policies}`). `plan_need -> Plan` (needs aimo.catalog.plan_need, else 501).
+- **MCP identity:** headers `X-Agent-Id` / `X-Customer-Id` on the streamable-HTTP connection, else env. No approval tool on MCP by design.
+
 ## Trust conventions (landed Sat 16:xx, from team/trust; see docs/TRUST.md)
 - Agent ids: `<customer>/<agent>` e.g. `hotel-aurora/buyer-1` (bare `buyer-1` accepted). Unknown agent → mandate with no scopes → reject. Unknown customer → KeyError.
 - Line flags read by policy: `cutoff_passed`, `unavailable`, `sales_block` → reject line; `outside_preference` and any flag containing `injection` → needs_approval; `contains:<allergen>` / `may_contain:<allergen>` used when catalog has no product. Buyer may pass screen results in `need.preferences["injection_flags"]`.
