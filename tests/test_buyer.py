@@ -60,6 +60,34 @@ def test_school_allergens_from_profile_and_text():
     assert n.delivery_by == date(2026, 11, 18)
 
 
+@pytest.mark.parametrize("text,query", [
+    ("Oat drink for a school, pupils have milk and nut allergies, 200 L by Wednesday", "Oat drink"),
+    ("We need 120 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies.", "oat drink"),
+    ("Tomorrow we need 30 kg butter", "butter"),
+    ("2,5 kg grated cheese for 18.11.", "grated cheese"),
+    (HERO, "lactose-free milk"),
+])
+def test_guess_query_keeps_noun_phrase(text, query):
+    from aimo.buyer.need import guess_query
+    assert guess_query(text) == query
+
+
+def test_school_regex_fallback_full_need():
+    n = parse_need("Oat drink for a school, pupils have milk and nut allergies, 200 L by Wednesday",
+                   "school-tampere", SAT, use_gemini=False)
+    assert (n.product_query, n.quantity, n.unit, n.delivery_by) == ("Oat drink", 200, "L", date(2026, 11, 18))
+    assert set(n.excluded_allergens) == {"milk", "nuts"}
+
+
+def test_multi_item_event_fallback():
+    from aimo.buyer.need import parse_request
+    needs = parse_request("Conference dinner for 150 tomorrow evening: 40 L cream, 20 kg butter, lactose-free.",
+                          "hotel-aurora", SAT, use_gemini=False)
+    assert [(n.product_query, n.quantity, n.unit) for n in needs] == [("cream", 40, "L"), ("butter", 20, "KG")]
+    assert all(n.required_claims == ["FREE_FROM_LACTOSE"] and n.delivery_by == date(2026, 11, 15) for n in needs)
+    assert all(n.preferred_product_ids == [] for n in needs)  # the dispenser milk is not a cream/butter preference
+
+
 def test_usual_product_only_for_matching_requests():
     n = parse_need("Wedding tomorrow: 40 kg butter", "hotel-aurora", SAT, use_gemini=False)
     assert n.preferred_product_ids == [] and "pack" not in n.preferences
@@ -178,6 +206,26 @@ def test_one_order_per_run_and_reject_blocks_retry():
     assert r["status"] == "rejected"
     assert sum(1 for n, _ in gw.calls if n == "place_order") == 1
     assert any(s.kind == "tool_call" and "blocked" in s.title for s in agent.steps)
+
+
+def test_quote_lines_always_equal_plan_lines():
+    gw = FakeGateway()
+
+    class Model(ScriptedModel):  # the model "simplifies" the plan to a round 120 units
+        def __call__(self, feature, model, contents, config):
+            r = super().__call__(feature, model, contents, config)
+            fc = r.candidates[0].content.parts[0].function_call
+            if fc and fc.name == "create_quote":
+                fc.args["lines"] = [{"product_id": "464306", "qty_sales_units": 120}]
+            return r
+
+    _approve_soon(gw)
+    agent = _agent(gw, Model())
+    r = agent.run(HERO)
+    plan_lines = [(l["product_id"], l["qty_sales_units"]) for l in r["plan"]["lines"]]
+    quoted = [(l["product_id"], l["qty_sales_units"]) for l in r["quote"]["lines"]]
+    assert quoted == plan_lines == [("464306", 1000)]
+    assert any(s.kind == "thought" and "corrected to the planner" in s.title for s in agent.steps)
 
 
 def test_drift_holds_order():
