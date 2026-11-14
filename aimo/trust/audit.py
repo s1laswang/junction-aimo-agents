@@ -62,6 +62,33 @@ def event_core(ev: AuditEvent | dict) -> dict:
     return {k: v for k, v in d.items() if k not in HASH_EXCLUDE}
 
 
+def _clock_now() -> tuple[datetime, dict | None]:
+    """One clock for the whole gateway (harden/S2): aimo.backend.clock (AIMO_NOW / X-Aimo-Now / replay anchor when
+    simulated, otherwise real time). When it is simulated, the real wall time is kept next to it so the trail
+    never hides when something actually happened."""
+    real = datetime.now(timezone.utc)
+    try:
+        from aimo.backend import clock
+        if clock.simulated():
+            return clock.now(), {"mode": clock.describe().get("mode"), "wall_ts": real.isoformat()}
+    except Exception:  # noqa: BLE001
+        pass
+    return real, None
+
+
+def clock_label(evs: list) -> str:
+    """'real clock' | 'simulated clock (env)' | mixed, from the events' own data.clock markers."""
+    modes = {(e.data.get("clock") or {}).get("mode") if isinstance(e.data, dict) else None for e in evs}
+    if modes == {None}:
+        return "real clock"
+    sim = sorted(m for m in modes if m)
+    src = {"env": "AIMO_NOW", "header": "X-Aimo-Now", "replay": "replay snapshot"}
+    what = ", ".join(src.get(m, m) for m in sim)
+    if None in modes:
+        return f"mixed clocks: events marked (sim) use the simulated clock ({what}), the rest real time"
+    return f"simulated clock ({what}); real wall time is in each event's data.clock.wall_ts"
+
+
 def _local(ts: datetime, fmt: str = "%H:%M:%S") -> str:
     try:
         from zoneinfo import ZoneInfo
@@ -115,7 +142,10 @@ class AuditLog:
                 con.execute("BEGIN IMMEDIATE")
                 row = con.execute("SELECT seq, hash FROM audit_events ORDER BY seq DESC LIMIT 1").fetchone()
                 seq, prev = (row["seq"] + 1, row["hash"]) if row else (1, GENESIS)
-                draft = AuditEvent(seq=seq, ts=datetime.now(timezone.utc), actor=actor, action=action,
+                ts, clk = _clock_now()
+                if clk:
+                    data = {**data, "clock": clk}
+                draft = AuditEvent(seq=seq, ts=ts, actor=actor, action=action,
                                    subject_id=subject_id, summary=summary, data=data, prev_hash=prev,
                                    hash="", signature="", kid="")
                 core = event_core(draft)  # JSON-normalized (datetimes -> strings)
@@ -224,10 +254,13 @@ class AuditLog:
         if not evs:
             lines.append("_No events recorded for this subject._")
         else:
-            lines.append(f"_{_local(evs[0].ts, '%a %-d %b %Y')}, times in Helsinki (EET)._")
+            lines.append(f"_{_local(evs[0].ts, '%a %-d %b %Y')}, times in Helsinki ({_local(evs[0].ts, '%Z')}), "
+                         f"{clock_label(evs)}._")
             lines.append("")
+            mixed = clock_label(evs).startswith("mixed")
             for e in evs:
-                lines.append(f"- **{_local(e.ts)}**, {e.summary}  `#{e.seq} {e.action}`")
+                sim = " (sim)" if mixed and isinstance(e.data, dict) and e.data.get("clock") else ""
+                lines.append(f"- **{_local(e.ts)}**{sim}, {e.summary}  `#{e.seq} {e.action}`")
         decisions = [e for e in evs if isinstance(e.data.get("decision"), dict)]
         if decisions:
             d = decisions[-1].data["decision"]

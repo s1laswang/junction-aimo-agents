@@ -590,6 +590,9 @@ def test_header_clock_and_quote_times(api, monkeypatch):
 def test_demo_runs_in_the_past_with_simulated_clock(api, monkeypatch):
     """With AIMO_NOW far from real time, quote freshness and approval expiry use the simulated clock."""
     monkeypatch.setenv("AIMO_NOW", "2026-11-10T09:00:00+02:00")
+    # The anchored clock runs forward from process start: freeze it so the minute check below does not depend on
+    # how long the suite has been running (harden/S2's fuzz test runs earlier and takes ~45 s).
+    monkeypatch.setenv("AIMO_NOW_FROZEN", "1")
     q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000}]).json()
     assert q["expires_at"].startswith("2026-11-10T07:15")
     o = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()

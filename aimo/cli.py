@@ -101,6 +101,21 @@ def _build_catalog(gemini_builds: str = "background") -> None:
         threading.Thread(target=run, name="catalog-gemini-build", daemon=True).start()
 
 
+def _export_serve_url(host: str, port: int) -> None:
+    """The buyer agent's MCP URL follows the port actually served (aimo.buyer.runs.mcp_url_for).
+    Exported before uvicorn starts so --reload workers inherit it. An explicit AIMO_MCP_URL that points at a
+    different local port is almost certainly stale: say so instead of letting runs hit the wrong server."""
+    import os
+    local = "127.0.0.1" if host in ("0.0.0.0", "::", "", "localhost") else host
+    url = f"http://{'[' + local + ']' if ':' in local else local}:{port}"
+    os.environ["AIMO_SERVE_URL"] = url
+    explicit = os.environ.get("AIMO_MCP_URL", "").strip()
+    if explicit and any(h in explicit for h in ("localhost", "127.0.0.1")) and f":{port}/" not in explicit + "/":
+        print(f"warning: AIMO_MCP_URL={explicit} does not match the served port {port}; agent runs will use "
+              f"{url}/mcp instead (unset AIMO_MCP_URL to silence this)")
+        os.environ["AIMO_MCP_URL"] = f"{url}/mcp"
+
+
 def cmd_serve(a: argparse.Namespace) -> None:
     import uvicorn
 
@@ -116,6 +131,7 @@ def cmd_serve(a: argparse.Namespace) -> None:
         print(f"warning: data download failed: {e}")
     _build_catalog("skip" if a.no_build else "sync" if a.build_sync else "background")
     print(f"Valio Aimo Trusted Trade gateway on http://{a.host}:{a.port}  (docs /docs, MCP /mcp, UI /ui)")
+    _export_serve_url(a.host, a.port)
     try:
         from aimo.gateway.human_auth import credential_warning
         w = credential_warning()

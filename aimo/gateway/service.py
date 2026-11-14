@@ -15,6 +15,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import uuid
 from dataclasses import dataclass
@@ -97,6 +98,15 @@ def _now() -> datetime:
     return clock.now()
 
 
+def _hel(ts: datetime, fmt: str = "%H:%M") -> str:
+    """Gateway-clock timestamp in Helsinki time, as the audit report shows it (one clock, one zone)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo("Europe/Helsinki")).strftime(fmt)
+    except Exception:  # noqa: BLE001
+        return ts.strftime(fmt + " UTC")
+
+
 def _id(prefix: str) -> str:
     return f"{prefix}-{_now():%Y%m%d}-{uuid.uuid4().hex[:8]}"
 
@@ -157,7 +167,13 @@ def verify_quote(q: Quote) -> bool:
     return q.quote_hash == canonical_quote_hash(q)
 
 
+_SAFE_CUSTOMER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
+
+
 def mandate_for(ident: Identity) -> Mandate:
+    # harden/S2: customer ids name policy files; refuse anything that is not a short slug (no path, no 20 kB ids)
+    if not _SAFE_CUSTOMER.match(ident.customer_id or "") or ".." in ident.customer_id:
+        raise ServiceError(403, "unknown_customer", f"no mandate for customer {ident.customer_id[:64]!r}")
     t = _trust()
     for fn in ("get_mandate", "mandate_for"):
         try:
@@ -190,6 +206,35 @@ def _fallback_evaluate(q: Quote, m: Mandate) -> PolicyDecision:
 
 
 def evaluate(q: Quote, m: Mandate, products: dict[str, Any] | None = None) -> PolicyDecision:
+    return _quantity_guard(q, _evaluate(q, m, products))
+
+
+def _quantity_guard(q: Quote, d: PolicyDecision) -> PolicyDecision:
+    """harden/S2: a line flagged `unknown_stock_large_qty` (see make_quote) always needs a human, whatever the
+    customer's policy says; never auto. A reject stays a reject."""
+    big = [ln for ln in q.lines if LARGE_QTY_FLAG in (ln.flags or [])]
+    if not big:
+        return d
+    msg = ("Quantity is implausibly large for what we know about stock and this customer's usual orders: " +
+           "; ".join(f"{ln.qty_sales_units:g} {ln.sales_unit} of {ln.product_name or ln.product_id}" for ln in big) +
+           ". A human must confirm the quantity before anything is ordered.")
+    hit = RuleHit(rule_id="quantity.plausibility", outcome="needs_approval", message=msg)
+    if d.outcome == "auto_approve":
+        return d.model_copy(update={"outcome": "needs_approval", "hits": [*d.hits, hit],
+                                    "approver_role": d.approver_role or _first_approver_role(q.customer_id)})
+    return d.model_copy(update={"hits": [*d.hits, hit]})
+
+
+def _first_approver_role(customer_id: str) -> str:
+    try:
+        from aimo.trust.policy import load_policy
+        roles = load_policy(customer_id).get("approver_roles") or []
+        return roles[0] if roles else "procurement_manager"
+    except Exception:  # noqa: BLE001
+        return "procurement_manager"
+
+
+def _evaluate(q: Quote, m: Mandate, products: dict[str, Any] | None = None) -> PolicyDecision:
     t = _trust()
     try:
         kw: dict[str, Any] = {"now": _now()}
@@ -511,6 +556,7 @@ def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str 
 
 def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, **_: Any) -> Plan:
     need = _as_need(need, resolve_identity(identity, None, customer_id))
+    _check_need_input(need)
     cat = _catalog()
     if cat is None or not hasattr(cat, "plan_need"):
         raise ServiceError(501, "plan_unavailable", "planner (aimo.catalog.plan_need) is not available yet")
@@ -522,6 +568,21 @@ def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, *
         raise ServiceError(501, "plan_unavailable", "planner not implemented yet") from e
     except UpstreamError as e:
         raise _upstream(e) from e
+
+
+def _check_need_input(need: Need | None) -> None:
+    """harden/S2: plan input checks (422, plain reason) before any planner or upstream work."""
+    if need is None:
+        return
+    q = float(need.quantity)
+    if not math.isfinite(q) or q > MAX_QTY:
+        raise ServiceError(422, "absurd_quantity", f"quantity {need.quantity:g} is not plausible (max {MAX_QTY:,.0f} "
+                           f"{need.unit or 'units'} per request); split or check the number")
+    if len(need.product_query or "") > MAX_QUERY_CHARS:
+        raise ServiceError(422, "query_too_long", f"product_query is {len(need.product_query)} characters; "
+                           f"describe the product in at most {MAX_QUERY_CHARS}")
+    if not (need.product_query or "").strip() and not need.preferred_product_ids:
+        raise ServiceError(422, "empty_need", "product_query is empty: say what product you need")
 
 
 def _plan_deterministic(need: Need) -> Plan:
@@ -576,16 +637,101 @@ def _require_scope(ident: Identity, scope: str) -> Mandate:
     return mandate
 
 
-def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]], need: Need | None = None) -> Quote:
+# ---- quantity sanity (harden/S2)
+MAX_QTY = 1e6                     # anything above is a typo or an attack: 422, never a quote
+MAX_QUERY_CHARS = 500
+MAX_QUOTE_LINES = 200
+BASELINE_FACTOR = 50.0            # > 50x the customer's standing weekly quantity -> human approval
+UNKNOWN_STOCK_LARGE_QTY = float(os.environ.get("AIMO_UNKNOWN_STOCK_LARGE_QTY", "1000"))  # sales units
+LARGE_QTY_FLAG = "unknown_stock_large_qty"
+# Units of measure that can be fractional; every other sales unit (ST, KI, RAS, BOT, PAK, BAG, CS, ...) counts things.
+MEASURE_UNITS = frozenset({"KG", "KGM", "G", "GRM", "L", "LTR", "ML", "CL", "DL", "M", "MTR", "M2", "M3"})
+
+
+def _bad_line(code: str, message: str, pid: Any = None) -> ServiceError:
+    return ServiceError(422, code, message, {"product_id": None if pid is None else str(pid)[:64]})
+
+
+def _check_line_inputs(lines: list[dict[str, Any]]) -> dict[str, float]:
+    """Shape + range of every quote line (REST and MCP). Returns qty per product id."""
     if not lines:
-        raise ServiceError(400, "no_lines", "a quote needs at least one line")
+        raise ServiceError(422, "no_lines", "a quote needs at least one line")
+    if len(lines) > MAX_QUOTE_LINES:
+        raise ServiceError(422, "too_many_lines", f"at most {MAX_QUOTE_LINES} lines per quote")
     qty_by: dict[str, float] = {}
     for ln in lines:
-        q = float(ln.get("qty_sales_units") or 0)
-        if q <= 0:
-            raise ServiceError(400, "bad_quantity", f"qty_sales_units must be > 0 for {ln.get('product_id')}")
-        pid = str(ln["product_id"])
+        if not isinstance(ln, dict):
+            raise ServiceError(422, "bad_line", "each line must be an object with product_id and qty_sales_units")
+        pid = str(ln.get("product_id") or "").strip()
+        if not pid or len(pid) > 64:
+            raise _bad_line("bad_product_id", "product_id must be a Valio Aimo product code (1-64 characters)", pid)
+        raw = ln.get("qty_sales_units")
+        try:
+            q = float(raw) if not isinstance(raw, bool) else float("nan")
+        except (TypeError, ValueError):
+            raise _bad_line("bad_quantity", f"qty_sales_units must be a number for {pid}", pid) from None
+        if not math.isfinite(q) or q <= 0:
+            raise _bad_line("bad_quantity", f"qty_sales_units must be > 0 for {pid}", pid)
+        if q > MAX_QTY:
+            raise _bad_line("absurd_quantity", f"{q:g} units of {pid} is not a plausible order (max {MAX_QTY:,.0f} "
+                            "per line); check the number", pid)
         qty_by[pid] = qty_by.get(pid, 0) + q
+    for pid, q in qty_by.items():
+        if q > MAX_QTY:
+            raise _bad_line("absurd_quantity", f"{q:g} units of {pid} in total is not a plausible order", pid)
+    return qty_by
+
+
+def _fractional_count_lines(qty_by: dict[str, float], offers: dict[str, Offer],
+                            products: dict[str, Product]) -> list[dict[str, Any]]:
+    """Fractions of a count unit (2.5 ST) are refused unless allowedLotSize is a real fractional step (0.5 = half
+    a box). The catalog-wide default 0.01 means "no step recorded", i.e. any WHOLE sales unit (see
+    tests/test_edge_cases.py `_round_lot(2.2, 0.01) == 3`), not permission to sell 2.5 pieces."""
+    bad = []
+    for pid, q in qty_by.items():
+        p = products.get(pid)
+        unit = ((offers[pid].sales_unit if pid in offers else None) or getattr(p, "sales_unit", None) or "").upper()
+        if not unit or unit in MEASURE_UNITS or abs(q - round(q)) < 1e-9:
+            continue
+        lot = getattr(p, "allowed_lot_size", None)
+        if lot and 0.01 < lot < 1 and abs(q / lot - round(q / lot)) < 1e-6:
+            continue
+        bad.append({"product_id": pid, "reason": "fractional_count_unit", "requested": q, "sales_unit": unit,
+                    "allowed_lot_size": lot, "suggested_qty": [math.floor(q), math.ceil(q)] if q >= 1 else [1]})
+    return bad
+
+
+def _standing_baseline(customer_id: str, pid: str) -> float | None:
+    """Usual weekly quantity of this product for this customer, in sales units (seeded standing-order history)."""
+    try:
+        from aimo.agents.drift import SEEDS
+    except Exception:  # noqa: BLE001
+        return None
+    for ln in (SEEDS.get(customer_id) or {}).get("lines", []):
+        if ln.get("product_id") == pid and ln.get("weeks"):
+            return float(max(ln["weeks"]))
+    return None
+
+
+def _large_qty_reason(customer_id: str, pid: str, q: float, o: Offer | None) -> str | None:
+    """Why `q` is implausible, or None. Known stock is enforced elsewhere (partial_stock refusal)."""
+    base = _standing_baseline(customer_id, pid)
+    if base:
+        if q > BASELINE_FACTOR * base:
+            return (f"{q:g} is {q / base:.0f}x the usual weekly {base:g} for this customer "
+                    f"(limit {BASELINE_FACTOR:g}x)")
+        return None
+    unknown = o is None or o.available_amount is None or "terminal_unknown_qty" in (o.issues or [])
+    if unknown and q > UNKNOWN_STOCK_LARGE_QTY:
+        model = (o.logistic_model if o is not None else None) or "unknown"
+        return (f"{q:g} with no stock figure from the supplier ({model} product) is above "
+                f"{UNKNOWN_STOCK_LARGE_QTY:g} sales units and no standing order covers it")
+    return None
+
+
+def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]], need: Need | None = None) -> Quote:
+    qty_by = _check_line_inputs(lines)
+    _check_need_input(need)
     _require_scope(ident, "quote:create")
     if need is not None and need.customer_id != ident.customer_id:
         need = need.model_copy(update={"customer_id": ident.customer_id})
@@ -595,6 +741,25 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         offers, meta = get_offers_with_meta(list(qty_by), delivery_date, ident.customer_id, qty_by, fresh=True)
     except UpstreamError as e:
         raise _upstream(e) from e
+
+    products: dict[str, Product] = {}
+    for pid in qty_by:
+        try:
+            products[pid] = get_product(pid)
+        except ServiceError:
+            pass
+
+    frac = _fractional_count_lines(qty_by, offers, products)
+    if frac:
+        audit(ident.actor, "quote.refused", f"refused-{ident.customer_id}",
+              "Quote refused: fractional quantity of a count unit: " +
+              "; ".join(f"{r['product_id']} {r['requested']:g} {r['sales_unit']}" for r in frac),
+              {"refused": frac, "delivery_date": delivery_date})
+        r0 = frac[0]
+        raise ServiceError(422, "fractional_quantity",
+                           f"{r0['requested']:g} {r0['sales_unit']} of {r0['product_id']}: {r0['sales_unit']} is a count "
+                           f"unit (pieces, boxes, bottles), so order whole units, e.g. "
+                           f"{' or '.join(f'{x:g}' for x in r0['suggested_qty'])}", {"refused": frac})
 
     refused = []
     for pid, q in qty_by.items():
@@ -613,13 +778,6 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         raise ServiceError(409, "lines_unavailable",
                            "some lines cannot be delivered for this date; re-plan (split or substitute) and re-quote",
                            {"refused": refused})
-
-    products: dict[str, Product] = {}
-    for pid in qty_by:
-        try:
-            products[pid] = get_product(pid)
-        except ServiceError:
-            pass
 
     # Pack / lot size: the supplier only ships whole multiples of allowedLotSize (>= 1; 0.01 = any unit).
     off_lot = []
@@ -640,6 +798,12 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
     from aimo.gateway.verify import verify_lines
 
     verified = verify_lines(ident.customer_id, delivery_date, qty_by, offers, need, products, screen_supplier_text)
+    for pid, q in qty_by.items():  # harden/S2: implausible quantity -> flag; _quantity_guard makes it need a human
+        why = _large_qty_reason(ident.customer_id, pid, q, offers.get(pid))
+        if why:
+            v = verified[pid]
+            v["flags"] = list(dict.fromkeys([*v.get("flags", []), LARGE_QTY_FLAG]))
+            v["reasons"] = [*v.get("reasons", []), f"Implausible quantity: {why}; needs human approval."]
     client_claims = [{"product_id": str(ln["product_id"]), "tier": ln.get("tier"), "flags": list(ln.get("flags") or [])}
                      for ln in lines if ln.get("tier") is not None or ln.get("flags")]
 
@@ -692,7 +856,7 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
     if not _trust_log("log_quote", quote):
         audit(ident.actor, "quote.created", quote.quote_id,
               f"Quote {quote.quote_id} for {ident.customer_id}: {len(qlines)} line(s), €{quote.total_net:.2f} net, "
-              f"delivery {delivery_date.isoformat()}, price fixed until {expires:%H:%M} UTC"
+              f"delivery {delivery_date.isoformat()}, price fixed until {_hel(expires)} Helsinki"
               + ("" if quote.signature else " (UNSIGNED: trust module not loaded)"),
               {"quote_hash": quote.quote_hash, "kid": quote.kid, "total_net": quote.total_net,
                "lines": [l.model_dump(mode="json") for l in qlines], "provenance": quote.provenance})
@@ -790,7 +954,7 @@ def _submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
         return existing  # idempotent: same quote -> same order
 
     if _expired(quote):
-        audit(ident.actor, "order.refused", quote_id, f"Order for quote {quote_id} refused: quote expired at {quote.expires_at:%H:%M} UTC.")
+        audit(ident.actor, "order.refused", quote_id, f"Order for quote {quote_id} refused: quote expired at {_hel(quote.expires_at)} Helsinki.")
         raise ServiceError(409, "quote_expired", "re-quote needed: the quote's price lock has expired",
                            {"expires_at": quote.expires_at.isoformat()})
 

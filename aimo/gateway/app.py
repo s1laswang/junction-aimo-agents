@@ -427,6 +427,8 @@ def create_app(with_mcp: bool = True) -> FastAPI:
         license_info={"name": "MIT"},
     )
     app.add_middleware(FaultsMiddleware)
+    from aimo.gateway.schemas import install_error_handlers  # S2 harden: JSON {error, message} for every error
+    install_error_handlers(app)
 
     @app.exception_handler(service.ServiceError)
     async def _svc_err(_: Request, e: service.ServiceError):
