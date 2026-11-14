@@ -12,6 +12,22 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **
 4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
 5. **When is the pitch slot?** The live "by Monday" story depends on a real mock-API cut-off. Stock milk can be ordered for Monday delivery only until **Sun 15 Nov 17:00**. If judging runs after about 16:30 on Sunday, we switch the request to "by Tuesday", or use the recorded video or mock mode. Tell us the slot once you know it.
 
+## Swarms toward 10/10 (Sat 20:00; decided with Silas)
+Plan: four humans each run a ~100-agent swarm, with Claude leads turning findings into core fixes. Kits are in [swarm/README.md](../swarm/README.md): one BRIEF plus 100 task cards per swarm, and `swarm/validate.py`.
+
+| Swarm | Owner | Gate |
+|---|---|---|
+| A, need | Silas | ≥95% zero-correction on 1,000 gold requests; escalation precision ≥90% at recall ≥99% |
+| B, robustness | Momin | 0 violations in ≥10k attacks; injection ≥98% at ≤2% FP; chaos 100% graceful |
+| C, experience | Ivar | photo/voice ordering, one-click approve, Finnish UI, multimodal ≥95% |
+| D, openness/proof | Chintufp | public URL (laptop tunnel), conformance on 2 wholesalers, every number reproducible, video |
+
+Decisions:
+- verified-best substitutes auto-approve, plus learned approvals;
+- hosting is a cloudflared tunnel from the demo laptop, with replay mode as the fallback.
+
+**Silas:** add Momin010, ivarakerholm-wq and Chintufp as repo collaborators, and share .env privately.
+
 Everything else is decided below. Change it here if you disagree.
 
 ## Status (Sat 19:15)
