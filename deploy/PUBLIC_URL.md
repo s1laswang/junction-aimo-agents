@@ -32,5 +32,5 @@ Nothing here is live. This is the plan for exposing the gateway after the demo, 
 ## Key rotation
 
 - Quotes and audit checkpoints are signed EdDSA, key in `var/keys/quote-ed25519.json`, `kid` is the thumbprint, public keys at `/.well-known/jwks.json`.
-- Rotate by generating a new key and serving both public keys in the JWKS until the old quotes expire (quotes are short lived, valid until closingTime). Today `keys.py` holds a single key, so serving two needs a small change in `aimo/keys.py` (tr-sign).
+- Rotate signing keys with `python -m aimo.keys rotate` (and restart): `aimo/keys.py` saves the previous public key as `retired-<kid>.json` in `AIMO_KEY_DIR` (`var/keys` by default) and serves both active and retired public keys in `/.well-known/jwks.json` so existing quotes and audit checkpoints verify seamlessly across rotation.
 - Agent keys: rotate by changing `AIMO_AGENT_KEYS` and restarting.
