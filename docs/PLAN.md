@@ -10,10 +10,15 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:00 Helsinki. Deadline: **
 
 Everything else is decided below. Change it here if you disagree.
 
-## Status (Sat 15:55)
-- On main and verified live: gateway (REST /v1, MCP /mcp, otap.json, fault injection), trust (policies, signed quotes, signed hash-chained audit), catalog (hybrid FTS + gemini-embedding-2 search, allergen tri-state, good-better-best, plan_need). 1,000 L milk: plan €1,010 → signed quote → needs_approval → approve → placed AP → audit verified. 63 tests pass.
-- In progress: Gemini buyer agent, approval UI, wind tunnel, pitch/docs.
-- FR8 freighter: SSH flaky (timed out 14:10–15:50), reachable again at 15:55. Repo cloned at ~/junction-aimo-agents, data dir /data/silas/junction-aimo-agents.
+## Status (Sat 17:00)
+- **M1 and M2 are met early.** Everything is on main: gateway, trust, catalog, the Gemini buyer agent and the approval UI. The full browser flow works live: Run agent (Gemini over MCP), plan (cut-off reject, then best 464306), signed quote checked in the browser against JWKS, needs approval (3 rules), Approve, order placed AP, audit chain verified (15 events). 90 tests pass.
+- **Round 2 in progress:**
+  - gateway: actor id fix, injected-text fault, demo tamper routes, fresh-checkout setup;
+  - catalog: allergen text no longer misleads product-type inference (school scenario);
+  - frontend: live tamper button, hospital story, presenter mode;
+  - wind tunnel: scenarios and numbers;
+  - pitch: README, DEMO, GEMINI, SUBMISSION.
+- **FR8 freighter:** SSH is flaky, and /data/silas is missing (see Questions). We use ~/junction-aimo-agents-data.
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.
