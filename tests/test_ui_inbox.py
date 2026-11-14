@@ -11,9 +11,9 @@ import warnings
 from fastapi.testclient import TestClient
 import pytest
 
-from aimo import catalog, db, mandates, offers
+from aimo import allocate, catalog, db, keys, mandates, offers, valio
 from aimo.app import app
-from aimo.models import Product, QuoteLine
+from aimo.models import Decision, Order, Product, QuoteLine, Reason, Substitution, UnitSize
 
 warnings.filterwarnings("ignore", message="EdDSA is deprecated.*")
 
@@ -101,7 +101,84 @@ def test_error_detail_and_audit_link():
 def test_mock_matches_real_system():
     js = (WEB / "inbox.js").read_text(encoding="utf-8")
     assert "UNKNOWN_PRODUCT" in js and "allergen_flag" not in js
+    assert "STOCKOUT" in js and "AGENT_REQUESTED" in js
     assert "NON_PREFERRED_BRAND" in js and "Decided today" in (WEB / "inbox.html").read_text(encoding="utf-8")
+
+
+def test_mock_orders_validate_as_pydantic_models():
+    node = _node_bin()
+    extractor = r"""
+const fs = require("fs");
+const vm = require("vm");
+const path = require("path");
+const webDir = process.argv[1];
+const inboxSrc = fs.readFileSync(path.join(webDir, "inbox.js"), "utf8");
+const dummy = {
+  nodeType: 1,
+  textContent: "",
+  value: "",
+  hidden: false,
+  disabled: false,
+  open: false,
+  className: "",
+  dataset: {},
+  setAttribute() {},
+  addEventListener() {},
+  replaceChildren() {},
+  append() {}
+};
+const win = {
+  document: {
+    title: "",
+    body: { dataset: {} },
+    querySelector() { return dummy; },
+    querySelectorAll() { return []; },
+    createElement() { return Object.assign({}, dummy); },
+    createElementNS() { return Object.assign({}, dummy); },
+    createTextNode(t) { return { nodeType: 3, textContent: String(t) }; }
+  },
+  location: { pathname: "/inbox.html", search: "?mock=1", hash: "" },
+  URLSearchParams,
+  Intl,
+  localStorage: { getItem() { return null; }, setItem() {} },
+  history: { replaceState() {} },
+  matchMedia() { return { matches: false, addEventListener() {} }; },
+  addEventListener() {},
+  scrollTo() {},
+  setInterval() { return 1; },
+  setTimeout() { return 1; },
+  clearTimeout() {}
+};
+win.window = win;
+vm.runInContext(inboxSrc, vm.createContext(win));
+process.stdout.write(JSON.stringify(win.__inbox.MOCK));
+"""
+    assert not COMMENT_RE.search(extractor)
+    proc = subprocess.run([node, "-e", extractor, str(WEB)], capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    mock_items = json.loads(proc.stdout)
+    assert len(mock_items) >= 5
+    order_keys = set(Order.model_fields.keys())
+    line_keys = set(QuoteLine.model_fields.keys())
+    sub_keys = set(Substitution.model_fields.keys())
+    dec_keys = set(Decision.model_fields.keys())
+    reason_keys = set(Reason.model_fields.keys())
+    seen_codes = set()
+    for item in mock_items:
+        assert set(item.keys()) == order_keys
+        parsed = Order.model_validate(item)
+        assert parsed.status == "pending_approval"
+        assert parsed.decision.outcome == "needs_approval"
+        assert round(sum(x.line_total_net for x in parsed.lines), 2) == round(parsed.total_net, 2)
+        for ln in item["lines"]:
+            assert set(ln.keys()) <= line_keys
+        for sb in item["substitutions"]:
+            assert set(sb.keys()) == sub_keys
+        assert set(item["decision"].keys()) == dec_keys
+        for rs in item["decision"]["reasons"]:
+            assert set(rs.keys()) == reason_keys
+            seen_codes.add(rs["code"])
+    assert {"OVER_ORDER_LIMIT", "SUBSTITUTION_NEEDS_APPROVAL", "NON_PREFERRED_BRAND", "UNKNOWN_PRODUCT", "STOCKOUT", "AGENT_REQUESTED"} <= seen_codes
 
 
 def test_node_syntax_check():
@@ -114,18 +191,98 @@ def test_node_syntax_check():
 def live_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AIMO_DB", str(tmp_path / "inbox.db"))
     monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    monkeypatch.setattr(keys, "_cache", {})
+    monkeypatch.setattr(offers, "_overrides", {})
+    monkeypatch.setattr(allocate, "_data", lambda: {})
     fake_products = {
-        "P-MILK-1": Product(product_id="P-MILK-1", name="Valio Eila laktoositon kevytmaitojuoma 1 l", brand="Valio", sales_unit="L"),
-        "P-OAT-ORIG": Product(product_id="P-OAT-ORIG", name="Valio kaurahiutale", brand="Valio", sales_unit="KG"),
-        "P-OAT-SUB": Product(product_id="P-OAT-SUB", name="Kaurahiutale gluteeniton", brand="Valio", sales_unit="KG"),
+        "P-MILK-1": Product(
+            product_id="P-MILK-1",
+            name="Valio Eila laktoositon kevytmaitojuoma 1 l",
+            brand="Valio",
+            vendor="VALIO OY",
+            sales_unit="LTR",
+            unit_size=UnitSize(value=1.0, unit="l"),
+        ),
+        "P-MILK-2": Product(
+            product_id="P-MILK-2",
+            name="Valio Luomu kevytmaito laktoositon 1 l",
+            brand="Valio",
+            vendor="VALIO OY",
+            sales_unit="LTR",
+            unit_size=UnitSize(value=1.0, unit="l"),
+        ),
+        "P-OAT-ORIG": Product(
+            product_id="P-OAT-ORIG",
+            name="Valio kaurahiutale",
+            brand="Valio",
+            vendor="VALIO OY",
+            sales_unit="KGM",
+            unit_size=UnitSize(value=1.0, unit="kg"),
+        ),
+        "P-OAT-SUB": Product(
+            product_id="P-OAT-SUB",
+            name="Kaurahiutale gluteeniton",
+            brand="Valio",
+            vendor="VALIO OY",
+            sales_unit="KGM",
+            unit_size=UnitSize(value=1.0, unit="kg"),
+        ),
     }
+    prices = {"P-MILK-1": 3.0, "P-MILK-2": 3.2, "P-OAT-ORIG": 4.0, "P-OAT-SUB": 4.0}
     monkeypatch.setattr(catalog, "get", lambda pid: fake_products.get(str(pid)))
+    monkeypatch.setattr(
+        catalog,
+        "search",
+        lambda q="", constraints=None, limit=50: [
+            p for p in fake_products.values() if ("maito" in p.name.lower()) == ("maito" in (q or "").lower())
+        ][:limit],
+    )
+    monkeypatch.setattr(catalog, "reliability", lambda pid: 0.98 if pid in fake_products else None)
+    monkeypatch.setattr(catalog, "co2_per_kg", lambda pid: 1.1 if pid in fake_products else None)
+
+    def fake_valio_price(customer, day, ids):
+        out = {}
+        for raw_id in ids:
+            pid = str(raw_id)
+            if pid in prices:
+                net = prices[pid]
+                out[pid] = {
+                    "productId": pid,
+                    "currency": "EUR",
+                    "catalogPrice": {"value": net},
+                    "priceWithTax": {"value": round(net * 1.14, 2)},
+                }
+        return out
+
+    def fake_valio_availability(customer, day, ids):
+        out = {}
+        for raw_id in ids:
+            pid = str(raw_id)
+            pr = fake_products.get(pid)
+            if pr:
+                out[pid] = {
+                    "productId": pid,
+                    "closingTime": "2026-11-12T23:59:59+02:00",
+                    "salesBlock": False,
+                    "scheduleLines": [
+                        {
+                            "salesBlock": False,
+                            "availableAmount": 2000.0,
+                            "availableDate": day.isoformat(),
+                            "salesUnit": pr.sales_unit,
+                        }
+                    ],
+                }
+        return out
+
+    monkeypatch.setattr(valio, "price", fake_valio_price)
+    monkeypatch.setattr(valio, "availability", fake_valio_availability)
 
     def fake_price_lines(customer, delivery_date, req_lines):
         ql = []
         for rl in req_lines:
             pr = fake_products.get(rl.product_id)
-            unit_price = 3.0 if rl.product_id == "P-MILK-1" else 4.0
+            unit_price = prices.get(rl.product_id, 4.0)
             ql.append(
                 QuoteLine(
                     product_id=rl.product_id,
@@ -266,6 +423,123 @@ def test_live_approvals_mandates_and_audit_integration(live_client):
     assert live_client.get("/v1/approvals", headers=admin).json() == []
 
 
+def test_live_stockout_reopen_and_agent_requested_approvals(live_client):
+    admin = {"X-Admin-Key": "demo-admin"}
+    aurora_agent = {"X-Agent-Key": "demo-hotel-aurora"}
+    school_agent = {"X-Agent-Key": "demo-school-hervanta"}
+    delivery = (datetime.now(timezone.utc).date() + timedelta(days=3)).isoformat()
+
+    q_auto = live_client.post(
+        "/v1/quotes",
+        json={"offers": [{"product_id": "P-MILK-1", "quantity": 200}], "delivery_date": delivery},
+        headers=aurora_agent,
+    ).json()
+    o_auto = live_client.post(
+        "/v1/orders",
+        json={"quote_id": q_auto["quote_id"], "jws": q_auto["jws"]},
+        headers=aurora_agent,
+    ).json()
+    assert o_auto["status"] == "confirmed"
+    assert o_auto["decision"]["outcome"] == "auto"
+    assert live_client.get("/v1/approvals", headers=admin).json() == []
+
+    sim = live_client.post(
+        "/v1/admin/simulate",
+        json={"product_id": "P-MILK-1", "available_amount": 0},
+        headers=admin,
+    )
+    assert sim.status_code == 200
+    assert sim.json() == {"ok": True}
+
+    pending = live_client.get("/v1/approvals", headers=admin).json()
+    assert len(pending) == 1
+    reopened = pending[0]
+    assert reopened["order_id"] == o_auto["order_id"]
+    assert reopened["status"] == "pending_approval"
+    assert reopened["decision"]["outcome"] == "needs_approval"
+    assert [r["code"] for r in reopened["decision"]["reasons"]] == ["STOCKOUT"]
+    assert "Stock dropped after the order" in reopened["decision"]["reasons"][0]["text"]
+    assert any(
+        s["original_id"] == "P-MILK-1" and s["substitute_id"] == "P-MILK-2"
+        for s in reopened["substitutions"]
+    )
+
+    re_ok = live_client.post(
+        f"/v1/approvals/{reopened['order_id']}",
+        json={"approve": True, "by": "Laura Virtanen", "note": "Accept organic refill"},
+        headers=admin,
+    )
+    assert re_ok.status_code == 200
+    assert re_ok.json()["status"] == "confirmed"
+    assert live_client.get("/v1/approvals", headers=admin).json() == []
+
+    stock_audit = live_client.get(f"/v1/audit?order_id={reopened['order_id']}", headers=admin).json()["events"]
+    assert any(e["action"] == "order.stockout" for e in stock_audit)
+    assert any(
+        e["action"] == "approval.approved" and e["actor"] == "human:Laura Virtanen"
+        for e in stock_audit
+    )
+
+    clr = live_client.delete("/v1/admin/simulate", headers=admin)
+    assert clr.status_code == 200 and clr.json() == {"ok": True}
+
+    q_ask = live_client.post(
+        "/v1/quotes",
+        json={"offers": [{"product_id": "P-MILK-1", "quantity": 100}], "delivery_date": delivery},
+        headers=school_agent,
+    ).json()
+    o_ask = live_client.post(
+        "/v1/orders",
+        json={
+            "quote_id": q_ask["quote_id"],
+            "jws": q_ask["jws"],
+            "ask_human": True,
+            "note": "Confirm 06:30 kitchen dock delivery with head cook.",
+        },
+        headers=school_agent,
+    ).json()
+    assert o_ask["status"] == "pending_approval"
+    assert o_ask["decision"]["outcome"] == "needs_approval"
+    assert o_ask["decision"]["reasons"] == [
+        {"code": "AGENT_REQUESTED", "text": "Confirm 06:30 kitchen dock delivery with head cook."}
+    ]
+
+    q_ask_default = live_client.post(
+        "/v1/quotes",
+        json={"offers": [{"product_id": "P-MILK-1", "quantity": 50}], "delivery_date": delivery},
+        headers=aurora_agent,
+    ).json()
+    o_ask_default = live_client.post(
+        "/v1/orders",
+        json={"quote_id": q_ask_default["quote_id"], "jws": q_ask_default["jws"], "ask_human": True},
+        headers=aurora_agent,
+    ).json()
+    assert o_ask_default["status"] == "pending_approval"
+    assert o_ask_default["decision"]["reasons"] == [
+        {"code": "AGENT_REQUESTED", "text": "The agent asked for human approval."}
+    ]
+
+    pending_ask = live_client.get("/v1/approvals", headers=admin).json()
+    by_oid = {x["order_id"]: x for x in pending_ask}
+    assert set(by_oid.keys()) == {o_ask["order_id"], o_ask_default["order_id"]}
+    assert by_oid[o_ask["order_id"]]["decision"]["reasons"][0]["code"] == "AGENT_REQUESTED"
+    assert by_oid[o_ask_default["order_id"]]["decision"]["reasons"][0]["code"] == "AGENT_REQUESTED"
+
+    ask_ok = live_client.post(
+        f"/v1/approvals/{o_ask['order_id']}",
+        json={"approve": True, "by": "Sari Nieminen", "note": "Head cook confirmed 06:30"},
+        headers=admin,
+    )
+    assert ask_ok.status_code == 200 and ask_ok.json()["status"] == "confirmed"
+    ask_rej = live_client.post(
+        f"/v1/approvals/{o_ask_default['order_id']}",
+        json={"approve": False, "by": "Mikko Heikkinen", "note": "Wait until tomorrow"},
+        headers=admin,
+    )
+    assert ask_rej.status_code == 200 and ask_rej.json()["status"] == "rejected"
+    assert live_client.get("/v1/approvals", headers=admin).json() == []
+
+
 def test_inbox_js_dom_deep_link_who_subs_and_decide():
     node = _node_bin()
     harness = r"""
@@ -321,6 +595,7 @@ function makeEnv(opts) {
       else if (k === "class") this.className = s;
       else if (k === "value") this.value = s;
       else if (k === "hidden") this.hidden = true;
+      else if (k === "disabled") this.disabled = true;
       else if (k.startsWith("data-")) {
         const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
         this.dataset[camel] = s;
@@ -435,9 +710,22 @@ function makeEnv(opts) {
     addEventListener() {}
   };
 
+  let clockOffset = 0;
+  const RealDate = Date;
+  class FakeDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(RealDate.now() + clockOffset);
+      else super(...args);
+    }
+    static now() { return RealDate.now() + clockOffset; }
+    static parse(s) { return RealDate.parse(s); }
+    static UTC(...a) { return RealDate.UTC(...a); }
+  }
+
   const win = {
     document: doc,
     location: loc,
+    Date: FakeDate,
     URLSearchParams,
     Intl,
     CustomEvent: class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } },
@@ -466,7 +754,7 @@ function makeEnv(opts) {
   const ctx = vm.createContext(win);
   vm.runInContext(shellSrc, ctx);
   vm.runInContext(inboxSrc, ctx);
-  return { win, doc, byId, storeData };
+  return { win, doc, byId, storeData, advanceClock(ms) { clockOffset += ms; } };
 }
 
 async function flush() {
@@ -636,6 +924,153 @@ async function flush() {
   await flush();
   if (live.byId.dcount.textContent !== "2" || !live.byId.dlist.textContent.includes("Too expensive")) {
     throw new Error("Rejected order missing in Decided today: " + live.byId.dlist.textContent);
+  }
+
+  const mStock = makeEnv({ search: "?mock", hash: "#ord_5c18a2", wide: true });
+  await flush();
+  const stockStopTags = mStock.doc.querySelectorAll(".tag").filter(t => t.classList.contains("stop") && t.textContent === "STOCKOUT");
+  if (stockStopTags.length < 2) {
+    throw new Error("Expected STOCKOUT tag stop badge in list and detail: " + stockStopTags.length);
+  }
+  const stockDetail = mStock.byId.detailPane.textContent;
+  if (!stockDetail.includes("Substitute for P-100234") || !stockDetail.includes("Replaces Valio Eila laktoositon kevytmaitojuoma")) {
+    throw new Error("STOCKOUT detail missing refilled substitute line diff: " + stockDetail);
+  }
+
+  const mAgent = makeEnv({ search: "?mock", hash: "#ord_6d04f9", wide: true });
+  await flush();
+  const agentTags = mAgent.doc.querySelectorAll(".tag").filter(t => t.classList.contains("neutral") && t.textContent === "AGENT_REQUESTED");
+  if (agentTags.length < 2) {
+    throw new Error("Expected AGENT_REQUESTED tag neutral badge in list and detail: " + agentTags.length);
+  }
+  if (!mAgent.byId.detailPane.textContent.includes("Confirm early 06:30 kitchen dock delivery")) {
+    throw new Error("AGENT_REQUESTED detail missing agent note");
+  }
+
+  let approvalPostCalls = 0;
+  let w2Orders = [];
+  const w2 = makeEnv({
+    wide: true,
+    storage: { "aimo.customer": "hotel-aurora", "aimo.approver": "Laura Virtanen" },
+    fetch: async (url) => {
+      if (url.startsWith("/v1/approvals/")) {
+        approvalPostCalls++;
+        return { ok: true, status: 200, json: async () => ({ status: "confirmed" }) };
+      }
+      if (url === "/v1/approvals") return { ok: true, status: 200, json: async () => w2Orders.slice() };
+      if (url.startsWith("/v1/mandate")) return { ok: true, status: 200, json: async () => ({ approvers: ["Laura Virtanen"] }) };
+      if (url.startsWith("/v1/audit")) return { ok: true, status: 200, json: async () => ({ events: [] }) };
+      return { ok: false, status: 404, json: async () => ({}) };
+    }
+  });
+  await flush();
+
+  const multiReasonOrder = {
+    order_id: "ord_w2_codes",
+    quote_id: "q_w2_codes",
+    customer: "hotel-aurora",
+    agent_id: "buyer-aurora",
+    status: "pending_approval",
+    lines: [{ product_id: "P-10", name: "Valio voi", quantity: 10, sales_unit: "KG", unit_price_net: 10, line_total_net: 100 }],
+    total_net: 100,
+    substitutions: [],
+    decision: {
+      outcome: "needs_approval",
+      reasons: [
+        { code: "OVER_ORDER_LIMIT", text: "Over per-order limit" },
+        { code: "OVER_WEEK_LIMIT", text: "Over weekly budget" },
+        { code: "UNKNOWN_PRODUCT", text: "Missing allergen record" },
+        { code: "NON_PREFERRED_BRAND", text: "Non-preferred brand note" }
+      ]
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    delivery_date: "2026-11-16",
+    valid_until: new Date(Date.now() + 1800e3).toISOString()
+  };
+  w2Orders = [multiReasonOrder];
+  await w2.win.__inbox.poll();
+  await flush();
+
+  for (const warnCode of ["OVER_ORDER_LIMIT", "OVER_WEEK_LIMIT", "UNKNOWN_PRODUCT"]) {
+    const hits = w2.doc.querySelectorAll(".tag").filter(t => t.classList.contains("warn") && t.textContent === warnCode);
+    if (hits.length < 2) throw new Error("Missing tag warn for " + warnCode);
+  }
+  const npbHits = w2.doc.querySelectorAll(".tag").filter(t => t.classList.contains("neutral") && t.textContent === "NON_PREFERRED_BRAND");
+  if (npbHits.length < 2) throw new Error("Missing tag neutral for NON_PREFERRED_BRAND");
+
+  const rejBtn = w2.byId.rejectBtn;
+  const appBtn = w2.byId.approveBtn;
+  const cancelBtn = w2.byId.cancelRejBtn;
+  const noteBox = w2.byId.noteBox;
+  const noteInput = w2.byId.note;
+  if (!rejBtn || !appBtn || !cancelBtn || !noteBox || !noteInput) {
+    throw new Error("Missing reject/approve action elements");
+  }
+  rejBtn.click();
+  if (noteBox.hidden || !appBtn.hidden || cancelBtn.hidden || rejBtn.textContent !== "Reject order") {
+    throw new Error("Clicking Reject did not enter reject mode");
+  }
+  noteInput.value = "Draft rejection note";
+  noteInput.dispatch("input");
+  if (rejBtn.disabled) throw new Error("Reject order should enable once note is entered");
+  let escPrevented = false;
+  noteInput.dispatch("keydown", {
+    type: "keydown",
+    key: "Escape",
+    preventDefault() { escPrevented = true; },
+    stopPropagation() {}
+  });
+  if (!escPrevented) throw new Error("Escape keydown should call preventDefault");
+  if (!noteBox.hidden || appBtn.hidden || !cancelBtn.hidden || rejBtn.textContent !== "Reject" || rejBtn.disabled) {
+    throw new Error("Escape key in #note did not exit reject mode cleanly");
+  }
+
+  const untilEl = w2.doc.querySelector("[data-until]");
+  if (!untilEl || !untilEl.classList.contains("warn") || !w2.byId.expNote.hidden || appBtn.disabled) {
+    throw new Error("Active quote should start as tag warn with Approve enabled and expNote hidden");
+  }
+  w2.advanceClock(3600e3);
+  w2.win.__inbox.tick();
+  if (!untilEl.classList.contains("stop") || untilEl.textContent !== "expired") {
+    throw new Error("tick() did not flip expired valid_until to tag stop: " + untilEl.className + " / " + untilEl.textContent);
+  }
+  if (w2.byId.expNote.hidden || !w2.byId.expNote.textContent.toLowerCase().includes("expired")) {
+    throw new Error("tick() did not reveal inline expired note");
+  }
+  if (!appBtn.disabled) {
+    throw new Error("tick() did not disable Approve button when quote expired");
+  }
+  appBtn.click();
+  await flush();
+  if (approvalPostCalls !== 0) {
+    throw new Error("Clicking Approve on an expired quote must not submit approval");
+  }
+
+  const alreadyExpired = Object.assign({}, multiReasonOrder, {
+    order_id: "ord_w2_expired",
+    valid_until: new Date(Date.now() - 600e3).toISOString()
+  });
+  w2Orders = [alreadyExpired];
+  await w2.win.__inbox.poll();
+  await flush();
+  const untilEl2 = w2.doc.querySelector("[data-until]");
+  if (!untilEl2 || untilEl2.className !== "tag stop" || untilEl2.textContent !== "expired") {
+    throw new Error("renderDetail() did not render past valid_until as tag stop expired");
+  }
+  if (w2.byId.expNote.hidden || !w2.byId.approveBtn.disabled) {
+    throw new Error("renderDetail() did not guard expired quote with expNote and disabled Approve");
+  }
+  if (w2.byId.rejectBtn.disabled) {
+    throw new Error("Reject button should remain enabled on expired quote");
+  }
+  w2.byId.rejectBtn.click();
+  if (!w2.byId.expNote.hidden || w2.byId.noteBox.hidden) {
+    throw new Error("Opening Reject on expired quote should hide expNote and show noteBox");
+  }
+  w2.byId.note.dispatch("keydown", { type: "keydown", key: "Escape" });
+  if (w2.byId.expNote.hidden || !w2.byId.noteBox.hidden) {
+    throw new Error("Pressing Escape on expired quote reject form should restore expNote");
   }
 })();
 """
