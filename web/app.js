@@ -1,0 +1,966 @@
+// Trusted Trade console. Vanilla ES modules, no build step.
+// ?mock=1 plays the demo with no backend. ?api=http://host:port points at a gateway on another origin.
+import {
+  h, mount, eur, num, pct, time, hm, day, dayTime, full, countdown, shortHash, groupedHash, relTime,
+  claimLabel, roleLabel, flagInfo, flagEl, TIER_LABEL, TIER_HINT, VERDICT, actorKind, pretty, download, verifyJws,
+} from "./util.js";
+import { createLiveApi } from "./api.js";
+
+const params = new URLSearchParams(location.search);
+const MOCK = params.get("mock") === "1";
+const $ = (id) => document.getElementById(id);
+
+const MODELS = [
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", hint: "agent default" },
+  { id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen", hint: "reasoning" },
+  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", hint: "fast" },
+];
+const THINKING = ["minimal", "low", "medium", "high"];
+const DEFAULT_REQ = {
+  "hotel-aurora": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+  "school-tampere": "We need 150 litres of milk-free drink for school lunches in Tampere by Tuesday. Some pupils have milk and nut allergies.",
+  "hospital-meilahti": "We need 40 kg of gluten-free bread for the Meilahti wards by Wednesday.",
+};
+const TIER_ORDER = ["preferred", "best", "better", "good"];
+
+let api;
+const S = {
+  customers: [], customersState: "loading", customersError: null,
+  customerId: "hotel-aurora", model: MODELS[0].id, thinking: "medium", text: DEFAULT_REQ["hotel-aurora"], textEdited: false,
+  run: null,                   // {id, status: running|waiting|done|error, steps[], need, plan, quote, decision, order, error}
+  tab: "plan",
+  approvals: { state: "idle", items: [], error: null },
+  decided: new Map(),          // order_id -> {order, quote, decision}
+  selected: null,              // order_id
+  deciding: null, decideError: null,
+  approver: "", note: "",
+  sigs: new Map(),             // quote_hash -> {state, detail} | "pending"
+  jwks: null,
+  audit: { state: "idle", events: [], error: null, scope: "flow", verify: null, verifying: false },
+};
+let closeStream = null;
+
+// ================================================================== boot
+async function boot() {
+  if (MOCK) {
+    const { createMockApi } = await import("./mock.js");
+    api = await createMockApi();
+  } else {
+    api = createLiveApi(params.get("api") || "");
+  }
+  const pill = $("mode-pill");
+  pill.textContent = MOCK ? "MOCK DATA · no backend" : `LIVE · ${api.base.replace(/^https?:\/\//, "")}`;
+  pill.className = `mode-pill ${MOCK ? "mock" : "live"}`;
+  for (const k of ["docs", "otap", "jwks", "mcp"]) $(`lnk-${k}`).href = api.links[k];
+  $("btn-connect").addEventListener("click", openConnect);
+  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
+  setTab("plan");
+  renderRequest();
+  renderTimeline();
+  renderPlan();
+  renderApprovals();
+  renderAudit();
+  setInterval(tick, 1000);
+  await loadCustomers();
+  if (params.get("customer") && S.customers.find((c) => c.id === params.get("customer"))) selectCustomer(params.get("customer"));
+  refreshApprovals();
+  // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
+  if (params.get("autorun") === "1") startRun();
+  else if (params.get("tab")) setTab(params.get("tab"));
+  if (!MOCK) setInterval(() => { if (S.tab === "approvals" && !S.deciding) refreshApprovals(true); }, 5000);
+}
+
+function banner(msg, actions = [], kind = "") {
+  const el = $("global-banner");
+  if (!msg) { el.hidden = true; return; }
+  el.hidden = false;
+  el.className = `global-banner ${kind}`;
+  mount(el, h("span", { class: "grow" }, msg), actions);
+}
+
+async function loadCustomers() {
+  S.customersState = "loading";
+  renderRequest();
+  try {
+    let list = await api.customers();
+    if (list && !Array.isArray(list)) list = list.customers || Object.values(list);
+    S.customers = (list || []).map(normCustomer).filter((c) => c.id);
+    S.customersState = "ok";
+    if (!S.customers.find((c) => c.id === S.customerId) && S.customers[0]) selectCustomer(S.customers[0].id);
+    banner(null);
+  } catch (e) {
+    S.customersState = "error";
+    S.customersError = e.message;
+    S.customers = Object.keys(DEFAULT_REQ).map((id) => normCustomer({ customer_id: id }));
+    banner(`Gateway not reachable: ${e.message}. Start it with “uv run aimo serve”, or play the demo without a backend.`, [
+      h("button", { class: "btn btn-sm", onclick: loadCustomers }, "Retry"),
+      h("a", { class: "btn btn-sm btn-primary", href: "?mock=1" }, "Open mock demo"),
+    ]);
+  }
+  renderRequest();
+}
+
+function toLines(v) {
+  if (!v) return [];
+  if (typeof v === "string") return [v];
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : x.message || x.text || x.summary || JSON.stringify(x)));
+  if (typeof v === "object") return Object.entries(v).map(([k, x]) => `${k.replace(/_/g, " ")}: ${typeof x === "object" ? JSON.stringify(x) : x}`);
+  return [String(v)];
+}
+
+function normCustomer(c) {
+  const id = c.customer_id || c.id;
+  const m = c.mandate || {};
+  return {
+    id,
+    name: c.name || c.display_name || id,
+    segment: c.segment ? c.segment.charAt(0).toUpperCase() + c.segment.slice(1) : c.type || "",
+    agent_id: c.agent_id || m.agent_id || c.agents?.[0]?.agent_id || c.mandates?.[0]?.agent_id || `${id}/buyer-1`,
+    approvers: c.approvers || [],
+    policy_id: c.policy_id || m.policy_id || id,
+    scopes: m.scopes || c.scopes || null,
+    summary: toLines(c.summary || c.policy_summary || c.rules || c.policy),
+    default_request: c.default_request || DEFAULT_REQ[id] || "",
+  };
+}
+
+function selectCustomer(id) {
+  S.customerId = id;
+  const c = S.customers.find((x) => x.id === id);
+  if (!S.textEdited && c) S.text = c.default_request || DEFAULT_REQ[id] || S.text;
+  S.approver = "";
+  renderRequest();
+}
+
+// ================================================================== tabs
+function setTab(tab) {
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
+  const changed = S.tab !== tab;
+  for (const v of ["plan", "approvals", "audit"]) $(`view-${v}`).hidden = v !== tab;
+  if (changed) document.querySelector(".tab-body").scrollTop = 0;
+  S.tab = tab;
+  if (tab === "audit") loadAudit();
+  if (tab === "approvals") refreshApprovals(true);
+}
+
+function updateCounts() {
+  const n = S.approvals.items.length;
+  const c = $("cnt-approvals");
+  c.textContent = n ? String(n) : "";
+  c.className = `tab-count ${n ? "attn" : ""}`;
+  const p = S.run?.plan;
+  $("cnt-plan").textContent = p ? String(p.candidates?.length || "") : "";
+  $("cnt-audit").textContent = S.audit.events.length ? String(S.audit.events.length) : "";
+}
+
+// ================================================================== request card
+function renderRequest() {
+  const running = S.run && S.run.status === "running";
+  const c = S.customers.find((x) => x.id === S.customerId);
+  const sel = h("select", { class: "input", id: "customer", disabled: running || S.customersState === "loading", onchange: (e) => selectCustomer(e.target.value) },
+    (S.customers.length ? S.customers : [{ id: S.customerId, name: "Loading customers…" }]).map((x) =>
+      h("option", { value: x.id, selected: x.id === S.customerId }, x.name + (x.segment ? ` · ${x.segment}` : ""))));
+  const mandate = S.customersState === "loading"
+    ? h("div", { class: "mandate" }, h("div", { class: "skeleton", style: { height: "14px", width: "70%" } }), h("div", { class: "skeleton", style: { height: "14px", width: "50%" } }))
+    : c && h("details", { class: "mandate mandate-d", open: !S.run && c.summary.length <= 4 },
+        h("summary", null, "Mandate ", h("b", null, c.agent_id), " under policy ", h("b", null, c.policy_id), h("span", { class: "more" }, `${c.summary.length} rules ›`)),
+        c.summary.length ? h("ul", null, c.summary.map((s) => h("li", null, s))) : h("div", { class: "faint" }, "Policy summary not provided by /v1/customers."));
+  if (S.run && !S.editing) {
+    // Compact view while a run is on screen: the timeline gets the room.
+    mount($("request-card"),
+      h("div", { class: "req-compact" },
+        h("div", { style: { minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" } },
+          h("span", { class: "section-label" }, c ? `${c.name}${c.segment ? " · " + c.segment : ""}` : S.customerId),
+          h("div", { class: "q" }, "“", S.text, "”"),
+          h("span", { class: "faint small mono" }, `${S.model} · thinking ${S.thinking}`)),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } },
+          running ? h("span", { class: "status neutral" }, h("span", { class: "spinner", style: { width: "10px", height: "10px" } }), "Running")
+            : S.run.status === "waiting" ? h("span", { class: "status pending" }, "Awaiting approval")
+            : S.run.status === "error" ? h("span", { class: "status bad" }, "Failed")
+            : h("span", { class: "status ok" }, "Finished"),
+          h("button", { class: "btn btn-sm", disabled: running, onclick: () => { S.editing = true; renderRequest(); } }, "New request"))),
+      mandate);
+    return;
+  }
+  const ta = h("textarea", { class: "input", id: "req-text", rows: 2, disabled: running, oninput: (e) => { S.text = e.target.value; S.textEdited = true; } });
+  ta.value = S.text;
+  const runBtn = h("button", { class: "btn btn-primary btn-lg", id: "btn-run", disabled: running || !S.text.trim(), onclick: startRun },
+    running ? [h("span", { class: "spinner" }), "Running"] : "Run agent");
+  mount($("request-card"),
+    h("div", { class: "field" }, h("label", { for: "customer" }, "Customer"), sel),
+    mandate,
+    h("div", { class: "field" }, h("label", { for: "req-text" }, "Request to the buyer agent"), ta),
+    h("div", { class: "req-controls" },
+      h("div", { class: "field" }, h("label", { for: "model" }, "Model"),
+        h("select", { class: "input", id: "model", disabled: running, onchange: (e) => (S.model = e.target.value) },
+          MODELS.map((m) => h("option", { value: m.id, selected: m.id === S.model, title: m.hint }, m.label)))),
+      h("div", { class: "field" }, h("label", { for: "thinking" }, "Thinking"),
+        h("select", { class: "input", id: "thinking", disabled: running, onchange: (e) => (S.thinking = e.target.value) },
+          THINKING.map((t) => h("option", { value: t, selected: t === S.thinking }, t[0].toUpperCase() + t.slice(1))))),
+      runBtn));
+}
+
+// ================================================================== run
+async function startRun() {
+  if (closeStream) closeStream();
+  S.editing = false;
+  S.run = { id: null, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null };
+  S.audit.verify = null;
+  renderRequest(); renderTimeline(); renderPlan(); updateCounts();
+  setTab("plan");
+  try {
+    const { run_id } = await api.startRun({ text: S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking });
+    S.run.id = run_id;
+    $("run-meta").textContent = run_id;
+    closeStream = api.streamRun(run_id, onStep, (info) => {
+      if (S.run && S.run.status === "running" && info && info.error) {
+        S.run.status = "error";
+        S.run.error = "The event stream closed before the run finished.";
+        renderTimeline(); renderRequest();
+      }
+    });
+  } catch (e) {
+    S.run.status = "error";
+    S.run.error = e.message;
+    renderRequest(); renderTimeline(); renderPlan();
+  }
+}
+
+let auditTimer = null;
+function onStep(step) {
+  const r = S.run;
+  if (!r || (r.id && step.run_id && step.run_id !== r.id)) return;
+  r.steps.push(step);
+  const d = step.data || {};
+  if (d.need) r.need = d.need;
+  if (step.kind === "plan" && (d.plan || d.lines)) { r.plan = d.plan || d; r.need = r.plan.need || r.need; }
+  if (d.quote) r.quote = d.quote;
+  if (step.kind === "quote" && !d.quote && d.quote_id) r.quote = d;
+  if (d.decision) r.decision = d.decision;
+  if (d.order) r.order = d.order;
+  if (step.kind === "approval_wait") r.status = "waiting";
+  if (step.kind === "decision" && !d.order && d.order_id) r.order = { ...(r.order || {}), order_id: d.order_id, status: d.status, quote_id: r.quote?.quote_id, decision: d.decision };
+  if (step.kind === "final") {
+    r.status = d.status === "error" ? "error" : "done";
+    if (r.status === "error") r.error = d.summary || step.title;
+  }
+  // `error` steps are non-fatal (a retry, a model fallback); only `final` ends the run.
+
+  appendStep(step);
+  if (d.need || ["plan", "decision", "error", "final"].includes(step.kind)) renderPlan();
+  if (step.kind === "plan") setTab("plan");
+  if (step.kind === "decision" || step.kind === "approval_wait" || step.kind === "order") {
+    const oid = d.order_id || d.order?.order_id;
+    if (oid) S.selected = oid;
+    if (d.order && d.order.status !== "pending_approval") S.decided.set(d.order.order_id, { order: d.order, quote: r.quote, decision: d.order.decision || r.decision });
+    refreshApprovals(true);
+    if (step.kind === "approval_wait") setTimeout(() => setTab("approvals"), 900);
+    if (step.kind === "approval_wait" && params.get("autoapprove") === "1") setTimeout(() => {
+      const it = selectedItem();
+      if (it && it.quote) decide(it.order, it.quote, "approve").then(() => { if (params.get("tab")) setTab(params.get("tab")); });
+    }, 2500);
+  }
+  if (["final", "error", "approval_wait"].includes(step.kind)) renderRequest();
+  clearTimeout(auditTimer);
+  auditTimer = setTimeout(() => loadAudit(true), 400);
+  updateCounts();
+}
+
+// ================================================================== timeline
+const callEls = new Map(); // call_id -> {li, call}
+
+function renderTimeline() {
+  const ol = $("timeline");
+  callEls.clear();
+  ol.replaceChildren();
+  const r = S.run;
+  $("run-meta").textContent = r?.id || "";
+  if (!r) {
+    ol.appendChild(h("li", { class: "empty" },
+      h("strong", null, "The agent's work streams here"),
+      h("span", null, "Each step appears live: the parsed need, every MCP tool call with its arguments and latency, and any exception the agent handles (cut-off passed, partial stock, unknown allergens, prompt injection)."),
+      h("button", { class: "btn btn-primary btn-sm", onclick: startRun }, "Run the example request")));
+    return;
+  }
+  if (r.error && !r.steps.length) {
+    ol.appendChild(h("li", { class: "tl-item k-error" }, h("span", { class: "tl-icon" }, "!"),
+      h("div", { class: "tl-main" }, h("div", { class: "tl-title" }, "Could not start the run"), h("div", { class: "tl-text" }, r.error),
+        h("div", null, h("button", { class: "btn btn-sm", onclick: startRun }, "Try again")))));
+    return;
+  }
+  if (!r.steps.length) {
+    ol.appendChild(h("li", { class: "tl-item" }, h("span", { class: "tl-icon" }, h("span", { class: "spinner", style: { width: "10px", height: "10px" } })),
+      h("div", { class: "tl-main" }, h("div", { class: "tl-title" }, "Starting the buyer agent…"))));
+    return;
+  }
+  r.steps.forEach(appendStep);
+}
+
+function appendStep(step) {
+  const ol = $("timeline");
+  if (S.run.steps.length === 1 || ol.querySelector(".empty") || (ol.children.length === 1 && !ol.firstChild.dataset.seq)) ol.replaceChildren();
+  const d = step.data || {};
+  if (step.kind === "tool_result") {
+    const key = d.call_id && callEls.has(d.call_id) ? d.call_id : [...callEls.keys()].reverse().find((k) => !callEls.get(k).result && callEls.get(k).call.data?.name === (d.name || step.title));
+    if (key) {
+      const rec = callEls.get(key);
+      rec.result = step;
+      const li = toolItem(rec.call, step);
+      rec.li.replaceWith(li);
+      rec.li = li;
+      scrollTimeline();
+      return;
+    }
+  }
+  let li;
+  if (step.kind === "tool_call") {
+    li = toolItem(step, null);
+    callEls.set(d.call_id || `seq${step.seq}`, { li, call: step, result: null });
+  } else li = stepItem(step);
+  li.dataset.seq = step.seq;
+  ol.appendChild(li);
+  scrollTimeline();
+}
+
+function scrollTimeline() {
+  const pane = $("timeline-scroll");
+  requestAnimationFrame(() => pane.scrollTo({ top: pane.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
+}
+
+function argSummary(args) {
+  if (!args || typeof args !== "object") return "";
+  return Object.entries(args).map(([k, v]) => {
+    let s = typeof v === "string" ? JSON.stringify(v) : Array.isArray(v) ? (v.length > 4 ? `[${v.length} items]` : JSON.stringify(v)) : typeof v === "object" && v ? "{…}" : String(v);
+    if (s.length > 48) s = s.slice(0, 45) + "…";
+    return `${k}=${s}`;
+  }).join("  ");
+}
+
+function jsonDetails(label, obj) {
+  if (obj == null) return null;
+  const pre = h("pre", { class: "code" });
+  const det = h("details", { class: "json" }, h("summary", null, label), pre);
+  det.addEventListener("toggle", () => { if (det.open && !pre.textContent) pre.textContent = pretty(obj); });
+  return det;
+}
+
+function exceptionsOf(d) {
+  const out = [];
+  for (const e of d.exceptions || []) out.push(typeof e === "string" ? { code: e, message: flagInfo(e).label } : e);
+  if (!out.length && Array.isArray(d.result)) {
+    for (const o of d.result) {
+      if (!o || typeof o !== "object") continue;
+      const id = o.product_id || o.id;
+      if (o.cutoff_passed) out.push({ code: "cutoff_passed", message: `${id}: order cut-off passed${o.closing_time ? ` ${dayTime(o.closing_time)}` : ""}.` });
+      for (const i of o.issues || []) if (i !== "cutoff_passed") out.push({ code: i, message: `${id}: ${flagInfo(i).label.toLowerCase()}${i === "partial_stock" && o.available_amount != null ? `, ${num(o.available_amount, 0)} units available` : ""}.` });
+    }
+  }
+  for (const f of d.flags || []) if (!out.find((x) => x.code === f)) out.push({ code: f, message: flagInfo(f).label });
+  if (d.suspicious || d.injection) out.push({ code: "injection_flagged", message: (d.reasons || []).join("; ") || "Supplier text flagged as prompt injection and ignored." });
+  return out;
+}
+
+function excEls(d) {
+  return exceptionsOf(d).map((e) => {
+    const f = flagInfo(e.code);
+    const sev = f.sev === "bad" ? "bad" : "warn";
+    return h("div", { class: `exc ${sev}` }, h("b", null, sev === "bad" ? "✕" : "!"),
+      h("div", null, h("b", null, f.label + ". "), h("span", { class: "exc-body" }, e.message && e.message !== f.label ? e.message : "")));
+  });
+}
+
+function toolItem(call, result) {
+  const d = call.data || {};
+  const rd = result?.data || {};
+  const failed = result && (rd.ok === false || rd.error || (rd.result && typeof rd.result === "object" && !Array.isArray(rd.result) && rd.result.error));
+  const latMs = rd.latency_ms ?? (rd.latency_s != null ? rd.latency_s * 1000 : null);
+  return h("li", { class: `tl-item k-tool ${failed ? "k-error" : ""}`, "data-seq": call.seq },
+    h("span", { class: "tl-icon", title: "Tool call" }, "ƒ"),
+    h("div", { class: "tl-main" },
+      h("div", { class: "tl-title" },
+        h("span", { class: "grow" }, h("span", { class: "tool-name" }, d.name || call.title)),
+        result ? (latMs != null ? h("span", { class: "latency" }, `${num(latMs, 0)} ms`) : null) : h("span", { class: "spinner", style: { width: "11px", height: "11px", color: "var(--accent)" } }),
+        h("span", { class: "tl-time" }, time(call.ts))),
+      d.args ? h("div", { class: "tool-args" }, argSummary(d.args)) : null,
+      result ? h("div", { class: "tl-text" }, rd.summary || rd.message || result.title || "Result received") : null,
+      result ? excEls(rd) : null,
+      h("div", { class: "row wrap", style: { gap: "12px" } }, jsonDetails("Arguments", d.args), result ? jsonDetails("Result", rd.result ?? rd) : null)));
+}
+
+function needChips(need) {
+  if (!need) return null;
+  const chips = [];
+  const chip = (k, v) => h("span", { class: "chip" }, h("i", null, k), h("b", null, v));
+  chips.push(chip("Item", need.product_query));
+  (need.required_claims || []).forEach((c) => chips.push(chip("Claim", claimLabel(c))));
+  (need.excluded_allergens || []).forEach((a) => chips.push(chip("No", a)));
+  chips.push(chip("Qty", `${num(need.quantity)} ${need.unit}`));
+  if (need.delivery_by) chips.push(chip("By", day(need.delivery_by)));
+  (need.preferred_product_ids || []).forEach((p) => chips.push(chip("Usual", p)));
+  const pr = need.preferences || {};
+  for (const [k, v] of Object.entries(pr)) if (v != null && typeof v !== "object" && !/^(usual_weekly_volume_l|parsed_by|standing_order|injection)/.test(k)) chips.push(chip(k.replace(/_/g, " "), String(v)));
+  return h("div", { class: "chips" }, chips);
+}
+
+function stepItem(step) {
+  const d = step.data || {};
+  const k = step.kind;
+  const cls = { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-warnstep", final: d.status === "error" ? "k-error" : "k-final" }[k] || "";
+  const icon = { thought: "·", plan: "P", quote: "Q", decision: "§", approval_wait: "…", order: "✓", error: "!", final: "■" }[k] || "·";
+  const body = [];
+  const ttl = String(step.title || "").replace(/…$/, "");
+  if (d.text && !(d.text.startsWith(ttl) && d.text.length < ttl.length + 20)) body.push(h("div", { class: "tl-text" }, d.text));
+  if (k === "final" && d.summary) body.push(h("div", { class: "tl-text", style: { color: "var(--text)" } }, d.summary));
+  if (d.drift) body.push(h("div", { class: "exc warn" }, h("b", null, "!"), h("div", null, h("b", null, "Unusual volume. "), h("span", { class: "exc-body" }, step.title))));
+  if (d.excerpt || /(flagged|suspected) (suspected )?prompt injection/i.test(step.title)) body.push(h("div", { class: "exc bad" }, h("b", null, "✕"), h("div", null, h("b", null, "Prompt injection flagged and redacted. "),
+    h("span", { class: "exc-body" }, d.excerpt ? `“${d.excerpt}”` : "", (d.reasons || []).length ? ` (${d.reasons.join("; ")})` : ""))));
+  if (d.need) body.push(needChips(d.need));
+  if (k === "plan") {
+    const p = d.plan || d;
+    body.push(h("div", { class: "tl-text" }, `${p.lines?.length || 0} line(s), covers ${num(p.covered_amount)} ${p.need?.unit || ""}, total ${eur(p.total_net)} net.`),
+      h("div", null, h("button", { class: "btn btn-quiet btn-sm", onclick: () => setTab("plan") }, "Open plan →")));
+  }
+  if (k === "quote") {
+    const q = d.quote || d;
+    body.push(h("div", { class: "tl-text" }, `${eur(q.total_net)} net · hash `, h("span", { class: "mono" }, shortHash(q.quote_hash)), ` · valid until ${hm(q.expires_at)}`));
+  }
+  if (k === "decision" && d.decision) {
+    const v = VERDICT[d.decision.outcome] || { title: d.decision.outcome };
+    const sev = d.decision.outcome === "auto_approve" ? "ok" : d.decision.outcome === "reject" ? "bad" : "pending";
+    body.push(h("div", { class: "row wrap" }, h("span", { class: `status ${sev}` }, v.title + (d.decision.approver_role ? ` · ${roleLabel(d.decision.approver_role)}` : "")),
+      h("span", { class: "tl-text" }, `${(d.decision.hits || []).filter((x) => x.outcome !== "allow").length} rule(s) fired`)));
+  }
+  if (k === "approval_wait") {
+    body.push(h("div", { class: "tl-text" }, "The agent has paused. Nothing is ordered until a human approves the exact signed quote."),
+      h("div", null, h("button", { class: "btn btn-sm", onclick: () => { S.selected = d.order_id || S.selected; setTab("approvals"); } }, "Open approval inbox →")));
+  }
+  if (k === "order" && d.order) {
+    const o = d.order;
+    body.push(h("div", { class: "row wrap" }, statusPill(o.status), o.response_code ? h("span", { class: `resp-code ${o.response_code}` }, o.response_code) : null,
+      h("button", { class: "btn btn-quiet btn-sm", onclick: () => setTab("audit") }, "Audit trail →")));
+  }
+  if (k === "error") body.push(h("div", { class: "tl-text" }, d.message || d.error || ""));
+  body.push(...excEls(d));
+  const extra = { ...d };
+  delete extra.text; delete extra.need;
+  return h("li", { class: `tl-item ${cls}` },
+    h("span", { class: "tl-icon" }, icon),
+    h("div", { class: "tl-main" },
+      h("div", { class: "tl-title" }, h("span", { class: "grow" }, step.title), h("span", { class: "tl-time" }, time(step.ts))),
+      body,
+      ["thought", "plan", "quote", "decision"].includes(k) && Object.keys(extra).length ? jsonDetails("Data", d) : null));
+}
+
+// ================================================================== plan view
+function renderPlan() {
+  const v = $("view-plan");
+  const r = S.run;
+  if (!r) {
+    mount(v, h("div", { class: "empty" },
+      h("strong", null, "No plan yet"),
+      h("span", null, "Run the agent on a request. Its good-better-best plan appears here: every candidate it considered, the price per litre, stock, delivery reliability and CO2, and why each one was ranked or rejected."),
+      h("button", { class: "btn btn-primary btn-sm", onclick: startRun }, "Run the example request")));
+    return;
+  }
+  const p = r.plan;
+  const parts = [];
+  parts.push(h("div", { class: "card summary" },
+    h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } },
+      h("span", { class: "section-label" }, "Structured need"),
+      r.need ? needChips(r.need) : h("div", { class: "skeleton", style: { height: "22px", width: "60%" } }),
+      h("div", { class: "muted sm" }, "“", (r.need && r.need.raw_text) || S.text, "”")),
+    p ? h("div", { class: "kpis" },
+      h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(p.covered_amount)} / ${num(p.need?.quantity)} ${p.need?.unit || ""}`), h("span", { class: "l" }, p.shortfall ? `Shortfall ${num(p.shortfall)} ${p.need?.unit}` : "Covered")),
+      h("div", { class: "kpi" }, h("span", { class: "v big" }, eur(p.total_net)), h("span", { class: "l" }, "Total, net of VAT"))) : null));
+
+  if (r.decision) parts.push(verdictBanner(r.decision));
+  if (r.error && !p) parts.push(h("div", { class: "exc bad" }, h("b", null, "!"), h("div", null, h("b", null, "The run failed before a plan was ready. "), h("span", { class: "exc-body" }, r.error))));
+
+  if (!p) {
+    if (r.status === "running") parts.push(h("div", { class: "tier-group" }, h("span", { class: "section-label" }, "Ranking candidates…"),
+      [1, 2, 3].map(() => h("div", { class: "skeleton", style: { height: "128px" } }))));
+    mount(v, parts);
+    return;
+  }
+
+  if (p.explanation) parts.push(h("p", { class: "sm", style: { maxWidth: "80ch" } }, p.explanation));
+  parts.push(planLines(p));
+
+  const cands = p.candidates || [];
+  const inPlan = new Set((p.lines || []).map((l) => l.product_id));
+  for (const t of TIER_ORDER) {
+    const list = cands.filter((c) => c.tier === t);
+    if (!list.length) continue;
+    parts.push(h("div", { class: "tier-group" },
+      h("div", { class: "tier-head" }, h("span", { class: `tier-tag ${t}` }, TIER_LABEL[t]), h("span", { class: "muted sm" }, TIER_HINT[t])),
+      list.map((c) => candCard(c, p, inPlan))));
+  }
+  const rej = cands.filter((c) => c.tier === "rejected");
+  if (rej.length) {
+    parts.push(h("details", { class: "rejected-group" },
+      h("summary", null, h("span", { class: "chev" }, "›"), h("span", { class: "tier-tag rejected" }, `Rejected · ${rej.length}`), h("span", { class: "muted sm" }, "Considered and excluded, with the reason")),
+      h("div", { class: "card" }, rej.map((c) => h("div", { class: "rej-row" },
+        h("div", { style: { minWidth: 0 } },
+          h("div", { class: "ellipsis", title: c.product.name, style: { fontWeight: 500 } }, c.product.name),
+          h("div", { class: "rej-reason" }, (c.reasons || []).join(" · ") || "Rejected"),
+          h("div", { class: "faint small mono" }, c.product.id, c.offer?.logistic_model ? ` · ${c.offer.logistic_model}` : "")),
+        h("div", { class: "row wrap", style: { justifyContent: "flex-end", alignContent: "flex-start" } }, (c.flags || []).map(flagEl)))))));
+  }
+  mount(v, parts);
+}
+
+function perL(c) {
+  const o = c.offer || {};
+  if (o.comparison_price != null) return { v: o.comparison_price, u: o.comparison_unit || c.product.content_unit || "L" };
+  if (o.unit_price != null && c.product.content_amount) return { v: o.unit_price / c.product.content_amount, u: c.product.content_unit || "L" };
+  return { v: null, u: c.product.content_unit || "L" };
+}
+
+function planLines(p) {
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h3", null, "Order lines the agent proposes"), h("span", { class: "muted sm" }, `Delivery by ${day(p.need?.delivery_by)}`)),
+    h("table", { class: "t" },
+      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Covers"), h("th", { class: "n" }, "Line total"))),
+      h("tbody", null, (p.lines || []).map((l) => h("tr", null,
+        h("td", null, h("div", { style: { fontWeight: 500 } }, l.product_name), h("div", { class: "faint small mono" }, l.product_id), (l.flags || []).length ? h("div", { class: "row wrap", style: { marginTop: "4px" } }, l.flags.map(flagEl)) : null),
+        h("td", null, h("span", { class: `tier-tag ${l.tier}` }, TIER_LABEL[l.tier] || l.tier)),
+        h("td", { class: "n" }, `${num(l.qty_sales_units)} ${l.sales_unit}`),
+        h("td", { class: "n" }, eur(l.unit_price)),
+        h("td", { class: "n" }, `${num(l.covered_amount)} ${p.need?.unit || ""}`),
+        h("td", { class: "n" }, eur(l.line_total))))),
+      h("tfoot", null, h("tr", null, h("td", { colspan: 5 }, "Total net"), h("td", { class: "n" }, eur(p.total_net))))));
+}
+
+function candCard(c, p, inPlan) {
+  const prod = c.product || {};
+  const o = c.offer || {};
+  const pl = perL(c);
+  const line = (p.lines || []).find((l) => l.product_id === prod.id);
+  const need = p.need || {};
+  let qtyText, totalText, qtyLabel;
+  if (line) { qtyLabel = "In plan"; qtyText = `${num(line.qty_sales_units)} ${line.sales_unit}`; totalText = eur(line.line_total); }
+  else if (o.unit_price != null && prod.content_amount) {
+    const full = Math.ceil(need.quantity / prod.content_amount);
+    const q = o.available_amount != null && o.available_amount < 1e8 ? Math.min(full, o.available_amount) : full;
+    qtyLabel = "If chosen"; qtyText = `${num(q, 0)} ${o.sales_unit || prod.sales_unit}`; totalText = eur(q * o.unit_price);
+  } else { qtyLabel = "If chosen"; qtyText = "–"; totalText = "–"; }
+  let coverCls = "";
+  // The mock API reports unlimited stock as a huge sentinel (e.g. 9999999999).
+  const unlimited = o.available_amount != null && o.available_amount >= 1e8;
+  let avail = unlimited ? "in stock" : o.available_amount != null ? `${num(o.available_amount, 0)} ${o.sales_unit || prod.sales_unit}` : o.cutoff_passed ? "cut-off passed" : o.available === false ? "not available" : "unknown";
+  if (o.cutoff_passed || o.available === false) coverCls = "bad";
+  else if (o.available_amount != null && prod.content_amount && o.available_amount * prod.content_amount < need.quantity) coverCls = "warn";
+  const fact = (l, v, cls = "") => h("div", { class: "fact" }, h("span", { class: "l" }, l), h("span", { class: `v ${cls}`, title: v }, v));
+  return h("article", { class: `cand ${c.tier} ${inPlan.has(prod.id) ? "in-plan" : ""}` },
+    h("div", { class: "cand-body" },
+      h("div", { class: "cand-top" },
+        h("div", { class: "grow" },
+          h("div", { class: "row wrap" }, h("span", { class: "cand-name" }, prod.name), inPlan.has(prod.id) ? h("span", { class: "plan-badge" }, "✓ In plan") : null),
+          h("div", { class: "cand-sub" }, [prod.id, prod.brand, prod.vendor, o.logistic_model, o.closing_time ? `cut-off ${dayTime(o.closing_time)}` : null].filter(Boolean).join(" · "))),
+        h("div", { class: "cand-price" }, h("div", { class: "v" }, pl.v != null ? eur(pl.v) : "–"), h("div", { class: "l" }, `per ${pl.u}`))),
+      h("div", { class: "facts" },
+        fact("Pack", prod.content_amount ? `${num(prod.content_amount)} ${prod.content_unit || ""} / ${prod.sales_unit}` : prod.sales_unit || "–"),
+        fact("Unit price", eur(o.unit_price)),
+        fact("Available", avail, coverCls),
+        fact(qtyLabel, qtyText),
+        fact(qtyLabel === "In plan" ? "Line total" : "Would cost", totalText),
+        fact("Reliability", prod.delivery_reliability != null ? pct(prod.delivery_reliability) : "no data"),
+        fact("CO₂e / kg", prod.co2_kg_per_kg != null ? `${num(prod.co2_kg_per_kg)} kg` : "no data")),
+      (c.reasons || []).length ? h("ul", { class: "reasons" }, c.reasons.map((x) => h("li", null, x))) : null,
+      (c.flags || []).length || (prod.claims || []).length ? h("div", { class: "row wrap" },
+        (prod.claims || []).map((x) => h("span", { class: "flag ok" }, claimLabel(x))), (c.flags || []).map(flagEl)) : null));
+}
+
+function verdictBanner(dec) {
+  const v = VERDICT[dec.outcome] || { title: dec.outcome, icon: "?" };
+  const title = dec.outcome === "needs_approval" && dec.approver_role ? `Needs approval by ${roleLabel(dec.approver_role)}` : v.title;
+  const hits = [...(dec.hits || [])].sort((a, b) => rank(b.outcome) - rank(a.outcome));
+  return h("section", { class: `verdict ${dec.outcome}` },
+    h("div", { class: "verdict-top" },
+      h("span", { class: "verdict-icon" }, v.icon),
+      h("div", { class: "grow" }, h("div", { class: "verdict-title" }, title),
+        h("div", { class: "muted small" }, `Policy ${dec.policy_id} · version ${dec.policy_version} · ${hits.filter((x) => x.outcome !== "allow").length} of ${hits.length} rules need attention`))),
+    hits.length ? h("ul", { class: "hits" }, hits.map((x) => h("li", { class: "hit" },
+      h("span", { class: `outcome ${x.outcome}` }, x.outcome === "needs_approval" ? "Needs approval" : x.outcome === "allow" ? "Pass" : "Reject"),
+      h("span", null, x.message),
+      h("span", { class: "rid" }, x.rule_id)))) : null);
+}
+const rank = (o) => ({ reject: 2, needs_approval: 1, allow: 0 }[o] ?? 0);
+
+// ================================================================== approvals
+async function refreshApprovals(quiet) {
+  if (!quiet) { S.approvals.state = "loading"; renderApprovals(); }
+  try {
+    let items = await api.approvals("pending");
+    if (items && !Array.isArray(items)) items = items.items || items.approvals || [];
+    items = (items || []).map((x) => (x.order ? x : { order: x, quote: null, decision: x.decision }));
+    // Newest first: what needs attention now leads.
+    items.sort((a, b) => new Date(b.order.created_at) - new Date(a.order.created_at));
+    for (const it of items) if (!it.quote && it.order.quote_id) { try { it.quote = await api.getQuote(it.order.quote_id); } catch { /* shown as missing */ } }
+    S.approvals = { state: "ok", items, error: null };
+    if (!S.selected && items[0]) S.selected = items[0].order.order_id;
+  } catch (e) {
+    S.approvals = { ...S.approvals, state: "error", error: e.message };
+  }
+  updateCounts();
+  renderApprovals();
+}
+
+function selectedItem() {
+  return S.approvals.items.find((x) => x.order.order_id === S.selected) || S.decided.get(S.selected) || null;
+}
+
+function statusPill(status) {
+  const map = { pending_approval: ["pending", "Pending approval"], approved: ["ok", "Approved"], placed: ["ok", "Placed"], rejected: ["bad", "Rejected"], expired: ["neutral", "Expired"], failed: ["bad", "Failed"] };
+  const [cls, label] = map[status] || ["neutral", status];
+  return h("span", { class: `status ${cls}` }, label);
+}
+
+function renderApprovals() {
+  const v = $("view-approvals");
+  const A = S.approvals;
+  const parts = [];
+  const decidedList = [...S.decided.values()].filter((x) => !A.items.find((y) => y.order.order_id === x.order.order_id));
+  parts.push(h("div", { class: "row" },
+    h("h2", { class: "grow" }, "Approval inbox"),
+    !MOCK ? h("span", { class: "faint small" }, "Refreshes every 5 s") : null,
+    h("button", { class: "btn btn-sm", onclick: () => refreshApprovals() }, A.state === "loading" ? [h("span", { class: "spinner" }), "Refreshing"] : "Refresh")));
+
+  if (A.state === "loading" && !A.items.length) {
+    parts.push(h("div", { class: "card" }, [1, 2].map(() => h("div", { class: "inbox-row" }, h("div", { class: "skeleton", style: { height: "32px" } })))));
+  } else if (A.state === "error") {
+    parts.push(h("div", { class: "exc bad" }, h("b", null, "!"), h("div", null, h("b", null, "Could not load approvals. "), h("span", { class: "exc-body" }, A.error), " ",
+      h("button", { class: "btn btn-sm", onclick: () => refreshApprovals() }, "Retry"))));
+  } else if (!A.items.length && !decidedList.length) {
+    parts.push(h("div", { class: "empty" }, h("strong", null, "Nothing waiting for approval"),
+      h("span", null, "When an agent's order goes beyond its mandate (spend limit, substitution outside preference, unusual volume), it lands here with the exact signed quote. Orders inside the mandate are placed automatically."),
+      !S.run ? h("button", { class: "btn btn-primary btn-sm", onclick: startRun }, "Run the example request") : null));
+  }
+
+  const rows = [...A.items, ...decidedList];
+  if (rows.length) {
+    parts.push(h("div", { class: "card inbox" }, rows.map((it) => {
+      const o = it.order;
+      const q = it.quote;
+      const dec = it.decision || o.decision;
+      const cust = S.customers.find((c) => c.id === o.customer_id);
+      return h("div", { class: `inbox-row ${o.order_id === S.selected ? "sel" : ""}`, tabindex: 0, role: "button",
+        onclick: () => { S.selected = o.order_id; S.decideError = null; renderApprovals(); },
+        onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); S.selected = o.order_id; renderApprovals(); } } },
+        h("div", { style: { minWidth: 0 } },
+          h("div", { style: { fontWeight: 600 } }, cust?.name || o.customer_id, h("span", { class: "faint mono small" }, `  ${o.order_id}`)),
+          h("div", { class: "muted small ellipsis" }, q ? q.lines.map((l) => `${num(l.qty_sales_units)} × ${l.product_name}`).join("; ") : "Quote not loaded",
+            dec?.approver_role ? ` · for ${roleLabel(dec.approver_role)}` : "")),
+        h("div", { class: "num mono", style: { fontWeight: 600 } }, q ? eur(q.total_net) : ""),
+        o.status === "pending_approval" && q ? h("span", { class: "countdown", "data-expires": q.expires_at, title: "Price lock expires" }, countdown(q.expires_at).text) : h("span", { class: "faint small" }, relTime(o.updated_at || o.created_at)),
+        statusPill(o.status));
+    })));
+  }
+
+  const it = selectedItem();
+  if (it) parts.push(approvalDetail(it));
+  mount(v, parts);
+  tick();
+}
+
+function approvalDetail(it) {
+  const o = it.order;
+  const q = it.quote;
+  const dec = it.decision || o.decision;
+  const pending = o.status === "pending_approval";
+  const parts = [];
+  if (!pending) parts.push(orderResponse(o, q));
+  if (dec) parts.push(verdictBanner(dec));
+  if (q) parts.push(quoteCard(q, pending));
+  else parts.push(h("div", { class: "exc warn" }, h("b", null, "!"), h("div", null, "The signed quote for this order could not be loaded. Approval is disabled until it can be checked.")));
+  if (pending && q) parts.push(decisionForm(o, q));
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: "16px" } }, parts);
+}
+
+function quoteCard(q, pending) {
+  const sig = sigState(q);
+  const sigCls = sig === "pending" ? "" : sig.state === "verified" ? "ok" : sig.state === "invalid" ? "bad" : "";
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" },
+      h("h3", { class: "grow" }, "Signed quote ", h("span", { class: "mono muted", style: { fontWeight: 500 } }, q.quote_id)),
+      h("span", { class: "muted sm" }, `Delivery ${day(q.delivery_date)} · agent `, h("span", { class: "mono" }, q.agent_id)),
+      pending ? h("span", { class: "sm" }, "Price lock ", h("span", { class: "countdown", "data-expires": q.expires_at }, countdown(q.expires_at).text)) : null),
+    h("table", { class: "t" },
+      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Line total"))),
+      h("tbody", null, q.lines.map((l) => h("tr", null,
+        h("td", null, h("div", { style: { fontWeight: 500 } }, l.product_name), h("div", { class: "faint small mono" }, l.product_id), (l.flags || []).length ? h("div", { class: "row wrap", style: { marginTop: "4px" } }, l.flags.map(flagEl)) : null),
+        h("td", null, h("span", { class: `tier-tag ${l.tier}` }, TIER_LABEL[l.tier] || l.tier)),
+        h("td", { class: "n" }, `${num(l.qty_sales_units)} ${l.sales_unit}`),
+        h("td", { class: "n" }, eur(l.unit_price)),
+        h("td", { class: "n" }, eur(l.line_total))))),
+      h("tfoot", null,
+        h("tr", null, h("td", { colspan: 4 }, "Total net"), h("td", { class: "n" }, eur(q.total_net))),
+        q.total_gross != null ? h("tr", null, h("td", { colspan: 4, class: "muted" }, "Total incl. VAT"), h("td", { class: "n muted" }, eur(q.total_gross))) : null)),
+    h("div", { class: "seal" },
+      h("span", { class: `seal-mark ${sigCls}`, title: "Ed25519 signature" }, sig === "pending" ? "…" : sig.state === "verified" ? "✓" : sig.state === "invalid" ? "✕" : "?"),
+      h("div", { style: { minWidth: 0 } },
+        h("div", { class: "hash", title: q.quote_hash }, h("span", { class: "faint small", style: { marginRight: "8px" } }, "SHA-256"), groupedHash(q.quote_hash).map((g) => h("span", { class: "g" }, g)), h("span", { class: "faint" }, "…")),
+        h("div", { class: "small muted" }, `Created ${full(q.created_at)} · expires ${hm(q.expires_at)}`)),
+      sig === "pending" ? h("span", { class: "status neutral" }, "Verifying signature…")
+        : sig.state === "verified" ? h("span", { class: "status ok", title: sig.detail }, "Signature verified")
+        : sig.state === "invalid" ? h("span", { class: "status bad", title: sig.detail }, "Signature invalid")
+        : h("span", { class: "status neutral", title: sig.detail }, "Signature not checked")),
+    sig !== "pending" && sig.state !== "verified" ? h("div", { class: "card-body small muted" }, sig.detail) : null);
+}
+
+function sigState(q) {
+  if (!q.quote_hash) return { state: "unverifiable", detail: "Quote has no hash" };
+  const cur = S.sigs.get(q.quote_hash);
+  if (cur) return cur;
+  S.sigs.set(q.quote_hash, "pending");
+  (async () => {
+    try { if (!S.jwks) S.jwks = await api.jwks(); } catch (e) { S.sigs.set(q.quote_hash, { state: "unverifiable", detail: `JWKS unavailable: ${e.message}` }); renderApprovals(); return; }
+    S.sigs.set(q.quote_hash, await verifyJws(q.signature, S.jwks, q.quote_hash));
+    renderApprovals();
+  })();
+  return "pending";
+}
+
+function decisionForm(o, q) {
+  const busy = S.deciding === o.order_id;
+  const role = roleLabel((o.decision || {}).approver_role || "approver");
+  // Approver directory comes from /v1/customers (policy YAML); default to someone holding the required role.
+  const cust = S.customers.find((c) => c.id === o.customer_id);
+  const dir = cust?.approvers || [];
+  const needRole = (o.decision || {}).approver_role;
+  if (!S.approver) S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || "";
+  const approver = dir.length
+    ? h("select", { class: "input", id: "approver", disabled: busy, onchange: (e) => (S.approver = e.target.value) },
+        dir.map((a) => h("option", { value: a.id, selected: a.id === S.approver }, `${a.name || a.id} · ${roleLabel(a.role)}`)))
+    : h("input", { class: "input", id: "approver", value: S.approver, placeholder: "name@company", oninput: (e) => (S.approver = e.target.value), disabled: busy });
+  const note = h("textarea", { class: "input", id: "note", rows: 2, placeholder: "Optional, stored in the audit trail", oninput: (e) => (S.note = e.target.value), disabled: busy });
+  note.value = S.note;
+  const expired = new Date(q.expires_at) < new Date();
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h3", null, `Decision as ${role}`)),
+    h("div", { class: "card-body decide" },
+      h("div", { class: "field" }, h("label", { for: "approver" }, "Approver"), approver),
+      h("div", { class: "field" }, h("label", { for: "note" }, "Note"), note),
+      S.decideError ? h("div", { class: "inline-error", style: { gridColumn: "1 / -1" } }, S.decideError) : null,
+      h("div", { class: "decide-actions" },
+        h("span", { class: "binding-note" }, "Your decision is bound to quote hash ", h("span", { class: "mono" }, shortHash(q.quote_hash)), ". If the price or lines change, it no longer applies."),
+        h("button", { class: "btn btn-bad", disabled: busy || !S.approver.trim(), onclick: () => decide(o, q, "reject") }, "Reject"),
+        h("button", { class: "btn btn-ok btn-lg", disabled: busy || !S.approver.trim() || expired, title: expired ? "The price lock has expired: the agent must request a new quote" : "",
+          onclick: () => decide(o, q, "approve") }, busy ? [h("span", { class: "spinner" }), "Placing order"] : `Approve ${eur(q.total_net)}`))));
+}
+
+async function decide(o, q, decision) {
+  S.deciding = o.order_id;
+  S.decideError = null;
+  renderApprovals();
+  try {
+    const dirEntry = (S.customers.find((c) => c.id === o.customer_id)?.approvers || []).find((a) => a.id === S.approver);
+    const order = await api.decide(o.order_id, { decision, approver: S.approver.trim(), approver_role: dirEntry?.role || undefined, note: S.note.trim(), quote_hash: q.quote_hash });
+    const dec = order.decision || o.decision;
+    S.decided.set(order.order_id, { order, quote: q, decision: dec });
+    if (S.run && S.run.order && S.run.order.order_id === order.order_id) { S.run.order = order; }
+    S.note = "";
+    S.selected = order.order_id;
+    S.deciding = null;
+    await refreshApprovals(true);
+    document.getElementById("order-response")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    loadAudit(true);
+  } catch (e) {
+    S.deciding = null;
+    S.decideError = e.status === 409 ? `The gateway refused: ${e.message}. The quote may have changed; ask the agent for a new quote.` : e.message;
+    renderApprovals();
+  }
+}
+
+function approverName(customerId, id) {
+  const a = (S.customers.find((c) => c.id === customerId)?.approvers || []).find((x) => x.id === id);
+  return a ? `${a.name} (${roleLabel(a.role)}, ${a.id})` : id;
+}
+
+function orderResponse(o, q) {
+  const placed = o.status === "placed" || o.status === "approved";
+  const names = new Map((q?.lines || []).map((l) => [l.product_id, l.product_name]));
+  return h("div", { class: "card", id: "order-response" },
+    h("div", { class: "card-head" },
+      h("h3", { class: "grow" }, placed ? "Order response" : "Order not placed"),
+      statusPill(o.status),
+      o.response_code ? h("span", { class: `resp-code ${o.response_code}`, title: "Peppol BIS order response code" }, o.response_code) : null),
+    h("div", { class: "card-body sm" },
+      o.approved_by ? h("div", null, `${o.status === "rejected" ? "Rejected" : "Approved"} by `, h("strong", null, approverName(o.customer_id, o.approved_by)), ` · ${dayTime(o.updated_at)}`, o.approval_note ? ` · “${o.approval_note}”` : "") : h("div", { class: "muted" }, o.status === "placed" ? "Placed automatically within the mandate." : ""),
+      !placed && o.status === "rejected" ? h("div", { class: "muted" }, "Nothing was sent to the warehouse. The agent was told the order was rejected.") : null),
+    (o.response_lines || []).length ? h("table", { class: "t" },
+      h("thead", null, h("tr", null, h("th", null, "Code"), h("th", null, "Product"), h("th", { class: "n" }, "Confirmed"), h("th", null, "Note"))),
+      h("tbody", null, o.response_lines.map((l) => h("tr", null,
+        h("td", null, h("span", { class: `resp-code ${l.code}` }, l.code), h("span", { class: "muted small" }, { AP: " Accepted", CA: " Accepted with changes", RE: " Rejected" }[l.code] || "")),
+        h("td", null, names.get(l.product_id) || l.product_id, h("div", { class: "faint small mono" }, l.product_id)),
+        h("td", { class: "n" }, num(l.qty_confirmed)),
+        h("td", { class: "muted" }, l.note || ""))))) : null,
+    h("div", { class: "card-body row" }, h("span", { class: "grow muted small" }, "Peppol BIS Order Response semantics: AP accepted, CA accepted with changes, RE rejected."),
+      h("button", { class: "btn btn-sm btn-primary", onclick: () => { S.audit.scope = "flow"; setTab("audit"); } }, "View audit trail →")));
+}
+
+// ================================================================== audit
+function flowSubjects() {
+  const r = S.run;
+  const ids = new Set();
+  if (r?.id) ids.add(r.id);
+  if (r?.quote?.quote_id) ids.add(r.quote.quote_id);
+  if (r?.order?.order_id) ids.add(r.order.order_id);
+  const it = selectedItem();
+  if (it && (!r || it.order.order_id === r?.order?.order_id || !r.order)) { ids.add(it.order.order_id); ids.add(it.order.quote_id); }
+  return [...ids].filter(Boolean);
+}
+
+let auditSeq = 0;
+async function loadAudit(quiet) {
+  const my = ++auditSeq;
+  const subjects = flowSubjects();
+  const scope = S.audit.scope === "flow" && subjects.length ? "flow" : "all";
+  if (!quiet || !S.audit.events.length) { S.audit.state = "loading"; renderAudit(); }
+  try {
+    let evs;
+    if (scope === "flow") {
+      const lists = await Promise.all(subjects.map((s) => api.audit(s).catch(() => [])));
+      const m = new Map();
+      lists.flat().forEach((e) => m.set(e.seq, e));
+      evs = [...m.values()];
+    } else evs = await api.audit();
+    if (my !== auditSeq) return;
+    evs.sort((a, b) => a.seq - b.seq);
+    S.audit = { ...S.audit, state: "ok", events: evs, error: null, effectiveScope: scope };
+  } catch (e) {
+    if (my !== auditSeq) return;
+    S.audit = { ...S.audit, state: "error", error: e.message };
+  }
+  updateCounts();
+  renderAudit();
+}
+
+async function verifyChain() {
+  S.audit.verifying = true;
+  renderAudit();
+  try { S.audit.verify = await api.verify(); }
+  catch (e) { S.audit.verify = { ok: false, error: e.message }; }
+  S.audit.verifying = false;
+  renderAudit();
+}
+
+async function evidencePack() {
+  const r = S.run || {};
+  let verify = S.audit.verify;
+  try { verify = await api.verify(); } catch { /* keep last */ }
+  let jwks = S.jwks;
+  try { jwks = jwks || (await api.jwks()); } catch { /* optional */ }
+  const it = selectedItem();
+  const pack = {
+    kind: "valio-aimo-trusted-trade/evidence-pack", version: 1, generated_at: new Date().toISOString(),
+    gateway: api.base, mode: api.mode, subject_ids: flowSubjects(),
+    request: { text: r.need?.raw_text || S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking },
+    need: r.need || null, plan: r.plan || null, quote: r.quote || it?.quote || null,
+    policy_decision: r.decision || it?.decision || null, order: (it && it.order) || r.order || null,
+    agent_steps: r.steps || [], audit_events: S.audit.events, chain_verification: verify, jwks,
+    how_to_verify: "Each audit event's hash is SHA-256 over its canonical JSON with prev_hash; signature is a compact JWS (EdDSA) over hash, verifiable with the JWKS above.",
+  };
+  const id = pack.order?.order_id || r.id || "ledger";
+  download(`evidence-${id}.json`, JSON.stringify(pack, null, 2));
+}
+
+async function openReport() {
+  const id = S.run?.order?.order_id || selectedItem()?.order.order_id || S.run?.id;
+  if (!id) return;
+  if (api.reportUrl) { window.open(api.reportUrl(id), "_blank", "noopener"); return; }
+  const md = await api.report(id);
+  const url = URL.createObjectURL(new Blob([md], { type: "text/plain;charset=utf-8" }));
+  window.open(url, "_blank", "noopener");
+}
+
+function renderAudit() {
+  const v = $("view-audit");
+  const A = S.audit;
+  const subjects = flowSubjects();
+  const scope = A.scope === "flow" && subjects.length ? "flow" : "all";
+  const vr = A.verify;
+  const parts = [];
+  parts.push(h("div", { class: "row wrap" },
+    h("div", { class: "grow" }, h("h2", null, "Signed audit trail"),
+      h("div", { class: "muted small" }, scope === "flow" ? ["This flow: ", subjects.map((s, i) => [i ? ", " : "", h("span", { class: "mono" }, s)])] : "Whole ledger, every agent and every customer")),
+    h("div", { class: "row" },
+      h("button", { class: `btn btn-sm ${scope === "flow" ? "btn-primary" : ""}`, disabled: !subjects.length, onclick: () => { S.audit.scope = "flow"; loadAudit(); } }, "This flow"),
+      h("button", { class: `btn btn-sm ${scope === "all" ? "btn-primary" : ""}`, onclick: () => { S.audit.scope = "all"; loadAudit(); } }, "Whole ledger"))));
+  parts.push(h("div", { class: "card card-body audit-tools" },
+    h("button", { class: "btn", onclick: verifyChain, disabled: A.verifying }, A.verifying ? [h("span", { class: "spinner" }), "Verifying"] : "Verify chain"),
+    vr ? (vr.ok
+      ? h("span", { class: "verify-result ok" }, `✓ Chain intact · ${num(vr.checked, 0)} events, hashes and signatures checked`)
+      : h("span", { class: "verify-result bad" }, vr.error ? `✕ Verification failed: ${vr.error}` : `✕ Chain broken at event #${vr.broken_at} (${num(vr.checked, 0)} checked)`)) : h("span", { class: "muted sm" }, "Recomputes every hash and checks every link and signature on the server."),
+    h("span", { class: "grow" }),
+    MOCK && api.tamper ? h("button", { class: "btn btn-quiet btn-sm", title: "Mock only: edit one stored event to show tamper detection", onclick: async () => { await api.tamper(); S.audit.verify = null; loadAudit(); } }, "Simulate tampering") : null,
+    h("button", { class: "btn btn-sm", onclick: openReport, disabled: !subjects.length }, "Readable report"),
+    h("button", { class: "btn btn-sm btn-primary", onclick: evidencePack, disabled: !A.events.length }, "Download evidence pack")));
+
+  if (A.state === "loading" && !A.events.length) {
+    parts.push(h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, [1, 2, 3, 4].map(() => h("div", { class: "skeleton", style: { height: "64px" } }))));
+  } else if (A.state === "error") {
+    parts.push(h("div", { class: "exc bad" }, h("b", null, "!"), h("div", null, h("b", null, "Could not load the audit trail. "), h("span", { class: "exc-body" }, A.error), " ", h("button", { class: "btn btn-sm", onclick: () => loadAudit() }, "Retry"))));
+  } else if (!A.events.length) {
+    parts.push(h("div", { class: "empty" }, h("strong", null, "No audit events yet"),
+      h("span", null, "Every step that matters (request, live price lookup, plan, signed quote, policy verdict, human decision, order response) is appended here as a hash-chained, signed event."),
+      !S.run ? h("button", { class: "btn btn-primary btn-sm", onclick: startRun }, "Run the example request") : null));
+  } else {
+    const evs = A.events;
+    parts.push(h("ol", { class: "chain" }, evs.map((e, i) => {
+      const prev = evs[i - 1];
+      const linked = prev && e.prev_hash === prev.hash;
+      const kind = actorKind(e.actor);
+      const glyph = { agent: "A", human: "H", system: "S" }[kind];
+      const hd = h("details", { class: "json" }, h("summary", null, "Hash, link and signature"),
+        h("div", { class: "chain-hashes" },
+          h("b", null, "hash"), h("span", null, e.hash),
+          h("b", null, "prev_hash"), h("span", null, e.prev_hash, linked ? h("span", { style: { color: "var(--ok)" } }, "  ✓ matches #" + prev.seq) : ""),
+          h("b", null, "signature"), h("span", null, String(e.signature || "").slice(0, 96) + (String(e.signature || "").length > 96 ? "…" : "")),
+          h("b", null, "kid"), h("span", null, e.kid)),
+        Object.keys(e.data || {}).length ? jsonDetails("Event data", e.data) : null);
+      return h("li", { class: `chain-ev ${linked ? "linked" : ""}` },
+        h("div", { class: "chain-time", title: full(e.ts) }, time(e.ts), h("div", { class: "faint" }, `#${e.seq}`)),
+        h("div", { class: "chain-rail" }, h("span", { class: `chain-node ${kind}`, title: kind }, glyph)),
+        h("div", { class: `chain-card ${vr && !vr.ok && vr.broken_at === e.seq ? "broken" : ""}` },
+          h("div", { class: "who" }, h("span", { class: "mono" }, e.actor), h("span", { class: "act" }, e.action), h("span", { class: "faint mono" }, shortHash(e.hash, 10))),
+          h("div", { class: "sum" }, e.summary),
+          hd));
+    })));
+  }
+  mount(v, parts);
+}
+
+// ================================================================== connect dialog
+function openConnect() {
+  const dlg = $("connect-dialog");
+  const origin = api.mode === "live" ? api.base : location.origin;
+  const c = S.customers.find((x) => x.id === S.customerId) || { id: S.customerId, agent_id: `${S.customerId}/buyer-1` };
+  const remote = { mcpServers: { "valio-aimo-trusted-trade": { type: "http", url: `${origin}/mcp`, headers: { "X-Agent-Id": c.agent_id, "X-Customer-Id": c.id } } } };
+  const stdio = { mcpServers: { "valio-aimo-trusted-trade": { command: "uv", args: ["run", "python", "-m", "aimo.gateway.mcp_server"], env: { AIMO_AGENT_ID: c.agent_id, AIMO_CUSTOMER_ID: c.id } } } };
+  const curl = `curl -s ${origin}/v1/products/search?q=lactose-free%20milk \\\n  -H "X-Agent-Id: ${c.agent_id}" -H "X-Customer-Id: ${c.id}"`;
+  const block = (title, text) => {
+    const pre = h("pre", { class: "code", style: { maxHeight: "200px" } }, text);
+    const btn = h("button", { class: "btn btn-sm", onclick: async () => { try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; } catch { btn.textContent = "Select and copy"; } setTimeout(() => (btn.textContent = "Copy"), 1500); } }, "Copy");
+    return h("div", null, h("div", { class: "row" }, h("span", { class: "section-label grow" }, title), btn), pre);
+  };
+  mount(dlg, h("div", { class: "card-head" }, h("h3", { class: "grow" }, "Connect your own agent"), h("button", { class: "btn btn-quiet btn-sm", onclick: () => dlg.close() }, "Close")),
+    h("div", { class: "card-body" },
+      h("p", { class: "sm muted" }, "Any MCP-capable agent can use the same tools as the reference Gemini buyer agent: search_products, get_offers, plan_need, create_quote, place_order, get_order_status, get_audit_trail, list_policies. Every call runs under the customer's mandate and lands in this audit trail."),
+      block("MCP, streamable HTTP", JSON.stringify(remote, null, 2)),
+      block("MCP, stdio (local checkout)", JSON.stringify(stdio, null, 2)),
+      block("REST (OpenAPI 3.1)", curl),
+      h("div", { class: "row wrap sm" }, h("a", { href: api.links.docs, target: "_blank" }, "OpenAPI docs"), "·", h("a", { href: api.links.otap, target: "_blank" }, "Discovery manifest /.well-known/otap.json"), "·", h("a", { href: api.links.jwks, target: "_blank" }, "JWKS (verify signatures)"))));
+  dlg.showModal();
+}
+
+// ================================================================== ticker
+function tick() {
+  document.querySelectorAll("[data-expires]").forEach((el) => {
+    const c = countdown(el.dataset.expires);
+    el.textContent = c.text;
+    el.className = `countdown ${c.cls}`;
+  });
+}
+
+boot().catch((e) => banner(`The console failed to start: ${e.message}`));
