@@ -81,7 +81,8 @@ class Spec:
     name: Optional[str] = None
     pack_label: Optional[str] = None
     category: Optional[str] = None
-    source: str = "none"   # preferred | preferences | top_hit | none
+    source: str = "none"   # preferred | preferences | top_hit | none  (what shapes the tiers)
+    types_from: Optional[str] = None   # preferred | top_hit | None  (what the product-type check compares to)
 
     def describe(self, with_brand: bool = True) -> str:
         bits = []
@@ -94,17 +95,30 @@ class Spec:
         return ", ".join(bits) or "no specific spec"
 
 
-def reference_spec(need: Need, rows: dict[str, dict[str, Any]], fallback_row: Optional[dict] = None) -> Spec:
+# Only these preference keys describe the product. Anything else in Need.preferences
+# (parsed_by, delivery_date_assumed, standing_order_*, injection_flags ...) is ignored here.
+SPEC_PREF_KEYS = ("brand", "fat_pct", "organic", "pack", "use")
+
+
+def spec_preferences(need: Need) -> dict[str, Any]:
     prefs = need.preferences or {}
+    return {k: prefs[k] for k in SPEC_PREF_KEYS if prefs.get(k) not in (None, "", [])}
+
+
+def reference_spec(need: Need, rows: dict[str, dict[str, Any]], fallback_row: Optional[dict] = None) -> Spec:
+    sp = spec_preferences(need)
+    shaping = {k: v for k, v in sp.items() if k in ("brand", "fat_pct", "organic")}
     ref = None
     for pid in need.preferred_product_ids:
         if pid in rows:
             ref = rows[pid]
             break
     src = "preferred" if ref else "none"
-    if ref is None and fallback_row is not None and not prefs:
+    if ref is None and fallback_row is not None:
+        # the closest match is ALWAYS the product-type reference when there is no usual product,
+        # whatever the preferences say (preferences can only add brand / fat / organic)
         ref, src = fallback_row, "top_hit"
-    spec = Spec(source=src)
+    spec = Spec(source=src, types_from=src if ref is not None else None)
     if ref is not None:
         spec.brand = ref.get("brand")
         spec.fat = ref.get("fat_pct")
@@ -114,18 +128,44 @@ def reference_spec(need: Need, rows: dict[str, dict[str, Any]], fallback_row: Op
         spec.category = ref.get("category")
         spec.pack_label = U.describe_pack(ref.get("content_amount"), ref.get("content_unit"), ref.get("sales_unit_size") or 1,
                                           ref.get("base_content_amount"), ref.get("sales_unit") or "")
-    if prefs:
-        spec.source = spec.source if ref is not None else "preferences"
-        if prefs.get("brand"):
-            spec.brand = str(prefs["brand"])
-        if prefs.get("fat_pct") is not None:
+    if shaping:
+        if spec.source != "preferred":
+            spec.source = "preferences"
+            # a guessed top hit must not impose its own brand/fat/organic: only the stated ones count
+            spec.brand, spec.fat, spec.organic, spec.category = None, None, None, None
+            spec.name = None
+        if shaping.get("brand"):
+            spec.brand = str(shaping["brand"])
+        if shaping.get("fat_pct") is not None:
             try:
-                spec.fat = float(prefs["fat_pct"])
+                spec.fat = float(shaping["fat_pct"])
             except (TypeError, ValueError):
                 pass
-        if prefs.get("organic") is not None:
-            spec.organic = bool(prefs["organic"])
+        if shaping.get("organic") is not None:
+            spec.organic = bool(shaping["organic"])
     return spec
+
+
+# words too generic to identify a product on their own ("oat drink" must not match "soft drink")
+GENERIC_CONCEPTS = {"drink", "drinks", "product", "products", "food", "mix", "pack", "box", "bottle", "can",
+                    "piece", "pieces", "portion", "item", "items", "stuff", "fresh", "frozen", "large", "small"}
+
+
+def missing_query_concepts(query: str, d: dict[str, Any]) -> list[str]:
+    """Distinguishing query concepts the product does not have. A concept is satisfied by the product
+    name (any language, synonyms) or, for claim words like 'lactose free', by the product's claims."""
+    from aimo.catalog.textsearch import IMPLIED_CLAIMS, parse_query
+    names = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi"), d.get("name_sv"))).lower()
+    claims = set(d.get("claims") or [])
+    out = []
+    for c, forms in parse_query(query):
+        if c in GENERIC_CONCEPTS:
+            continue
+        if IMPLIED_CLAIMS.get(c) in claims:
+            continue
+        if not any(f.lower() in names for f in forms):
+            out.append(c)
+    return out
 
 
 def _query_coverage(query: str, d: dict[str, Any]) -> float:
@@ -142,8 +182,11 @@ def _same_brand(a: Optional[str], b: Optional[str]) -> bool:
 
 
 def _same_fat(a: Optional[float], b: Optional[float]) -> bool:
-    if a is None or b is None:
-        return a is None and b is None
+    """a = candidate, b = reference/spec. No fat requirement (b None) matches anything."""
+    if b is None:
+        return True
+    if a is None:
+        return False
     return abs(a - b) <= 0.3
 
 
@@ -189,13 +232,19 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
     top_hit = None
     # reference when there is no usual product: the most relevant row that itself passes the static
     # hard constraints (claims, allergens, unit family); allergen-unsafe rows never set the type.
-    for strict in (True, False):
+    # Prefer a reference whose product type is what the query itself names ("lactose-free milk" -> plain
+    # milk, not "Cafè milk"; "oat drink" -> plant-based).
+    q_types = product_types({"name_en": " " + (need.product_query or "") + " "})
+    for level in (2, 1, 0):
         for pid, _s in sorted(relevance.items(), key=lambda x: -x[1]):
             d0 = rows.get(pid)
             if d0 is None or not set(need.required_claims) <= set(d0.get("claims") or []):
                 continue
-            if strict and (blocking(d0.get("allergens") or {}, need.excluded_allergens)
-                           or d0.get("content_unit") != need.unit):
+            if level >= 1 and (blocking(d0.get("allergens") or {}, need.excluded_allergens)
+                               or d0.get("content_unit") != need.unit
+                               or missing_query_concepts(need.product_query, d0)):
+                continue
+            if level == 2 and product_types(d0) != q_types:
                 continue
             top_hit = d0
             break
@@ -239,9 +288,14 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             reject.append(f"sold by {cunit or 'unknown unit'}, need is in {need.unit}")
         ctypes = product_types(d)
         type_note = None
-        if spec.source != "none" and ctypes != spec.types:
+        if not prefs:
+            # no usual product: the product itself must be what was asked for (no soft drink for "oat drink")
+            miss = missing_query_concepts(need.product_query, d)
+            if miss:
+                reject.append(f"different product type: not a match for '{', '.join(miss)}' in '{need.product_query}'")
+        if spec.types_from is not None and ctypes != spec.types:
             diff = sorted(ctypes ^ spec.types)
-            if spec.source == "top_hit":
+            if spec.types_from == "top_hit":
                 # the reference is only our best guess, not the customer's usual product: demote, never reject
                 type_note = f"different product type than the closest match ({', '.join(diff)})"
             else:
@@ -278,6 +332,14 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             # no usual product on file: tier by how exactly the product matches the request
             tier = "best" if coverage >= 1.0 else ("better" if coverage >= 0.5 else "good")
             if type_note:
+                tier = "good"
+        elif spec.source == "preferences" and not prefs:
+            want_brand = bool(spec.brand)
+            if same_spec and (same_brand or not want_brand) and not type_note:
+                tier = "best"
+            elif same_spec and not type_note:
+                tier = "better"
+            else:
                 tier = "good"
         elif same_brand and same_spec and same_cat:
             tier = "best"
@@ -363,6 +425,13 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
         r.append({"best": f"Exact match for '{q}' (no usual product on file)",
                   "better": f"Close match for '{q}' (most of the requested words)",
                   "good": f"Partial match for '{q}'; meets the hard constraints"}[t]
+                 + (f"; {x['type_note']}" if x.get("type_note") else ""))
+    elif x.get("spec_source") == "preferences" and t != "preferred":
+        want = spec.describe()
+        r.append({"best": f"Matches '{need.product_query}' and your stated preference ({want})",
+                  "better": f"Matches '{need.product_query}' and the spec; other brand ({d.get('brand') or 'unknown'}) "
+                            f"than preferred {spec.brand}",
+                  "good": f"Matches '{need.product_query}'; differs from your stated preference ({want})"}[t]
                  + (f"; {x['type_note']}" if x.get("type_note") else ""))
     elif t == "preferred":
         r.append("Your usual product")

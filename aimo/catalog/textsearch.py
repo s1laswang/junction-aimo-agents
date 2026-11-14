@@ -45,6 +45,7 @@ SYNONYMS: dict[str, list[str]] = {
     "tomato": ["tomato", "tomaatti", "tomat"],
     "apple": ["apple", "omena", "äpple"],
     "sour milk": ["sour milk", "piimä", "filmjölk"],
+    "drink": ["drink", "juoma", "dryck"],
     "milk drink": ["milk drink", "milkdrink", "maitojuoma", "mjölkdryck"],
 }
 # words that imply a claim filter (used as a soft boost in search; plan_need uses explicit claims)
@@ -107,22 +108,23 @@ _SURFACES_BY_LEN = sorted(_SURFACE_TO_CONCEPT, key=len, reverse=True)
 def parse_query(q: str) -> list[tuple[str, list[str]]]:
     """'lactose-free milk' -> [('lactose free', [...forms]), ('milk', ['milk','maito','mjölk'])]."""
     s = " " + re.sub(r"[^\w\-%,.']+", " ", clean_query(q).lower()) + " "
-    concepts: list[tuple[str, list[str]]] = []
+    found: list[tuple[int, str, list[str]]] = []   # (position in query, concept, forms)
     for surf in _SURFACES_BY_LEN:
         pat = re.compile(r"(?<![\w])" + re.escape(surf) + r"(?![\w])")
-        if pat.search(s):
+        m = pat.search(s)
+        if m:
             c = _SURFACE_TO_CONCEPT[surf]
-            if all(c != x[0] for x in concepts):
-                concepts.append((c, SYNONYMS[c]))
-            s = pat.sub(" ", s)
-    for w in s.split():
-        w = w.strip("-.,'")
+            if all(c != x[1] for x in found):
+                found.append((m.start(), c, SYNONYMS[c]))
+            s = pat.sub(lambda mm: " " * len(mm.group(0)), s)   # keep positions stable
+    for m in re.finditer(r"\S+", s):
+        w = m.group(0).strip("-.,'")
         if w.endswith("'s"):
             w = w[:-2]
         if len(w) < 3 or w in STOP or re.fullmatch(r"[\d.,%]+", w):
             continue
-        concepts.append((w, [w]))
-    return concepts
+        found.append((m.start(), w, [w]))
+    return [(c, forms) for _pos, c, forms in sorted(found, key=lambda x: x[0])]
 
 
 def _fts_term(t: str) -> Optional[str]:
