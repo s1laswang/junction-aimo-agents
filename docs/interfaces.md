@@ -66,3 +66,11 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
 - `hotel-aurora`: auto-approve ≤ €500/order; €500–5,000 needs `procurement_manager`; > €5,000 reject. Substitutions: same claims required; tier best → allow; better/good → needs approval. Category scope: dairy, bakery, produce.
 - `school-tampere`: excluded allergens milk, nuts; auto ≤ €300; any substitution → `kitchen_manager`; allergen unknown → reject the line.
 - `hospital-meilahti`: excluded gluten; `dietitian` approves any substitution; unknown allergen → needs approval by dietitian.
+
+## Trust conventions (landed Sat 16:xx, from team/trust; see docs/TRUST.md)
+- Agent ids: `<customer>/<agent>` e.g. `hotel-aurora/buyer-1` (bare `buyer-1` accepted). Unknown agent → mandate with no scopes → reject. Unknown customer → KeyError.
+- Line flags read by policy: `cutoff_passed`, `unavailable`, `sales_block` → reject line; `outside_preference` and any flag containing `injection` → needs_approval; `contains:<allergen>` / `may_contain:<allergen>` used when catalog has no product. Buyer may pass screen results in `need.preferences["injection_flags"]`.
+- Line-level RuleHit ids are `"<rule>:<product_id>"` so agents can drop just that line.
+- Link audit events with `data.related_ids` (run ↔ quote ↔ order). Use helpers `log_request`, `log_quote`, `log_decision`, `log_order` for consistent wording; the weekly budget rule reads `order.placed`.
+- Extra API: `get_mandate`, `list_customers`, `check_approval(quote, decision, approver, approver_role, quote_hash, *, decision_kind, note, order_id) -> {ok, reason}`, `explain(decision)`, `verify_quote_detailed`, `evidence_pack(subject_id)`, `tamper_for_demo/untamper_for_demo` (disabled when AIMO_ENV=production).
+- Decision (CEO): out-of-scope category for hotel stays needs_approval (category grouping is inferred from codes).
