@@ -2,7 +2,7 @@
 # Evaluated by aimo.trust.policy.evaluate() on every quote before an order is placed.
 # Outcome = strictest rule: reject > needs_approval > auto_approve.
 policy_id: hotel-aurora
-version: "1.1.0"
+version: "1.2.0"
 effective_from: "2026-11-01"
 customer:
   id: hotel-aurora
@@ -73,8 +73,10 @@ rules:
     # sampled product names per code prefix. UNVERIFIED against Valio's category tree.
     allowed:
       - {prefix: "10", label: dairy and chilled}
-      - {prefix: "11", label: bakery}
+      - {prefix: "11", label: fresh bakery}
       - {prefix: "17", label: chilled food and produce}
+      - {prefix: "21", label: dry goods}
+      - {prefix: "41", label: frozen food}
     on_violation: needs_approval
     on_unknown: needs_approval
     approver_role: procurement_manager
@@ -85,6 +87,8 @@ rules:
     tiers: {preferred: allow, best: allow, better: needs_approval, good: needs_approval, rejected: reject}
     outside_preference: needs_approval
     unverified: needs_approval    # missing tier, or a tier the profile/catalog cannot back
+    new_product: allow
+    auto_approve_alternatives_below_eur: 50
     approver_role: procurement_manager
 
   - id: allergens
@@ -101,6 +105,19 @@ rules:
   - id: quantity_drift
     type: quantity_drift
     max_factor: 3
+    approver_role: procurement_manager
+
+  - id: split_order
+    type: split_order
+    window_days: 7
+    max_factor: 1
+    near_limit_share: 0.6
+    approver_role: procurement_manager
+
+  - id: price_jump
+    type: price_jump
+    max_increase_pct: 15
+    lookback_days: 90
     approver_role: procurement_manager
 
   - id: injection
