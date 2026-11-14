@@ -7,12 +7,14 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+import aimo.catalog.offers as offers_mod
 import aimo.catalog.plan as plan_mod
 import aimo.catalog.textsearch as textsearch_mod
 from aimo.catalog import units as U
-from aimo.catalog.plan import _round_lot, fill, plan_need
+from aimo.catalog.offers import build_offer, fallback_get_offers, get_offers
+from aimo.catalog.plan import _late_split, _round_lot, _trim, fill, plan_need
 from aimo.catalog.substitution import price_per_unit, rank_substitutes, validate_need
-from aimo.models import Need, Offer
+from aimo.models import Candidate, Need, Offer, Plan, ProductSummary
 
 
 DELIVERY = date(2026, 11, 16)
@@ -720,3 +722,478 @@ def test_healthy_candidate_wins_alongside_corrupted_candidates(monkeypatch):
     assert [(l.product_id, l.covered_amount) for l in planned.lines] == [("good-milk", 10.0)]
     assert planned.shortfall == 0.0
     assert planned.total_net == pytest.approx(12.0)
+
+
+def _cand(
+    pid: str = "464306",
+    tier: str = "best",
+    rank_score: object = 0.85,
+    content_amount: object = 1.0,
+    content_unit: str = "L",
+    unit_price: object = 1.20,
+    available_amount: object = 50.0,
+    cutoff_passed: bool = False,
+    available: bool = True,
+    reasons: list[str] | None = None,
+    flags: list[str] | None = None,
+) -> Candidate:
+    now = datetime.now(timezone.utc)
+    prod = ProductSummary.model_construct(
+        id=pid,
+        name=f"Milk {pid}",
+        sales_unit="ST",
+        content_amount=content_amount,
+        content_unit=content_unit,
+        claims=["FREE_FROM_LACTOSE"],
+        labels=[],
+    )
+    off = Offer.model_construct(
+        product_id=pid,
+        requested_date=DELIVERY,
+        available=available,
+        available_amount=available_amount,
+        available_date=DELIVERY,
+        closing_time=now - timedelta(days=2) if cutoff_passed else now + timedelta(days=1),
+        cutoff_passed=cutoff_passed,
+        logistic_model="Stock",
+        sales_block=False,
+        unit_price=unit_price,
+        comparison_price=1.20,
+        comparison_unit=content_unit,
+        currency="EUR",
+        fetched_at=now,
+        issues=[],
+    )
+    return Candidate.model_construct(
+        product=prod,
+        offer=off,
+        tier=tier,
+        rank_score=rank_score,
+        reasons=list(reasons) if reasons is not None else ["Exact match"],
+        flags=list(flags) if flags is not None else [],
+        injection_screen=None,
+    )
+
+
+@pytest.mark.parametrize("bad_limit", [0, -1, -100, True, False, 1.5, math.nan, math.inf, -math.inf, None, "12", [12]])
+def test_trim_and_plan_need_reject_invalid_limit(monkeypatch, bad_limit):
+    with pytest.raises(ValueError, match="limit must be a positive integer"):
+        _trim([], bad_limit)
+
+    monkeypatch.setattr(
+        plan_mod,
+        "find_candidates",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("must not search on bad limit")),
+    )
+    with pytest.raises(ValueError, match="limit must be a positive integer"):
+        plan_need(
+            _need(quantity=10.0),
+            offers_fn=lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("must not fetch offers")),
+            limit=bad_limit,
+        )
+
+
+def test_trim_respects_positive_integer_limits():
+    ok_cands = [_cand(pid=f"ok-{i}", tier="best") for i in range(5)]
+    rej_cands = [_cand(pid=f"rej-{i}", tier="rejected", reasons=["Rejected: out of stock"]) for i in range(10)]
+    trimmed_1 = _trim([*ok_cands, *rej_cands], 1)
+    assert [c.product.id for c in trimmed_1 if c.tier != "rejected"] == ["ok-0"]
+    assert len([c for c in trimmed_1 if c.tier == "rejected"]) == 6
+
+    trimmed_16 = _trim([*ok_cands, *rej_cands], 16)
+    assert len([c for c in trimmed_16 if c.tier != "rejected"]) == 5
+    assert len([c for c in trimmed_16 if c.tier == "rejected"]) == 8
+
+
+@pytest.mark.parametrize("bad_content", [0, 0.0, -0.0, -5.0, math.nan, math.inf, -math.inf, True, False, None, "1.0", 10**400])
+def test_fill_direct_skips_corrupted_content_amount(monkeypatch, bad_content):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0)
+    plan = fill(need, [_cand(content_amount=bad_content)])
+    assert plan.lines == []
+    assert plan.covered_amount == 0.0
+    assert plan.shortfall == 10.0
+
+
+@pytest.mark.parametrize("bad_price", [0, 0.0, -0.0, -0.01, -5.0, math.nan, math.inf, -math.inf, True, False, None, "1.2", 10**400])
+def test_fill_direct_skips_corrupted_unit_price(monkeypatch, bad_price):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0)
+    plan = fill(need, [_cand(unit_price=bad_price)])
+    assert plan.lines == []
+    assert plan.total_net == 0.0
+    assert plan.shortfall == 10.0
+
+
+@pytest.mark.parametrize("bad_avail", [0, 0.0, -0.0, -1.0, -50.0, math.nan, -math.inf, True, False, "50", -(10**400)])
+def test_fill_direct_skips_corrupted_or_non_positive_available_amount(monkeypatch, bad_avail):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0)
+    plan = fill(need, [_cand(available_amount=bad_avail)])
+    assert plan.lines == []
+    assert plan.covered_amount == 0.0
+    assert plan.shortfall == 10.0
+
+
+@pytest.mark.parametrize("uncapped_avail", [None, math.inf, 10**400])
+def test_fill_direct_treats_infinite_available_amount_as_uncapped_without_round_lot(monkeypatch, uncapped_avail):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {"464306": {"allowed_lot_size": 6.0}})
+    seen_units: list[float] = []
+    real_round_lot = plan_mod._round_lot
+
+    def spy_round_lot(units, lot, up=True):
+        seen_units.append(units)
+        return real_round_lot(units, lot, up=up)
+
+    monkeypatch.setattr(plan_mod, "_round_lot", spy_round_lot)
+    need = _need(quantity=10.0)
+    plan = fill(need, [_cand(available_amount=uncapped_avail)])
+    assert len(plan.lines) == 1
+    assert plan.lines[0].qty_sales_units == 12.0
+    assert "partial_stock" not in plan.lines[0].flags
+    assert seen_units == [10.0]
+
+
+def test_fill_direct_caps_finite_partial_stock_with_lot_rounding(monkeypatch):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {"464306": {"allowed_lot_size": 6.0}})
+    need = _need(quantity=20.0)
+    plan = fill(need, [_cand(available_amount=14.0)])
+    assert len(plan.lines) == 1
+    assert plan.lines[0].qty_sales_units == 12.0
+    assert "partial_stock" in plan.lines[0].flags
+    assert plan.shortfall == 8.0
+
+
+@pytest.mark.parametrize("bad_score", [math.nan, math.inf, -math.inf, True, False, None, "0.9", 10**400])
+def test_fill_direct_sorts_corrupt_rank_score_behind_finite_candidates(monkeypatch, bad_score):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0)
+    corrupt = _cand(pid="corrupt-score", rank_score=bad_score, available_amount=50.0)
+    healthy = _cand(pid="healthy-score", rank_score=0.5, available_amount=50.0)
+    plan = fill(need, [corrupt, healthy])
+    assert [l.product_id for l in plan.lines] == ["healthy-score"]
+
+
+def test_fill_direct_skips_overflowing_arithmetic(monkeypatch):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=1000.0)
+    tiny_content = _cand(pid="tiny-c", content_amount=1e-308, unit_price=1.0)
+    huge_price = _cand(pid="huge-p", content_amount=1e-5, unit_price=1e308)
+    healthy = _cand(pid="ok-p", content_amount=1.0, unit_price=1.5)
+    plan = fill(need, [tiny_content, huge_price, healthy])
+    assert [l.product_id for l in plan.lines] == ["ok-p"]
+    assert math.isfinite(plan.total_net)
+
+
+def _empty_plan(need: Need) -> Plan:
+    return fill(need, [])
+
+
+@pytest.mark.parametrize("bad_field", ["content_amount", "unit_price", "available_amount"])
+@pytest.mark.parametrize("bad_val", [0, 0.0, -0.0, -5.0, math.nan, -math.inf, True, False, "bad"])
+def test_late_split_skips_corrupted_candidates_cleanly(monkeypatch, bad_field, bad_val):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0, preferences={"allow_split_delivery": True})
+    base_plan = _empty_plan(need)
+    cutoff_cand = _cand(
+        pid="late-1",
+        tier="rejected",
+        cutoff_passed=True,
+        available=False,
+        reasons=["Rejected: order cut-off passed (Thu 14 Nov 15:00) for delivery Mon 16 Nov"],
+        flags=["cutoff_passed"],
+    )
+    forged_ranked = _cand(pid="late-1", tier="best", **{bad_field: bad_val})
+    monkeypatch.setattr(plan_mod, "rank_substitutes", lambda *_a, **_kw: [forged_ranked])
+
+    out_plan, notes = _late_split(need, base_plan, [cutoff_cand], {"late-1": _row("late-1")}, {"late-1": 1.0}, {})
+    assert out_plan.lines == []
+    assert notes == []
+
+
+@pytest.mark.parametrize("bad_inf_field", ["content_amount", "unit_price"])
+def test_late_split_skips_infinite_content_and_unit_price(monkeypatch, bad_inf_field):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0, preferences={"allow_split_delivery": True})
+    base_plan = _empty_plan(need)
+    cutoff_cand = _cand(
+        pid="late-inf",
+        tier="rejected",
+        cutoff_passed=True,
+        available=False,
+        reasons=["Rejected: order cut-off passed (Thu 14 Nov 15:00) for delivery Mon 16 Nov"],
+        flags=["cutoff_passed"],
+    )
+    forged_ranked = _cand(pid="late-inf", tier="best", **{bad_inf_field: math.inf})
+    monkeypatch.setattr(plan_mod, "rank_substitutes", lambda *_a, **_kw: [forged_ranked])
+
+    out_plan, notes = _late_split(need, base_plan, [cutoff_cand], {"late-inf": _row("late-inf")}, {"late-inf": 1.0}, {})
+    assert out_plan.lines == []
+    assert notes == []
+
+
+@pytest.mark.parametrize("uncapped_avail", [None, math.inf, 10**400])
+def test_late_split_treats_infinite_available_amount_as_uncapped(monkeypatch, uncapped_avail):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {"late-ok": {"allowed_lot_size": 6.0}})
+    need = _need(quantity=10.0, preferences={"allow_split_delivery": True})
+    base_plan = _empty_plan(need)
+    cutoff_cand = _cand(
+        pid="late-ok",
+        tier="rejected",
+        cutoff_passed=True,
+        available=False,
+        available_amount=uncapped_avail,
+        reasons=["Rejected: order cut-off passed (Thu 14 Nov 15:00) for delivery Mon 16 Nov"],
+        flags=["cutoff_passed"],
+    )
+    ranked_cand = _cand(pid="late-ok", tier="best", available_amount=uncapped_avail)
+    monkeypatch.setattr(plan_mod, "rank_substitutes", lambda *_a, **_kw: [ranked_cand])
+
+    out_plan, notes = _late_split(need, base_plan, [cutoff_cand], {"late-ok": _row("late-ok")}, {"late-ok": 1.0}, {})
+    assert len(out_plan.lines) == 1
+    assert out_plan.lines[0].qty_sales_units == 12.0
+    assert out_plan.shortfall == 0.0
+    assert notes
+
+
+@pytest.mark.parametrize("bad_score", [math.nan, math.inf, -math.inf, True, False, None, "0.9", 10**400])
+def test_late_split_sorts_corrupt_rank_score_behind_finite_candidates(monkeypatch, bad_score):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0, preferences={"allow_split_delivery": True})
+    base_plan = _empty_plan(need)
+    c1 = _cand(
+        pid="late-corrupt",
+        tier="rejected",
+        cutoff_passed=True,
+        available=False,
+        reasons=["Rejected: order cut-off passed (Thu 14 Nov 15:00) for delivery Mon 16 Nov"],
+        flags=["cutoff_passed"],
+    )
+    c2 = _cand(
+        pid="late-healthy",
+        tier="rejected",
+        cutoff_passed=True,
+        available=False,
+        reasons=["Rejected: order cut-off passed (Thu 14 Nov 15:00) for delivery Mon 16 Nov"],
+        flags=["cutoff_passed"],
+    )
+    r_corrupt = _cand(pid="late-corrupt", tier="best", rank_score=bad_score)
+    r_healthy = _cand(pid="late-healthy", tier="best", rank_score=0.6)
+    monkeypatch.setattr(plan_mod, "rank_substitutes", lambda *_a, **_kw: [r_corrupt, r_healthy])
+
+    out_plan, _ = _late_split(
+        need,
+        base_plan,
+        [c1, c2],
+        {"late-corrupt": _row("late-corrupt"), "late-healthy": _row("late-healthy")},
+        {"late-corrupt": 1.0, "late-healthy": 1.0},
+        {},
+    )
+    assert [l.product_id for l in out_plan.lines] == ["late-healthy"]
+
+
+@pytest.mark.parametrize("bad_sf", [math.nan, math.inf, -math.inf, -1.0, True, False, None, "10", 10**400])
+def test_late_split_rejects_corrupt_shortfall(monkeypatch, bad_sf):
+    monkeypatch.setattr(textsearch_mod, "get_rows", lambda _ids: {})
+    need = _need(quantity=10.0)
+    bad_plan = Plan.model_construct(
+        need=need,
+        lines=[],
+        candidates=[],
+        covered_amount=0.0,
+        shortfall=bad_sf,
+        total_net=0.0,
+        explanation="",
+    )
+    with pytest.raises(ValueError):
+        _late_split(need, bad_plan, [], {}, {}, {})
+
+
+def _valid_price_payload(unit_price: object = 1.25, comparison_price: object = 1.25) -> dict:
+    return {
+        "productId": "464306",
+        "catalogPrice": {"value": unit_price, "valueWithTax": 1.425, "currency": "EUR", "validTo": "2026-12-01T00:00:00+0200"},
+        "listPrice": {"value": 1.30},
+        "comparisonPrice": {"value": comparison_price},
+        "comparisonUnit": "L",
+        "tax": {"taxRate": 14.0},
+    }
+
+
+def _valid_avail_payload(amount: object = 50.0, avail_date: object = "2026-11-16") -> dict:
+    return {
+        "productId": "464306",
+        "logisticModel": "Stock",
+        "salesBlock": False,
+        "closingTime": "2026-11-15T15:00:00+0200",
+        "scheduleLines": [{"salesUnit": "ST", "availableAmount": amount, "availableDate": avail_date, "salesBlock": False}],
+    }
+
+
+@pytest.mark.parametrize("bad_price", [0, 0.0, -0.0, -1.5, math.nan, math.inf, -math.inf, True, False, None, "1.2", 10**400])
+def test_build_offer_guards_bad_unit_price(bad_price):
+    now = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
+    offer = build_offer("464306", DELIVERY, _valid_price_payload(unit_price=bad_price), _valid_avail_payload(50.0), now)
+    assert offer.unit_price is None
+    assert offer.available is False
+    assert "price_error" in offer.issues
+
+
+@pytest.mark.parametrize("bad_cmp", [0, 0.0, -0.0, -1.5, math.nan, math.inf, -math.inf, True, False, None, "1.2", 10**400])
+def test_build_offer_guards_bad_comparison_and_secondary_prices(bad_cmp):
+    now = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
+    pr = _valid_price_payload(unit_price=1.25, comparison_price=bad_cmp)
+    pr["catalogPrice"]["valueWithTax"] = bad_cmp
+    pr["listPrice"]["value"] = bad_cmp
+    if bad_cmp not in (0, 0.0, -0.0):
+        pr["tax"]["taxRate"] = bad_cmp
+    offer = build_offer("464306", DELIVERY, pr, _valid_avail_payload(50.0), now)
+    assert offer.unit_price == pytest.approx(1.25)
+    assert offer.comparison_price is None
+    assert offer.unit_price_gross is None
+    assert offer.list_price is None
+    if bad_cmp not in (0, 0.0, -0.0):
+        assert offer.tax_rate is None
+    assert offer.available is True
+
+
+@pytest.mark.parametrize("bad_avail", [-0.01, -5.0, math.nan, math.inf, -math.inf, True, False, "50", 10**400, -(10**400)])
+def test_build_offer_guards_corrupt_available_amount(bad_avail):
+    now = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
+    offer = build_offer("464306", DELIVERY, _valid_price_payload(1.25), _valid_avail_payload(amount=bad_avail), now)
+    assert offer.available_amount is None
+    assert offer.available is False
+    assert "availability_error" in offer.issues
+
+
+@pytest.mark.parametrize("zero_avail", [0, 0.0, -0.0])
+def test_build_offer_zero_available_amount_marks_out_of_stock(zero_avail):
+    now = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
+    offer = build_offer("464306", DELIVERY, _valid_price_payload(1.25), _valid_avail_payload(amount=zero_avail), now)
+    assert offer.available_amount == 0.0
+    assert offer.available is False
+    assert "out_of_stock" in offer.issues
+
+
+def test_build_offer_guards_corrupt_schedule_dates_and_naive_timestamps():
+    now_naive = datetime(2026, 11, 14, 12, 0)
+    bad_date_offer = build_offer(
+        "464306",
+        DELIVERY,
+        _valid_price_payload(1.25),
+        _valid_avail_payload(amount=20.0, avail_date="not-a-date"),
+        now_naive,
+    )
+    assert bad_date_offer.available_date is None
+    assert bad_date_offer.available is False
+    assert "availability_error" in bad_date_offer.issues
+
+
+@pytest.mark.parametrize("bad_date", [None, "", "bad-date", "2026-11-16", 20261116, True, False, datetime(2026, 11, 16, 12, 0)])
+def test_offers_functions_reject_invalid_requested_date(bad_date):
+    with pytest.raises(ValueError, match="requested_date must be a date"):
+        get_offers(["464306"], bad_date)
+    with pytest.raises(ValueError, match="requested_date must be a date"):
+        fallback_get_offers(["464306"], bad_date)
+    with pytest.raises(ValueError, match="requested_date must be a date"):
+        build_offer("464306", bad_date, None, None, None)
+
+
+@pytest.mark.parametrize("bad_pid", ["", "   ", "\t\n", None, 123, True, False])
+def test_build_offer_rejects_empty_or_non_string_pid(bad_pid):
+    with pytest.raises(ValueError, match="pid must be a non-empty string"):
+        build_offer(bad_pid, DELIVERY, None, None, None)
+
+
+@pytest.mark.parametrize("bad_ids", [None, 123, True, False, "464306", b"464306", {"464306": 1}])
+def test_get_offers_rejects_non_iterable_or_bare_string_product_ids(bad_ids):
+    with pytest.raises(ValueError, match="product_ids must be an iterable of product id strings"):
+        get_offers(bad_ids, DELIVERY)
+    with pytest.raises(ValueError, match="product_ids must be an iterable of product id strings"):
+        fallback_get_offers(bad_ids, DELIVERY)
+
+
+def test_get_offers_skips_blank_and_non_string_ids_and_sanitizes_backend_offers(monkeypatch):
+    import aimo.backend as backend_mod
+
+    assert get_offers([], DELIVERY) == {}
+    assert get_offers(["", "   ", "\t\n", None, 123, True, False, math.nan], DELIVERY) == {}
+    assert fallback_get_offers(["", "  ", None, True, 99], DELIVERY) == {}
+
+    seen_ids: list[list[str]] = []
+    now = datetime.now(timezone.utc)
+
+    def fake_backend_get_offers(ids, d, customer_id=None):
+        seen_ids.append(list(ids))
+        return {
+            "464306": Offer.model_construct(
+                product_id="464306",
+                requested_date=d,
+                available=True,
+                available_amount=math.nan,
+                cutoff_passed=False,
+                sales_block=False,
+                unit_price=-3.0,
+                comparison_price=math.inf,
+                fetched_at=now,
+                issues=[],
+            ),
+            "469363": {
+                "product_id": "469363",
+                "requested_date": d,
+                "available": True,
+                "available_amount": True,
+                "unit_price": True,
+                "comparison_price": False,
+                "fetched_at": now,
+                "issues": [],
+            },
+            "   ": _offer("blank"),
+        }
+
+    monkeypatch.setattr(backend_mod, "get_offers", fake_backend_get_offers)
+    res = get_offers([" 464306 ", "", "  ", None, True, 99, "469363", "464306"], DELIVERY)
+    assert seen_ids == [["464306", "469363"]]
+    assert set(res.keys()) == {"464306", "469363"}
+    assert res["464306"].unit_price is None
+    assert res["464306"].comparison_price is None
+    assert res["464306"].available_amount is None
+    assert res["464306"].available is False
+    assert "price_error" in res["464306"].issues
+    assert "availability_error" in res["464306"].issues
+    assert res["469363"].unit_price is None
+    assert res["469363"].comparison_price is None
+    assert res["469363"].available_amount is None
+    assert res["469363"].available is False
+
+
+def test_fallback_get_offers_handles_corrupt_upstream_products(monkeypatch):
+    def fake_post(kind: str, _ids: list[str], _d: date) -> dict:
+        if kind == "price":
+            return {
+                "products": [
+                    {"error": "missing-id"},
+                    "not-a-dict",
+                    _valid_price_payload(unit_price=math.nan, comparison_price=-2.0),
+                    {**_valid_price_payload(unit_price=2.50, comparison_price=math.inf), "productId": "469363"},
+                ]
+            }
+        return {
+            "timeNow": "2026-11-14T12:00:00Z",
+            "products": [
+                None,
+                _valid_avail_payload(amount=-10.0),
+                {**_valid_avail_payload(amount=25.0), "productId": "469363"},
+            ],
+        }
+
+    monkeypatch.setattr(offers_mod, "_post", fake_post)
+    out = fallback_get_offers(["464306", "  ", None, "469363"], DELIVERY)
+    assert set(out.keys()) == {"464306", "469363"}
+    assert out["464306"].available is False
+    assert out["464306"].unit_price is None
+    assert out["464306"].available_amount is None
+    assert out["469363"].available is True
+    assert out["469363"].unit_price == pytest.approx(2.50)
+    assert out["469363"].comparison_price is None
+    assert out["469363"].available_amount == 25.0
