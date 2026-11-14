@@ -1,0 +1,76 @@
+# Meilahti hospital ward kitchen AT NORDIC BAKERY SUPPLY (synthetic second wholesaler, openness demo).
+# Coeliac patients: gluten excluded; a dietitian signs off on every substitution.
+policy_id: hospital-meilahti
+version: "1.0.0-nbs"
+effective_from: "2026-11-01"
+customer:
+  id: hospital-meilahti
+  name: Meilahti Hospital Ward Kitchen
+  segment: hospital
+  description: Gluten-free bread and flour for patient meals.
+
+approver_roles: [dietitian, procurement_manager]
+override_roles: [head_of_nutrition]
+approvers:
+  - {id: sara@hospital-meilahti.example, name: Sara Lindqvist, role: dietitian}
+  - {id: olli@hospital-meilahti.example, name: Olli Mäkinen, role: procurement_manager}
+  - {id: helena@hospital-meilahti.example, name: Helena Salo, role: head_of_nutrition}
+
+agents:
+  - agent_id: hospital-meilahti/buyer-1
+    label: Gemini purchasing agent
+    scopes: [catalog:read, quote:create, order:submit]
+
+preferred_products:
+  - {product_id: "NB1011", label: Gluten-free dark bread 400 g sliced}
+approved_alternatives: []
+
+standing_orders:
+  - id: gf_bread
+    label: gluten-free bread
+    keywords: [gluten-free, gluteeniton, bread, leipä]
+    weekly_qty: 20
+    unit: KG
+
+rules:
+  - id: mandate_scope
+    type: scope
+    required_scopes: [order:submit]
+
+  - id: quote_freshness
+    type: quote_freshness
+
+  - id: spend
+    type: spend_threshold
+    auto_max: 400
+    approval_max: 4000
+    approver_role: procurement_manager
+
+  - id: substitution
+    type: substitution
+    require_claims: true
+    tiers: {preferred: allow, best: needs_approval, better: needs_approval, good: needs_approval, rejected: reject}
+    outside_preference: needs_approval
+    unverified: needs_approval
+    approver_role: dietitian
+
+  - id: allergens
+    type: allergen_block
+    excluded: [gluten]
+    reason: coeliac patients
+    on_contains: reject
+    on_may_contain: reject
+    on_unknown: needs_approval
+    approver_role: dietitian
+
+  - id: delivery
+    type: delivery
+
+  - id: quantity_drift
+    type: quantity_drift
+    max_factor: 3
+    approver_role: procurement_manager
+
+  - id: injection
+    type: injection
+    approver_role: procurement_manager
