@@ -64,7 +64,7 @@ SUMMARY = """Write the final summary of this purchasing run for the customer's b
 sentences of plain text (no markdown headings, no lists). Cover: what was ordered (products,
 quantities, total EUR net) or why nothing was ordered; why any substitution was made; what the
 policy decided and what the human approver did (name them if present); and end with the audit
-report link exactly as given. Use ONLY facts from the JSON; do not invent anything. Skip facts that are null or empty instead of mentioning them.
+report link exactly as given. If injections_flagged is non-empty, say that suspicious supplier text was detected and ignored. If drift_hold is set, say the quantity needs human confirmation. Use ONLY facts from the JSON; do not invent anything. Skip facts that are null or empty instead of mentioning them.
 
 Facts JSON:
 {facts_json}"""

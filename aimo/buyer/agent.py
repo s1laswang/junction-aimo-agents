@@ -248,6 +248,12 @@ class BuyerAgent:
         if isinstance(args, dict) and args.get("__blocked__"):
             msg = args["__blocked__"]
             self.emit("tool_call", f"{name} (blocked by harness)", name=name, blocked=msg, **meta)
+            if name == "place_order" and self.drift:
+                self.emit("decision", "Held for human confirmation: standing-order drift",
+                          status="needs_confirmation", quote_id=(self.quote or {}).get("quote_id"),
+                          decision={"outcome": "needs_confirmation", "approver_role": "buyer",
+                                    "hits": [{"rule_id": "buyer.standing_order_drift", "outcome": "needs_approval",
+                                              "message": msg}]})
             return {"error": "blocked_by_buyer_harness", "message": msg}
         self.emit("tool_call", f"{name}({_short(args, 120)})", name=name, args=args, **meta)
         t = time.time()

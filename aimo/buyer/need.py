@@ -112,7 +112,7 @@ def resolve_date(text: str, now: datetime | None = None) -> tuple[date, str] | N
     m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", t)
     if m:
         return date(int(m[1]), int(m[2]), int(m[3])), m[0]
-    m = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})?\b", t)  # Finnish 16.11. / 16.11.2026
+    m = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})?(?!\d)", t)  # Finnish 16.11. / 16.11.2026
     if m:
         y = int(m[3]) if m[3] else today.year
         y = y + 2000 if y < 100 else y
@@ -144,7 +144,7 @@ def resolve_date(text: str, now: datetime | None = None) -> tuple[date, str] | N
     m = re.search(r"\b(next\s+week)\b", t)
     if m:
         return today + timedelta(days=7 - today.weekday()), m[0]  # next Monday
-    m = re.search(r"\b(?:next\s+)?(" + "|".join(sorted(WEEKDAYS, key=len, reverse=True)) + r")\b", t)
+    m = re.search(r"\b(?:next\s+)?(" + "|".join(sorted(WEEKDAYS, key=len, reverse=True)) + r")(?:na|nä|hin)?\b", t)
     if m:
         wd = WEEKDAYS[m.group(1)]
         ahead = (wd - today.weekday()) % 7 or 7  # "next Monday" == the coming Monday

@@ -214,6 +214,9 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
     for k in order:
         try:
             if k == "mcp":
+                if kind == "auto":  # fast probe so auto mode falls back quickly when no server runs
+                    import httpx
+                    httpx.get(mcp_url, timeout=1.5)  # any HTTP status means something listens
                 return MCPTransport(mcp_url, headers=headers, timeout=20)
             if k == "inproc":
                 return InProcessTransport(agent_id, customer_id, mandate)
