@@ -251,7 +251,11 @@ def build_router() -> APIRouter:
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
     def plan(need: Need):
-        _require_catalog()
+        try:
+            _require_catalog()
+        except service.ServiceError:
+            service._check_need_input(need)  # bad input is a 422 even without a catalog; then 503 catalog_missing
+            raise
         return service.plan_need(need)
 
     # ---------------------------------------------------------- quotes

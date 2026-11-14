@@ -76,6 +76,7 @@ def test_service_and_mcp_plan_need_quantity_zero_is_service_error_422():
     assert is_error and ("invalid_need" in text or "greater than 0" in text) and "ZeroDivision" not in text
 
 
+@pytest.mark.needs_data  # without the catalog /v1/plan is 503 catalog_missing by design (S1)
 def test_positive_quantity_still_plans(api):
     r = api.post("/v1/plan", headers=H, json={**NEED, "quantity": 10})
     assert r.status_code == 200, r.text
