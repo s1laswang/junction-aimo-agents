@@ -201,6 +201,7 @@ class Order(BaseModel):
     created_at: datetime
     updated_at: datetime
     provenance: Optional[dict[str, Any]] = None  # [gateway, appended] availability re-check at placement
+    approver_role: Optional[str] = None       # [gateway, appended] role the human approver acted in; approved_by is the plain id
 
 
 class Mandate(BaseModel):

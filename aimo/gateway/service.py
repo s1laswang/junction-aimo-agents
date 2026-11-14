@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from aimo.backend import orders as store
-from aimo.backend.client import UpstreamError, get_offers_with_meta
+from aimo.backend.client import INJECTION_TEXT, UpstreamError, current_faults, get_offers_with_meta
 from aimo.models import (
     AuditEvent,
     Mandate,
@@ -57,14 +57,33 @@ class ServiceError(Exception):
         return d
 
 
+def normalize_agent_id(customer_id: str, agent_id: str) -> str:
+    """Bare agent name for this customer: "hotel-aurora/buyer-1" and "buyer-1" both -> "buyer-1".
+    An id prefixed with ANOTHER customer is kept whole (the mandate lookup then rejects it)."""
+    a = (agent_id or "").strip() or DEFAULT_AGENT
+    prefix = f"{customer_id}/"
+    while a.startswith(prefix):
+        a = a[len(prefix):]
+    return a or DEFAULT_AGENT
+
+
 @dataclass
 class Identity:
     agent_id: str = DEFAULT_AGENT
     customer_id: str = DEFAULT_CUSTOMER
 
+    def __post_init__(self) -> None:
+        self.customer_id = (self.customer_id or "").strip() or DEFAULT_CUSTOMER
+        self.agent_id = normalize_agent_id(self.customer_id, self.agent_id)
+
+    @property
+    def full_agent_id(self) -> str:
+        """`<customer>/<agent>` (trust convention); unchanged if the id already names a customer."""
+        return self.agent_id if "/" in self.agent_id else f"{self.customer_id}/{self.agent_id}"
+
     @property
     def actor(self) -> str:
-        return f"agent:{self.customer_id}/{self.agent_id}"
+        return f"agent:{self.full_agent_id}"
 
 
 def _now() -> datetime:
@@ -163,9 +182,14 @@ def _fallback_evaluate(q: Quote, m: Mandate) -> PolicyDecision:
     return PolicyDecision(outcome=outcome, approver_role=role, hits=hits, policy_id="gateway-fallback", policy_version="0")
 
 
-def evaluate(q: Quote, m: Mandate) -> PolicyDecision:
+def evaluate(q: Quote, m: Mandate, products: dict[str, Any] | None = None) -> PolicyDecision:
     t = _trust()
     try:
+        if products:
+            try:
+                return t.evaluate(q, m, products=products)  # type: ignore[union-attr]
+            except TypeError:  # older trust without products=
+                pass
         return t.evaluate(q, m)  # type: ignore[union-attr]
     except _MISSING:
         log.warning("trust.evaluate unavailable: using gateway fallback thresholds")
@@ -271,6 +295,41 @@ def audit_report(subject_id: str) -> str:
         return "\n".join(lines) + "\n"
 
 
+def _demo_enabled() -> bool:
+    return os.environ.get("AIMO_ENV", "dev").strip().lower() not in ("prod", "production")
+
+
+def demo_tamper(seq: int, summary: str | None = None) -> dict[str, Any]:
+    """DEMO ONLY: trust.tamper_for_demo, so the UI can show 'Verify chain' failing. 404 in production."""
+    if not _demo_enabled():
+        raise ServiceError(404, "not_found", "Not Found")
+    t = _trust()
+    try:
+        res = t.tamper_for_demo(seq, summary=summary)  # type: ignore[union-attr]
+    except _MISSING as e:
+        raise ServiceError(501, "tamper_unavailable", "trust.tamper_for_demo is not available") from e
+    except PermissionError as e:
+        raise ServiceError(404, "not_found", "Not Found") from e
+    except KeyError as e:
+        raise ServiceError(404, "audit_event_not_found", f"no audit event #{seq}") from e
+    return {"tampered": True, **(res or {}), "verify": audit_verify()}
+
+
+def demo_untamper(seq: int) -> dict[str, Any]:
+    if not _demo_enabled():
+        raise ServiceError(404, "not_found", "Not Found")
+    t = _trust()
+    try:
+        ok = t.untamper_for_demo(seq)  # type: ignore[union-attr]
+    except _MISSING as e:
+        raise ServiceError(501, "tamper_unavailable", "trust.untamper_for_demo is not available") from e
+    except PermissionError as e:
+        raise ServiceError(404, "not_found", "Not Found") from e
+    except KeyError as e:
+        raise ServiceError(404, "audit_event_not_found", f"no audit event #{seq}") from e
+    return {"seq": seq, "restored": bool(ok), "verify": audit_verify()}
+
+
 def jwks() -> dict[str, Any]:
     t = _trust()
     try:
@@ -283,18 +342,63 @@ def jwks() -> dict[str, Any]:
 def find_products(query: str, claims: list[str] | None = None, category: str | None = None,
                     content_unit: str | None = None, limit: int = 20) -> list[ProductSummary]:
     limit = max(1, min(int(limit or 20), 100))
+    res: list[ProductSummary] | None = None
     cat = _catalog()
     if cat is not None:
         try:
-            return cat.search(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
+            res = cat.search(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
         except NotImplementedError:
-            pass
-    from aimo.gateway import fallback_catalog
+            res = None
+    if res is None:
+        from aimo.gateway import fallback_catalog
 
-    return fallback_catalog.search(query, claims=claims or [], category=category, limit=limit)
+        res = fallback_catalog.search(query, claims=claims or [], category=category, limit=limit)
+    faults = current_faults()
+    if not faults.inject_text:
+        return res
+    out: list[ProductSummary] = []
+    for s in res:  # injected products come back as Product (a ProductSummary) carrying marketing_text
+        if faults._hit(faults.inject_text, s.id):
+            try:
+                full = _raw_product(s.id)
+            except ServiceError:
+                full = Product(**s.model_dump())
+            out.append(_inject_text(full.model_copy(update={"score": s.score})))
+        else:
+            out.append(s)
+    return out
+
+
+def _inject_text(p: Product) -> Product:
+    text = ((p.marketing_text or "").rstrip() + "\n\n" + INJECTION_TEXT).strip()
+    labels = list(dict.fromkeys([*p.labels, "injected:inject_text"]))
+    return p.model_copy(update={"marketing_text": text, "labels": labels})
 
 
 def get_product(product_id: str) -> Product:
+    p = _raw_product(product_id)
+    faults = current_faults()
+    if faults.inject_text and faults._hit(faults.inject_text, str(product_id)):
+        p = _inject_text(p)
+    return p
+
+
+def screen_supplier_text(p: Product) -> dict[str, Any]:
+    """trust.screen_text over untrusted supplier text (marketing + ingredients)."""
+    text = " ".join(x for x in (p.marketing_text, p.ingredients_text) if x)
+    if not text:
+        return {"suspicious": False, "reasons": []}
+    t = _trust()
+    try:
+        return t.screen_text(text)  # type: ignore[union-attr]
+    except _MISSING:
+        low = text.lower()
+        hits = [k for k in ("ignore your", "ignore previous", "ai agent", "approval already granted", "system note")
+                if k in low]
+        return {"suspicious": bool(hits), "reasons": hits}
+
+
+def _raw_product(product_id: str) -> Product:
     p = None
     cat = _catalog()
     if cat is not None:
@@ -386,6 +490,20 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
                            "some lines cannot be delivered for this date; re-plan (split or substitute) and re-quote",
                            {"refused": refused})
 
+    screen_flags: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+    for pid in qty_by:
+        try:
+            prod = get_product(pid)
+        except ServiceError:
+            continue
+        names[pid] = prod.name
+        sc = screen_supplier_text(prod)
+        if sc.get("suspicious"):
+            screen_flags[pid] = ["supplier_text_injection_suspected"]
+            if "injected:inject_text" in prod.labels:
+                screen_flags[pid].append("injected:inject_text")
+
     qlines: list[QuoteLine] = []
     total = gross = 0.0
     for ln in lines:
@@ -396,8 +514,9 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         total += lt
         gross += q * float(o.unit_price_gross or o.unit_price)
         info = [i for i in o.issues if i in ("limited_stock", "terminal_unknown_qty") or i.startswith("injected:")]
+        info += screen_flags.get(pid, [])
         qlines.append(QuoteLine(
-            product_id=pid, product_name=ln.get("product_name") or _product_name(pid), qty_sales_units=q,
+            product_id=pid, product_name=ln.get("product_name") or names.get(pid) or _product_name(pid), qty_sales_units=q,
             sales_unit=o.sales_unit or "ST", unit_price=float(o.unit_price), line_total=lt,
             tier=ln.get("tier") or "preferred", flags=list(dict.fromkeys(list(ln.get("flags") or []) + info)),
         ))
@@ -508,7 +627,13 @@ def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
     if mexp and (mexp if mexp.tzinfo else mexp.replace(tzinfo=timezone.utc)) <= _now():
         raise ServiceError(403, "mandate_expired", "agent mandate has expired")
 
-    decision = evaluate(quote, mandate)
+    products: dict[str, Any] = {}
+    for ln in quote.lines:
+        try:
+            products[ln.product_id] = get_product(ln.product_id)
+        except ServiceError:
+            pass
+    decision = evaluate(quote, mandate, products=products or None)
     now = _now()
     order = Order(order_id=_id("ORD"), quote_id=quote_id, quote_hash=quote.quote_hash or "", customer_id=quote.customer_id,
                   agent_id=ident.agent_id, status="pending_approval", decision=decision, created_at=now, updated_at=now)
@@ -531,7 +656,7 @@ def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
                    f"Order {order.order_id} submitted by {ident.actor}; waiting for "
                    f"{decision.approver_role or 'a human'} approval.", {"quote_hash": quote.quote_hash})
         return order
-    order = order.model_copy(update={"status": "approved", "approved_by": f"auto (policy {decision.policy_id})"})
+    order = order.model_copy(update={"status": "approved", "approved_by": f"policy:{decision.policy_id}"})
     store.save_order(order)
     _log_order(order, quote, "system:policy-engine", "within the agent's mandate, no human needed",
                "order.auto_approved", f"Order {order.order_id} auto-approved within mandate.")
@@ -607,15 +732,16 @@ def decide(order_id: str, decision: str, approver: str, quote_hash: str, note: s
         raise ServiceError(403, "approval_refused", chk.get("reason") or "approval refused by trust layer")
 
     store.record_approval(order_id, decision, approver, note, quote_hash)
-    who = f"{approver} ({role})" if role else approver
+    who = f"{approver} ({role})" if role else approver  # wording for fallback audit only
     if decision == "reject":
-        order = order.model_copy(update={"status": "rejected", "approved_by": who, "approval_note": note,
-                                         "updated_at": _now()})
+        order = order.model_copy(update={"status": "rejected", "approved_by": approver, "approver_role": role or None,
+                                         "approval_note": note, "updated_at": _now()})
         store.save_order(order)
         _log_order(order, quote, human, note or f"rejected by {who}", "order.rejected_by_human",
                    f"{who} rejected order {order_id}." + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
         return order
-    order = order.model_copy(update={"status": "approved", "approved_by": who, "approval_note": note, "updated_at": _now()})
+    order = order.model_copy(update={"status": "approved", "approved_by": approver, "approver_role": role or None,
+                                     "approval_note": note, "updated_at": _now()})
     store.save_order(order)
     _log_order(order, quote, human, note or "", "order.approved",
                f"{who} approved order {order_id} (quote {quote.quote_id}, €{quote.total_net:.2f}, hash {quote_hash[:12]}…)."

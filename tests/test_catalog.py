@@ -202,6 +202,81 @@ def test_get_product_allergens():
     assert len(p.allergens) == 14
 
 
+def test_clean_query_strips_allergen_mentions():
+    from aimo.catalog.textsearch import clean_query, parse_query
+    assert clean_query("oat drink, pupils have milk and nut allergies") == "oat drink"
+    assert clean_query("milk-free oat drink") == "oat drink"
+    assert clean_query("oat drink without milk or nuts") == "oat drink"
+    assert clean_query("bread for coeliac patients") == "bread"
+    assert clean_query("lactose-free milk") == "lactose-free milk"      # positive claims are kept
+    assert clean_query("gluten-free bread") == "gluten-free bread"
+    concepts = [c for c, _ in parse_query("Oat drink for a school, pupils have milk and nut allergies, 200 L by Wednesday")]
+    assert concepts == ["oat", "drink"] and "milk" not in concepts
+
+
+def _fake_offers(cutoff_ids=()):
+    """Offline offers_fn: every product orderable at €1.50 per sales unit unless listed in cutoff_ids."""
+    def fn(ids, d, customer_id=None):
+        now = datetime.now(timezone.utc)
+        return {pid: Offer(product_id=pid, requested_date=d, available=pid not in cutoff_ids,
+                           cutoff_passed=pid in cutoff_ids, closing_time=now - timedelta(days=1) if pid in cutoff_ids
+                           else now + timedelta(days=1), logistic_model="Stock", available_amount=9999999999.0,
+                           unit_price=1.5, fetched_at=now) for pid in ids}
+    return fn
+
+
+@pytest.fixture
+def offline_plan(monkeypatch):
+    monkeypatch.setenv("AIMO_RECIPE_CHECK", "0")
+    from aimo.catalog import textsearch
+    monkeypatch.setattr(textsearch, "semantic_hits", lambda *a, **k: [])
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+@pytest.mark.parametrize("query", ["oat drink", "by Wednesday", "milk-free oat drink",
+                                   "oat drink, pupils have milk and nut allergies"])
+def test_school_oat_drink_with_allergy_text(offline_plan, query):
+    """Buyer bug: allergy mentions in raw_text/product_query must not turn the request into 'milk'."""
+    from aimo.catalog import get_product
+    from aimo.catalog.plan import plan_need
+    raw = "Oat drink for a school, pupils have milk and nut allergies, 200 L by Wednesday"
+    need = Need(customer_id="school-tampere", raw_text=raw, product_query=query, excluded_allergens=["milk", "nuts"],
+                quantity=200, unit="L", delivery_by=date(2026, 11, 18))
+    plan = plan_need(need, offers_fn=_fake_offers())
+    assert plan.lines and plan.shortfall == 0, plan.explanation
+    assert plan.need.product_query == query                       # the caller's need is returned unchanged
+    for line in plan.lines:
+        p = get_product(line.product_id)
+        assert "oat" in p.name.lower()
+        assert p.allergens["milk"].value == "free" and p.allergens["nuts"].value == "free"
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+@pytest.mark.parametrize("query", ["gluten free bread", "bread", "pasta"])
+def test_hospital_gluten_free_bread_and_pasta(offline_plan, query):
+    from aimo.catalog import get_product
+    from aimo.catalog.plan import plan_need
+    need = Need(customer_id="hospital-meilahti", raw_text=f"Gluten-free {query} for coeliac patients, 20 kg by Tuesday",
+                product_query=query, excluded_allergens=["gluten"], quantity=20, unit="KG",
+                delivery_by=date(2026, 11, 17))
+    plan = plan_need(need, offers_fn=_fake_offers())
+    assert plan.lines and plan.shortfall == 0, plan.explanation
+    for line in plan.lines:
+        assert get_product(line.product_id).allergens["gluten"].value == "free"
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+def test_shortfall_explanation_is_actionable(offline_plan):
+    from aimo.catalog.plan import find_candidates, plan_need
+    need = Need(customer_id="hospital-meilahti", product_query="gluten free bread", excluded_allergens=["gluten"],
+                quantity=20, unit="KG", delivery_by=date(2026, 11, 17))
+    all_ids = tuple(find_candidates(need)[0])
+    plan = plan_need(need, offers_fn=_fake_offers(cutoff_ids=all_ids))   # everything missed the cut-off
+    assert not plan.lines and plan.shortfall == 20
+    assert "missed the order cut-off" in plan.explanation
+    assert "re-plan for a later delivery date" in plan.explanation
+
+
 def test_gemini_inferred_allergens_never_make_free(monkeypatch):
     from aimo.catalog import gemini_allergens, product_from_row
     monkeypatch.setattr(gemini_allergens, "cached_inference",
