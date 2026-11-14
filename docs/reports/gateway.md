@@ -2,6 +2,27 @@
 
 Branch `team/gateway`. Last updated Sat 14 Nov, around 17:30 Helsinki. **M1 gateway slice: done. Round 2: done** (merged main 57140c4; full suite 97 passed).
 
+## Round 5 (Swarms B/D lead): items 1-3 done and pushed; 4-6 in progress
+**1. Demo resilience. Verified.**
+- **(a) Clock.** Set `AIMO_NOW=2026-11-14T14:00:00+02:00` to anchor a clock that runs forward from server start; `AIMO_NOW_FROZEN=1` freezes it. In demo mode, the `X-Aimo-Now` header on HTTP or MCP fixes "now" for one request.
+  - **What it drives:** cut-offs, quote created/expires, approval expiry, and trust's `evaluate(now=)` / `check_approval(now=)`.
+  - **Tests:** a demo anchored on 10 Nov places normally, and a header at Sun 17:30 makes 464306 `cutoff_passed`.
+  - **Still needed (buyer):** the buyer must resolve "by Monday" with `aimo.backend.now()` in `need.py:now_helsinki`. That is the buyer's file.
+- **(b) Replay.** `AIMO_REPLAY=<dir>` uses the wind tunnel snapshot layout: no network, and the clock is anchored at the snapshot time.
+  - **Verified live** with the windtunnel worktree's 1,674-id snapshot: 463038 shows the cut-off as passed, 464306 is available at €1.01, and `served_from: replay`.
+  - **Automatic fallback:** when the upstream is unreachable (connect errors retry once, then the circuit opens for 30 s) or 429/5xx persists, the gateway serves from `data/windtunnel/snapshot` (or `AIMO_REPLAY_FALLBACK`).
+  - **Setup for the demo laptop:** `cp -r <windtunnel worktree>/data/windtunnel/snapshot data/windtunnel/`.
+**2. Learned approvals.**
+- **Request fields:** `remember` and `remember_scope` on decisions. Approving calls `aimo.trust.learned.remember_swap(...)` with keyword arguments; the signature is in interfaces.md.
+- **Reading them back:** `GET /v1/customers/{id}/learned`, and `learned_swaps` in MCP `list_policies`.
+- **Tested** with a stub module standing in for `aimo.trust.learned`. When the module is missing, `remember` doesn't block the approval. **Trust:** please match the signature in interfaces.md, or tell me yours.
+**3. Re-quote.**
+- **When it happens:** the quote expires, or a line's cut-off passes, while the order waits for approval.
+- **What the human gets:** 409 `requote_needed` with a re-priced (or re-planned) quote already created as a new pending order, plus `approve_with`, so one call approves it. The old order becomes `expired`, and the audit gets `order.requoted`. Tested: one-step approval places the order, and a repeat approval of the old order returns the same proposal.
+**Also:**
+- **Duplicate submits and approvals:** concurrent duplicate submits are serialised, and a double-clicked approval returns 200 with the same order.
+- **Tests:** gateway tests 41 (+9), full suite 174 passed.
+
 ## Round 4 (Sat night): quote ownership. Done, merged main a4a4cf9, full suite 165 passed
 - **Fix:** `submit_order` now refuses with 403 `agent_mismatch` unless the caller (normalised agent id + customer) is the agent that created the quote. The check runs before any order row exists and is audited as `order.refused`, so an intruder can no longer burn the buyer's idempotency slot.
 - **Scope too:** a missing `order:submit` scope now gets 403 `scope_missing` before any order row is created. Before, trust's scope rule stored a rejected order.
