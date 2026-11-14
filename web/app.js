@@ -597,6 +597,8 @@ async function refreshApprovals(quiet) {
   if (!quiet) { S.approvals.state = "loading"; renderApprovals(); }
   try {
     let items = await api.approvals("pending");
+    // after the approver signs in (first inbox load), reload customers so approver ids become visible
+    if (S.customers.some((c) => (c.approvers || []).some((a) => !a.id))) { try { await loadCustomers(); } catch { /* keep masked */ } }
     if (items && !Array.isArray(items)) items = items.items || items.approvals || [];
     items = (items || []).map((x) => (x.order ? x : { order: x, quote: null, decision: x.decision }));
     // Newest first: what needs attention now leads.

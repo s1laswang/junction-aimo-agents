@@ -73,6 +73,23 @@ def identity(
     return ident
 
 
+def _require_human(pin: Optional[str], subject_id: str, actor: str) -> None:
+    """Approver credential check with brute-force lockout. Audits at most MAX_FAILURES refusals per window plus
+    the lock itself, so guessing cannot flood the audit log."""
+    if human_auth.locked_for() > 0:
+        raise service.ServiceError(429, "approver_locked", "Too many wrong approver credentials; approvals are "
+                                   "locked for a few minutes.", {"retry_after": int(human_auth.locked_for()) + 1})
+    if human_auth.check_pin(pin):
+        return
+    if human_auth.locked_for() > 0:  # this attempt triggered the lock
+        service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials; "
+                                                 f"approvals locked for {int(human_auth.LOCK_S)} s")
+        raise service.ServiceError(429, "approver_locked", "Too many wrong approver credentials; approvals are "
+                                   "locked for a few minutes.", {"retry_after": int(human_auth.locked_for()) + 1})
+    service.audit_refusal(subject_id, actor, "wrong approver credential" if pin else "missing approver credential")
+    raise service.ServiceError(401, "approver_auth_required", "Approval needs a signed-in human approver (X-Approver-Pin).")
+
+
 def strict_identity(
     x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1 (required)"),
     x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora (required)"),
@@ -266,10 +283,7 @@ def build_router() -> APIRouter:
             service.audit_refusal(order_id, f"agent:{x_agent_id}", "agent identity on the approval endpoint")
             raise service.ServiceError(403, "agent_cannot_approve",
                                        "Agents can never approve orders; a human approver must decide in the inbox.")
-        if not human_auth.check_pin(x_approver_pin):
-            service.audit_refusal(order_id, f"human:{body.approver}", "missing or wrong approver credential")
-            raise service.ServiceError(401, "approver_auth_required",
-                                       "Approval needs a signed-in human approver (X-Approver-Pin).")
+        _require_human(x_approver_pin, order_id, f"human:{body.approver}")
         return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role,
                               remember=body.remember, remember_scope=body.remember_scope)
 
@@ -313,8 +327,18 @@ def build_router() -> APIRouter:
         return service.learned_for(customer_id)
 
     @r.get("/v1/customers", tags=["customers"], summary="Demo customers and policy summaries")
-    def customers() -> list[dict[str, Any]]:
-        return service.list_customers()
+    def customers(x_approver_pin: Optional[str] = Header(None)) -> list[dict[str, Any]]:
+        """Customers, mandates and plain-language policy summaries. Approver identities (ids/emails) are shown only
+        to a signed-in human approver; agents see names and roles."""
+        out = service.list_customers()
+        if human_auth.locked_for() == 0 and human_auth.check_pin(x_approver_pin):
+            return out
+        masked = []
+        for c in out:
+            c = dict(c)
+            c["approvers"] = [{"name": a.get("name"), "role": a.get("role")} for a in (c.get("approvers") or [])]
+            masked.append(c)
+        return masked
 
     return r
 
