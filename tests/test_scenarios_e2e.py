@@ -22,9 +22,19 @@ SCENARIOS = [
 
 
 def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    held = []
+    try:
+        while True:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            if "429" not in str(port) and "503" not in str(port):
+                s.close()
+                return port
+            held.append(s)
+    finally:
+        for s in held:
+            s.close()
 
 
 def test_mini_catalog_files_and_mock_server(tmp_path):
