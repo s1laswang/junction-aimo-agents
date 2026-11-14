@@ -4,8 +4,8 @@
 
 **Proof:**
 1. A conformance suite that checks any gateway from the outside. It checks the gateway's quote signatures and audit chain with its own crypto code instead of trusting the gateway's answers.
-2. A second, synthetic wholesaler, *Nordic Bakery Supply*. It passes the same suite (43/43, the same as the Valio Aimo gateway).
-3. Our Gemini buyer agent ordering from Nordic Bakery Supply with zero code changes. Only the URL changes.
+2. A second, synthetic wholesaler, *Nordic Bakery Supply*. It passes the same suite (44/44, the same as the Valio Aimo gateway).
+3. Our buyer agent (both the live Gemini buyer and the keyless deterministic scripted fallback) ordering from Nordic Bakery Supply with zero code changes. Only the URL changes.
 
 ## 1. The profile (`otap/0.1`)
 The normative list is in [`conformance/profile.py`](../conformance/profile.py). In short:
@@ -19,16 +19,16 @@ The normative list is in [`conformance/profile.py`](../conformance/profile.py). 
 | Identity | Demo: `X-Customer-Id` / `X-Agent-Id` headers. Production: OAuth 2.1 bearer tokens with scopes `catalog:read quote:create order:submit` (MCP authorization spec). |
 | Quotes | Each quote is signed. `quote_hash = sha256(canonical_json(quote − {quote_hash, signature, kid}))`. `signature` is a compact JWS (EdDSA) whose payload binds `quote_id` and `quote_hash`. `expires_at` is the price lock. Canonical JSON means sorted keys, no whitespace, UTF-8, and integral numbers without `.0`. |
 | Orders | `POST /v1/orders {quote_id, quote_hash}`. A wrong hash gets **409**. Only the agent that requested the quote may submit it (**403** for any other agent or customer). Placement is idempotent per quote. The customer's policy decides `placed`, `pending_approval` or `rejected`, with plain-language `decision.hits`. |
-| Approvals | `POST /v1/approvals/{order_id}/decision {decision, approver, quote_hash}` is bound to the quote hash (a wrong hash gets **409**). An agent can never approve (**403**). The approver must be a named human with the right role. |
+| Approvals | `POST /v1/approvals/{order_id}/decision {decision, approver, quote_hash}` is bound to the quote hash (a wrong hash gets **409**). An agent can never approve (**403**). Missing human approver credential (`X-Approver-Pin` or `X-Approver-Session`) gets **401**. The approver must be a named human with the right role. |
 | Order responses | Peppol BIS Order Response semantics: `response_code` and every `response_lines[].code` is one of `AP`, `CA`, `RE`. |
 | Audit | `GET /v1/audit/verify` returns `{ok: true}`. Each event has `hash = sha256(prev_hash + canonical_json(event core))`, chained from 64 zeros, and is signed (JWS payload `{typ, seq, hash}`). |
 
-Optional extensions that our gateway also serves: `/v1/plan`, `/v1/recipes(/plan)`, `/v1/drift/{customer}`, `/v1/proposals`, and the MCP tools `plan_recipe`, `check_standing_order_drift`, `propose_offer`.
+Optional extensions that our gateway also serves: `/v1/plan`, `/v1/recipes(/plan)`, `/v1/drift/{customer}`, `/v1/proposals`, and the 4 additional MCP tools `list_recipes`, `plan_recipe`, `check_standing_order_drift`, `propose_offer` (13 MCP tools in total).
 
 ## 2. Run the conformance suite
 ```bash
-uv run python -m conformance --base http://127.0.0.1:8000                       # our Valio Aimo gateway (aimo serve)
-uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"   # Nordic Bakery Supply
+AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8000                       # our Valio Aimo gateway (aimo serve)
+AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"   # Nordic Bakery Supply
 #   --customer hotel-aurora --agent buyer-1 --product <id> --date YYYY-MM-DD --approver <id> --json report.json
 ```
 - **Dependencies:** the suite uses only `httpx`, `cryptography` and the `mcp` SDK. It never imports `aimo`, and `conformance/verify.py` re-implements canonical JSON, RFC 7638 thumbprints, EdDSA JWS checks and audit hashing from the spec.
@@ -44,14 +44,14 @@ uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"   
 - **Output:** it prints a PASS/FAIL table, writes JSON, and exits with the number of FAILs.
 - **Side effects:** it places **test orders**, so run it against a demo or staging gateway.
 
-**Recorded results (Sat 14 Nov, about 19:10):**
+**Verified results (44/44 checks including `A6` human approver credential check; initial Sat 19:10 JSON artifacts recorded at 43/43 prior to `A6`):**
 
 | Wholesaler | Result | Report |
 |---|---|---|
-| Valio Aimo Trusted Trade Gateway (live mock API) | **43/43 PASS** (1.3 s) | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
-| Nordic Bakery Supply (synthetic, static backend) | **43/43 PASS** (0.3 s) | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) |
+| Valio Aimo Trusted Trade Gateway (live mock API) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) (43/43 pre-A6 snapshot) |
+| Nordic Bakery Supply (synthetic, static backend) | **44/44 PASS** (0.3 s) | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) (43/43 pre-A6 snapshot) |
 
-`uv run pytest -q tests/test_openness.py` boots Nordic Bakery Supply and runs the suite fully offline (no network, no keys).
+`uv run pytest -q tests/test_openness.py` boots Nordic Bakery Supply and runs all 44 conformance checks fully offline (no network, no keys), while `tests/test_toywholesaler_scripted_buyer.py` verifies keyless MCP ordering end to end.
 
 ## 3. The second wholesaler: Nordic Bakery Supply (`toywholesaler/`)
 Nordic Bakery Supply has 30 synthetic bread, flour and baking products ([catalog.json](../toywholesaler/catalog.json); made up, not Valio data). It has its **own Ed25519 key, state DB and audit chain** (its own data dir), and **its own policies** ([toywholesaler/policies](../toywholesaler/policies)): Hotel Aurora auto-approves up to €300 there, while at Valio the limit is €500.

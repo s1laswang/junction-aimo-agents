@@ -18,7 +18,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Context:** an agent (and later an auditor) must be able to prove what price was offered, by whom, until when, without trusting our database.
 - **Decision:** quotes carry `quote_hash = sha256(canonical JSON)` (close to RFC 8785) and a compact JWS (RFC 7515) with `alg: EdDSA` (RFC 8037), key id = RFC 7638 thumbprint, public key at `/.well-known/jwks.json`. Audit events are signed the same way.
 - **Rejected:** HMAC (verifiers would need the secret); RSA/ECDSA P-256 (work, but larger keys and signatures, and ECDSA needs good randomness per signature; Ed25519 is deterministic); plain hashes without signatures (prove integrity, not origin); a blockchain (cost and latency without a trust benefit for a single issuer).
-- **Consequence for AP2:** AP2 v0.2 requires a non-deterministic signature (e.g. ECDSA) for the merchant's checkout JWT, not Ed25519. So we describe the quote and approval binding as **AP2-style**, not AP2-compliant. An AP2 bridge would add an ES256 `kid` for AP2 objects only (see D-P2). We did not add ES256 to `otap/0.1` quotes: the profile and conformance suite require Ed25519 keys, both gateways pass 43/43 on it, and ES256 alone would not make the flow AP2-conformant without AP2's mandate objects.
+- **Consequence for AP2:** AP2 v0.2 requires a non-deterministic signature (e.g. ECDSA) for the merchant's checkout JWT, not Ed25519. So we describe the quote and approval binding as **AP2-style**, not AP2-compliant. An AP2 bridge would add an ES256 `kid` for AP2 objects only (see D-P2). We did not add ES256 to `otap/0.1` quotes: the profile and conformance suite require Ed25519 keys, both gateways pass 44/44 on it, and ES256 alone would not make the flow AP2-conformant without AP2's mandate objects.
 - **Evidence:** `tests/test_trust.py` (sign/verify, tamper, `alg: none` refused); the UI verifies the signature in the browser against the JWKS (frontend report); s1 verifies a quote as a third party (docs/SCENARIOS.md).
 
 ## D3. Hash-chained, signed, append-only audit log
@@ -37,9 +37,9 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Evidence:** `tests/test_trust.py` per-customer outcomes; the hero decision shows 3 needs-approval reasons in plain language (docs/demo-montage.md, pitch report).
 
 ## D5. Verified-best substitutes auto-approve, plus learned approvals
-- **Status:** verified tiers Accepted; learned approvals In progress (**TODO**, trust lead).
-- **Context:** escalating every substitution is safe but makes the agent useless (the PLAN checklist records escalation precision at 54%); trusting the agent's own tier label is unsafe (pitch QA issue 2).
-- **Decision:** the policy derives the tier itself: `preferred` only for the customer's listed usual products; `best` only for customer-approved alternatives or catalog evidence (same brand, category and unit, all claims kept); anything else is `unverified` → needs approval. Next: when a human approves the same swap repeatedly, offer "always allow this swap", recorded as an audited policy change.
+- **Status:** Accepted.
+- **Context:** escalating every substitution is safe but makes the agent useless (the PLAN checklist records baseline escalation precision at 54%); trusting the agent's own tier label is unsafe (pitch QA issue 2).
+- **Decision:** the policy derives the tier itself: `preferred` only for the customer's listed usual products; `best` only for customer-approved alternatives or catalog evidence (same brand, category and unit, all claims kept); anything else is `unverified` → needs approval. When a human approves a recurring swap with `remember` / `remember_scope`, the gateway records a customer-scoped learned rule (`/v1/customers/{id}/learned`) as an audited policy update.
 - **Rejected:** escalate every substitution (precision too low, approvers learn to rubber-stamp); trust the agent's tier (red-teamed: a substitute sent as "preferred" was auto-placed before the fix); fully learned/ML approval models (not explainable, can't be audited rule by rule).
 - **Evidence:** trust report round 2; re-test in pitch report (469363 sent as "preferred" comes back "better, outside preference" → needs approval).
 
@@ -61,7 +61,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Status:** Accepted.
 - **Context:** the agent must be fast enough for a live conversation, careful on the decision a human will later defend, and cheap per order.
 - **Decision:** `gemini-3.8-flash` with LOW thinking for routine agent steps and need parsing; escalate only the quote-decision turn to `gemini-4-hydrogen` with HIGH thinking when the plan contains a substitution, flag or shortfall; `gemini-3.1-flash-lite` for bulk classification (allergen inference, injection screen, recipe check); `gemini-embedding-2` for search. Structured output everywhere with deterministic fallbacks.
-- **Rejected:** the strongest model for every step (the playbook measured 23 s per call for gemini-4-carbon at high thinking; a montage run makes 8–9 Gemini calls); flash only (no extra care on the substitution decision; quantified comparison **TODO** from the wind tunnel); an open-weights model hosted by us (GPU ops we can't run at a hackathon, and no embeddings, batch and structured output from one API).
+- **Rejected:** the strongest model for every step (the playbook measured 23 s per call for gemini-4-carbon at high thinking; a montage run makes 8–9 Gemini calls); flash LOW only (no extra care on the substitution decision: in `windtunnel/thinking.py`, flash LOW reaches 93.8% on `substitute` and 85.4% on `parse` vs 100.0% for hydrogen HIGH, [windtunnel-results.md](windtunnel-results.md)); an open-weights model hosted by us (GPU ops we can't run at a hackathon, and no embeddings, batch and structured output from one API).
 - **Evidence:** montage 6/6 PASS, escalation on 6 of 31 agent steps (19%), $0.0339 per placed order, down from $0.0822 after a token trim (docs/demo-montage.md).
 
 ## D9. Embeddings plus full-text search instead of long-context catalog prompts
@@ -79,7 +79,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Evidence:** gateway report; s4 re-quote gets 409 naming the product, then a re-plan covers 200 L (docs/SCENARIOS.md).
 
 ## D11. Hosting: a tunnel from the demo laptop, replay mode as fallback
-- **Status:** In progress (**TODO** public URL, D-ops).
+- **Status:** Accepted (replay snapshot + Dockerfile shipped; live tunnel URL filled at freeze).
 - **Context:** judges should be able to connect their own MCP client; we have no shared cloud project, and the mock API key and Gemini key must not leave the team's machines.
 - **Decision:** a cloudflared tunnel from the demo laptop to `aimo serve`, with replay mode (recorded mock-API responses) as the fallback if the venue network fails (PLAN, decided with Silas).
 - **Rejected:** Cloud Run or similar (needs a GCP project and secret handling we can't set up safely in time); localhost only (judges can't try it); a recorded video only (not a working demo).
