@@ -1,0 +1,11 @@
+{
+ "dates": [
+  "2026-11-13",
+  "2026-11-15",
+  "2026-11-16",
+  "2026-11-17"
+ ],
+ "time_now": "2026-11-14T14:20:06+0200",
+ "n_ids": 66,
+ "source": "subset of data/windtunnel/snapshot (public Valio mock API responses)"
+}
