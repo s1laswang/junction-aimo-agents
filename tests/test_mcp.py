@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -68,7 +69,25 @@ def test_parse_audited(client, agent_key):
     assert e["actor"] == "agent:buyer-aurora" and "milk" in e["why"]
 
 
-def test_offers_audited(client, agent_key):
+def test_offers_audited(client, agent_key, monkeypatch):
+    from aimo import offers
+    from aimo.models import Offer, OfferGroup, OffersResponse, Product
+    data_path = os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json")
+    if not os.path.exists(data_path) or not os.environ.get("VALIO_API_BASE"):
+        def fake_offers(n, *a, **k):
+            offer = Offer(
+                product_id="464073",
+                product=Product(product_id="464073", name="Lactose-free milk 1 L", brand="Valio", sales_unit="LTR"),
+                units_needed=100.0,
+                unit_price_net=1.25,
+                total_net=125.0,
+                total_gross=142.5,
+                available_amount=500.0,
+                available_date=n.deliver_by,
+                match_score=1.0,
+            )
+            return OffersResponse(items=[OfferGroup(need_item=n.items[0], offers=[offer], shortfall=0.0)])
+        monkeypatch.setattr(offers, "get_offers", fake_offers)
     need = client.post("/v1/needs/parse", json={"text": "I need 100 litres of lactose-free milk by Friday", "customer": "hotel-aurora"}).json()
     r = client.post("/v1/offers", json=need, headers={"X-Agent-Key": agent_key})
     assert r.status_code == 200, r.text
