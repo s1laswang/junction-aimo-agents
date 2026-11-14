@@ -123,7 +123,7 @@ def build_router() -> APIRouter:
         limit: int = Query(20, ge=1, le=100),
     ):
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
-        return service.search_products(q, cl, category, content_unit, limit)
+        return service.find_products(q, cl, category, content_unit, limit)
 
     @r.get("/v1/products/{product_id}", tags=["catalog"], summary="Product details", response_model=Product, responses=ERR)
     def get_product(product_id: str):
@@ -135,7 +135,7 @@ def build_router() -> APIRouter:
         """Merged `/api/price` + `/api/availability` from the Valio Aimo API. `cutoff_passed` is true when the
         product's order closing time is already past (it cannot make the requested date). Provenance is in
         each offer's `provenance` and in the `X-Aimo-*` response headers."""
-        res, meta = service.get_offers(body.product_ids, body.requested_date, body.customer_id or ident.customer_id)
+        res, meta = service.fetch_offers(body.product_ids, body.requested_date, body.customer_id or ident.customer_id)
         return JSONResponse([o.model_dump(mode="json") for o in res], headers=_prov_headers(meta))
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
@@ -149,7 +149,7 @@ def build_router() -> APIRouter:
         per-line reasons), computes totals, signs the quote (quote_hash + JWS) and fixes the price until
         `expires_at`."""
         who = service.Identity(agent_id=body.agent_id or ident.agent_id, customer_id=body.customer_id or ident.customer_id)
-        return service.create_quote(who, body.delivery_date, [l.model_dump() for l in body.lines], body.need)
+        return service.make_quote(who, body.delivery_date, [l.model_dump() for l in body.lines], body.need)
 
     @r.get("/v1/quotes/{quote_id}", tags=["quotes"], summary="Get a quote", response_model=Quote, responses=ERR)
     def get_quote(quote_id: str):
@@ -160,7 +160,7 @@ def build_router() -> APIRouter:
     def place_order(body: OrderRequest, ident: service.Identity = Depends(identity)):
         """Verifies quote hash, signature and expiry, then evaluates the customer's policy:
         `placed` (auto-approved, with Peppol-style response), `pending_approval` or `rejected`. Idempotent per quote."""
-        return service.place_order(ident, body.quote_id, body.quote_hash)
+        return service.submit_order(ident, body.quote_id, body.quote_hash)
 
     @r.get("/v1/orders/{order_id}", tags=["orders"], summary="Order status", response_model=Order, responses=ERR)
     def get_order(order_id: str):

@@ -275,3 +275,18 @@ def test_mcp_tools_listed_and_callable():
     sc = getattr(res, "structured_content", None) or getattr(res, "structuredContent", None)
     text = json.dumps(sc) if sc else " ".join(getattr(c, "text", "") for c in res.content)
     assert "cutoff_passed" in text and "463038" in text
+
+
+def test_inprocess_tool_layer_matches_mcp_names():
+    """aimo.buyer InProcessTransport calls service.<tool>(**args, identity=...)."""
+    ident = {"agent_id": "buyer-1", "customer_id": "hotel-aurora"}
+    off = service.get_offers(["463038", "464306"], "2026-11-16", identity=ident)
+    assert {o["product_id"] for o in off["offers"]} == {"463038", "464306"} and off["provenance"]["source"]
+    q = service.create_quote("2026-11-16", [{"product_id": "464306", "qty_sales_units": 1000}], identity=ident)
+    assert q["customer_id"] == "hotel-aurora" and q["quote_hash"]
+    o = service.place_order(q["quote_id"], q["quote_hash"], identity=ident)
+    assert o["status"] == "pending_approval"
+    assert service.get_order_status(o["order_id"])["order_id"] == o["order_id"]
+    trail = service.get_audit_trail(o["order_id"])
+    assert trail["events"] and trail["verify"]["ok"] and isinstance(trail["report"], str)
+    assert service.list_policies()["policies"]

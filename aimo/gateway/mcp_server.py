@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
 from typing import Any, Optional
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -95,7 +94,7 @@ def build_mcp() -> MCPServer:
         content_amount + content_unit (litres/kg per sales unit when known), claims, delivery_reliability and
         co2. Prices and stock are NOT included: call get_offers with the ids.
         """
-        return {"products": _dump(_call(ctx, service.search_products, query, claims=claims, limit=limit))}
+        return _call(ctx, service.search_products, query, claims=claims, limit=limit)
 
     @mcp.tool()
     def get_product(product_id: str, ctx: Context = None) -> dict[str, Any]:
@@ -119,9 +118,7 @@ def build_mcp() -> MCPServer:
         price_error, terminal_unknown_qty, injected:* for simulated faults). Items with cutoff_passed=true
         cannot be delivered on the requested date: choose a substitute.
         """
-        ident = _identity(ctx)
-        offers, meta = _call(ctx, service.get_offers, product_ids, date.fromisoformat(requested_date), ident.customer_id)
-        return {"offers": _dump(offers), "provenance": meta}
+        return _call(ctx, service.get_offers, product_ids, requested_date, identity=_identity(ctx))
 
     @mcp.tool()
     def plan_need(need: Need, ctx: Context = None) -> dict[str, Any]:
@@ -133,10 +130,7 @@ def build_mcp() -> MCPServer:
         candidate ranking with reasons, covered_amount, shortfall, total_net and an explanation.
         Feed plan.lines into create_quote.
         """
-        ident = _identity(ctx)
-        if not need.customer_id:
-            need = need.model_copy(update={"customer_id": ident.customer_id})
-        return _dump(_call(ctx, service.plan_need, need))
+        return _dump(_call(ctx, service.plan_need, need, identity=_identity(ctx)))
 
     @mcp.tool()
     def create_quote(delivery_date: str, lines: list[QuoteLineIn], need: Optional[Need] = None, ctx: Context = None) -> dict[str, Any]:
@@ -151,10 +145,7 @@ def build_mcp() -> MCPServer:
         cut-off or exceeds available stock: re-plan and retry. Returns the Quote with quote_id, quote_hash,
         signature (JWS EdDSA), total_net, expires_at (price lock). Pass quote_id + quote_hash to place_order.
         """
-        ident = _identity(ctx)
-        q = _call(ctx, service.create_quote, ident, date.fromisoformat(delivery_date),
-                  [l.model_dump() for l in lines], need)
-        return _dump(q)
+        return _call(ctx, service.create_quote, delivery_date, lines, need, identity=_identity(ctx))
 
     @mcp.tool()
     def place_order(quote_id: str, quote_hash: str, ctx: Context = None) -> dict[str, Any]:
@@ -167,27 +158,25 @@ def build_mcp() -> MCPServer:
           - status "rejected": policy refused; decision.hits explain why in plain language.
         Error quote_expired means: create a new quote. Calling again with the same quote is idempotent.
         """
-        ident = _identity(ctx)
-        return _dump(_call(ctx, service.place_order, ident, quote_id, quote_hash))
+        return _call(ctx, service.place_order, quote_id, quote_hash, identity=_identity(ctx))
 
     @mcp.tool()
     def get_order_status(order_id: str, ctx: Context = None) -> dict[str, Any]:
         """Current state of an order: status (pending_approval, approved, placed, rejected, expired),
         policy decision with rule hits, approver, and the Peppol-style order response (AP/CA/RE per line)."""
-        return _dump(_call(ctx, service.get_order, order_id))
+        return _call(ctx, service.get_order_status, order_id)
 
     @mcp.tool()
     def get_audit_trail(subject_id: str, ctx: Context = None) -> dict[str, Any]:
         """Signed, hash-chained audit trail for a quote or order id (an order's trail includes its quote).
         Returns {"events": [...], "report": markdown narrative, "verify": chain verification result}."""
-        evs = _call(ctx, service.audit_events, subject_id)
-        return {"events": evs, "report": _call(ctx, service.audit_report, subject_id), "verify": _call(ctx, service.audit_verify)}
+        return _call(ctx, service.get_audit_trail, subject_id)
 
     @mcp.tool()
     def list_policies(ctx: Context = None) -> dict[str, Any]:
         """Customers known to this gateway and a plain-language summary of each customer's purchasing policy
         (spend limits, approver roles, substitution and allergen rules)."""
-        return {"policies": _call(ctx, service.list_policies)}
+        return _call(ctx, service.list_policies)
 
     return mcp
 

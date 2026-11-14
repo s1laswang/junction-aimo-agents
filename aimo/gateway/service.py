@@ -280,7 +280,7 @@ def jwks() -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ catalog
-def search_products(query: str, claims: list[str] | None = None, category: str | None = None,
+def find_products(query: str, claims: list[str] | None = None, category: str | None = None,
                     content_unit: str | None = None, limit: int = 20) -> list[ProductSummary]:
     limit = max(1, min(int(limit or 20), 100))
     cat = _catalog()
@@ -325,7 +325,7 @@ def _upstream(e: UpstreamError) -> ServiceError:
                         {"upstream_status": e.status_code, "retry_after": e.retry_after or 2, "injected": e.injected})
 
 
-def get_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
+def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
                quantities: dict[str, float] | None = None) -> tuple[list[Offer], dict[str, Any]]:
     ids = [str(p).strip() for p in product_ids if str(p).strip()]
     if not ids:
@@ -340,7 +340,8 @@ def get_offers(product_ids: list[str], requested_date: date, customer_id: str | 
     return out, meta
 
 
-def plan_need(need: Need) -> Plan:
+def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, **_: Any) -> Plan:
+    need = _as_need(need, resolve_identity(identity, None, customer_id))
     cat = _catalog()
     if cat is None or not hasattr(cat, "plan_need"):
         raise ServiceError(501, "plan_unavailable", "planner (aimo.catalog.plan_need) is not available yet")
@@ -353,7 +354,7 @@ def plan_need(need: Need) -> Plan:
 
 
 # ------------------------------------------------------------------ quotes
-def create_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]], need: Need | None = None) -> Quote:
+def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]], need: Need | None = None) -> Quote:
     if not lines:
         raise ServiceError(400, "no_lines", "a quote needs at least one line")
     qty_by: dict[str, float] = {}
@@ -364,7 +365,7 @@ def create_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any
         pid = str(ln["product_id"])
         qty_by[pid] = qty_by.get(pid, 0) + q
 
-    offers_list, meta = get_offers(list(qty_by), delivery_date, ident.customer_id, qty_by)
+    offers_list, meta = fetch_offers(list(qty_by), delivery_date, ident.customer_id, qty_by)
     offers = {o.product_id: o for o in offers_list}
 
     refused = []
@@ -480,7 +481,7 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
     return order
 
 
-def place_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
+def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
     quote = get_quote(quote_id)
     if quote.customer_id != ident.customer_id:
         raise ServiceError(403, "customer_mismatch", "this quote belongs to another customer")
@@ -645,7 +646,7 @@ def list_customers() -> list[dict[str, Any]]:
     return FALLBACK_CUSTOMERS
 
 
-def list_policies() -> list[dict[str, Any]]:
+def _policies() -> list[dict[str, Any]]:
     t = _trust()
     try:
         return list(t.list_policies())  # type: ignore[union-attr]
@@ -685,3 +686,80 @@ def manifest(base_url: str) -> dict[str, Any]:
         "fault_injection": {"header": "X-Aimo-Faults", "example": "stockout:463038;price_shock:464306:1.4;error_rate:0.2;latency_ms:800"},
         "integrations": integration_status(),
     }
+
+
+# ================================================================== MCP-shaped tool functions
+# Exactly the MCP tool names and arguments from docs/interfaces.md, JSON in / JSON out. Used by
+# aimo.gateway.mcp_server and by the buyer's in-process transport (aimo.buyer.tools.InProcessTransport),
+# so every transport returns the same JSON. Identity: pass `identity` (Identity or dict) or
+# agent_id/customer_id; defaults come from env AIMO_AGENT_ID / AIMO_CUSTOMER_ID.
+def resolve_identity(identity: Any = None, agent_id: str | None = None, customer_id: str | None = None) -> Identity:
+    if isinstance(identity, Identity):
+        base = identity
+    elif isinstance(identity, dict):
+        base = Identity(agent_id=identity.get("agent_id") or DEFAULT_AGENT,
+                        customer_id=identity.get("customer_id") or DEFAULT_CUSTOMER)
+    else:
+        base = Identity()
+    return Identity(agent_id=agent_id or base.agent_id, customer_id=customer_id or base.customer_id)
+
+
+def _as_date(d: Any) -> date:
+    if isinstance(d, date):
+        return d
+    try:
+        return date.fromisoformat(str(d)[:10])
+    except ValueError as e:
+        raise ServiceError(400, "bad_date", f"expected YYYY-MM-DD, got {d!r}") from e
+
+
+def _as_need(need: Any, ident: Identity) -> Need | None:
+    if need is None or isinstance(need, Need):
+        return need
+    d = dict(need)
+    d.setdefault("customer_id", ident.customer_id)
+    return Need.model_validate(d)
+
+
+def _j(x: Any) -> Any:
+    if hasattr(x, "model_dump"):
+        return x.model_dump(mode="json")
+    if isinstance(x, list):
+        return [_j(i) for i in x]
+    return x
+
+
+def search_products(query: str, claims: list[str] | None = None, limit: int = 10, category: str | None = None,
+                    content_unit: str | None = None, **_: Any) -> dict[str, Any]:
+    return {"products": _j(find_products(query, claims, category, content_unit, limit))}
+
+
+def get_offers(product_ids: list[str], requested_date: Any, customer_id: str | None = None, identity: Any = None,
+               agent_id: str | None = None, **_: Any) -> dict[str, Any]:
+    ident = resolve_identity(identity, agent_id, customer_id)
+    offers, meta = fetch_offers(product_ids, _as_date(requested_date), ident.customer_id)
+    return {"offers": _j(offers), "provenance": meta}
+
+
+def create_quote(delivery_date: Any, lines: list[Any], need: Any = None, identity: Any = None,
+                 agent_id: str | None = None, customer_id: str | None = None, **_: Any) -> dict[str, Any]:
+    ident = resolve_identity(identity, agent_id, customer_id)
+    ls = [l.model_dump() if hasattr(l, "model_dump") else dict(l) for l in lines]
+    return _j(make_quote(ident, _as_date(delivery_date), ls, _as_need(need, ident)))
+
+
+def place_order(quote_id: str, quote_hash: str, identity: Any = None, agent_id: str | None = None,
+                customer_id: str | None = None, **_: Any) -> dict[str, Any]:
+    return _j(submit_order(resolve_identity(identity, agent_id, customer_id), quote_id, quote_hash))
+
+
+def get_order_status(order_id: str, **_: Any) -> dict[str, Any]:
+    return _j(get_order(order_id))
+
+
+def get_audit_trail(subject_id: str, **_: Any) -> dict[str, Any]:
+    return {"events": audit_events(subject_id), "report": audit_report(subject_id), "verify": audit_verify()}
+
+
+def list_policies(**_: Any) -> dict[str, Any]:
+    return {"policies": _policies()}
