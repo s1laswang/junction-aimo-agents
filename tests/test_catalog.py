@@ -338,6 +338,97 @@ def test_equipment_queries_still_find_equipment():
     assert any("jug" in p.name.lower() for p in search("milk jug", limit=5))
 
 
+def _fake_partial_offers(limited: dict[str, float]):
+    """Offline offers: ids in `limited` are Stock with that many units; all others missed the cut-off."""
+    def fn(ids, d, customer_id=None):
+        now = datetime.now(timezone.utc)
+        out = {}
+        for pid in ids:
+            ok = pid in limited
+            out[pid] = Offer(product_id=pid, requested_date=d, available=ok, cutoff_passed=not ok,
+                             closing_time=now + timedelta(days=1) if ok else now - timedelta(days=2),
+                             available_date=d, logistic_model="Stock" if ok else "Terminal",
+                             available_amount=limited.get(pid) if ok else None, unit_price=1.2,
+                             comparison_price=None, fetched_at=now)
+        return out
+    return fn
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+@pytest.mark.parametrize("allow", [False, True])
+def test_partial_stock_split_delivery_and_late_options(offline_plan, allow):
+    from aimo.catalog.plan import plan_need
+    need = Need(customer_id="hotel-aurora", product_query="lactose-free milk", required_claims=["FREE_FROM_LACTOSE"],
+                quantity=1000, unit="L", delivery_by=date(2026, 11, 16), preferred_product_ids=["463038"],
+                preferences={"allow_split_delivery": allow})
+    plan = plan_need(need, offers_fn=_fake_partial_offers({"464306": 600}))
+    on_time = [l for l in plan.lines if "late_option" not in l.flags]
+    late = [l for l in plan.lines if "late_option" in l.flags]
+    assert [(l.product_id, l.qty_sales_units) for l in on_time] == [("464306", 600.0)]
+    assert "600 L Mon 16 Nov" in plan.explanation and "only 600 ST of 464306 in stock" in plan.explanation
+    if allow:
+        assert late and plan.shortfall == 0
+        assert all(any(f.startswith("delivery_date:") for f in l.flags) and "split_delivery" in l.flags for l in late)
+    else:
+        assert not late and plan.shortfall == 400            # never accepted silently
+        assert "Earliest date that covers the remaining 400 L" in plan.explanation
+        assert any("late_option" in c.flags for c in plan.candidates)
+
+
+def test_late_available_date_is_rejected_not_silent():
+    from aimo.catalog.substitution import rank_substitutes
+    rows = {"a": _row("a", "Valio milk 1 l lactose free", "Valio", 1.5, 1.0)}
+    o = _offer("a", 1.0, 1.0).model_copy(update={"available": False, "available_date": date(2026, 11, 18)})
+    need = Need(customer_id="x", product_query="milk", quantity=10, unit="L", delivery_by=date(2026, 11, 16))
+    c = rank_substitutes(need, {"a": o}, rows=rows, relevance={"a": 1})[0]
+    assert c.tier == "rejected" and "earliest delivery Wed 18 Nov" in c.reasons[0]
+
+
+def test_earliest_feasible_estimates_with_lead_time():
+    from aimo.catalog.delivery import earliest_feasible
+    now = datetime(2026, 11, 14, 20, 0, tzinfo=timezone.utc)
+    o = Offer(product_id="t", requested_date=date(2026, 11, 16), available=False, cutoff_passed=True,
+              closing_time=datetime(2026, 11, 12, 15, 0, tzinfo=timezone.utc), available_date=date(2026, 11, 16),
+              unit_price=1.0, fetched_at=now)
+    d, est = earliest_feasible(o, now)
+    assert est and d == date(2026, 11, 19)          # lead time 4 days, counted from tomorrow (after cut-off hour)
+    ok = o.model_copy(update={"cutoff_passed": False, "available": True})
+    assert earliest_feasible(ok, now) == (date(2026, 11, 16), False)
+
+
+def test_semantic_switch_off_is_immediate(monkeypatch):
+    import time as _t
+
+    from aimo.catalog import netcheck, textsearch
+    monkeypatch.setenv("AIMO_SEMANTIC", "0")
+    assert not netcheck.gemini_online()
+    t0 = _t.time()
+    assert textsearch.semantic_hits("some query nobody cached before 123") == []
+    assert _t.time() - t0 < 0.5
+
+
+def test_allergen_contradiction_lexicon():
+    from aimo.catalog.data_quality import conflicts, keyword_evidence
+    assert keyword_evidence("nuts", "water, ALMOND (2.3%), calcium")
+    assert keyword_evidence("milk", "coconut milk, sugar, cocoa butter") is None      # false friends
+    assert keyword_evidence("milk", "water, salt, lactic acid (maitohappo)") is None
+    assert keyword_evidence("peanuts", "may contain traces of other NUTS (no PEANUTS)") is None
+    assert keyword_evidence("gluten", "buckwheat flour, salt") is None
+    d = {"id": "x", "allergens": {"nuts": "free", "milk": "free"}, "claims": [],
+         "ingredients_text": "Water, ALMOND (2.3%), sea salt"}
+    assert set(conflicts(d)) == {"nuts"}
+    gf = {"id": "y", "allergens": {"gluten": "free"}, "claims": ["FREE_FROM_GLUTEN"],
+          "ingredients_text": "gluten-free oats, wheat starch"}
+    assert conflicts(gf) == {}
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+def test_alpro_almond_conflict_is_unknown_and_flagged(offline_plan):
+    from aimo.catalog import get_product
+    p = get_product("465793")                    # Alpro Barista Almond: data says nut-free, contains ALMOND
+    assert p.allergens["nuts"].value == "unknown" and p.allergen_source["nuts"] == "contradiction"
+
+
 def test_spec_preferences_ignore_non_spec_keys():
     from aimo.catalog.substitution import spec_preferences
     need = Need(customer_id="x", product_query="oat drink", quantity=1, unit="L", delivery_by=date(2026, 11, 18),

@@ -270,8 +270,16 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         if missing:
             have_low = "LOW_LACTOSE" in (d.get("claims") or []) and "FREE_FROM_LACTOSE" in missing
             reject.append(f"missing required claim {', '.join(missing)}" + (" (only LOW_LACTOSE)" if have_low else ""))
+        conflicts = d.get("allergen_conflicts") or {}
+        if conflicts:
+            flags.append("allergen_data_conflict")
         blk = blocking(d.get("allergens") or {}, need.excluded_allergens)
         for g, st in blk:
+            if st == "unknown" and g in conflicts:
+                flags.append("allergen_unknown")
+                reject.append(f"{g}: supplier data says free from {g} but the ingredients say "
+                              f"'{conflicts[g].get('evidence', '')[:60]}' (data conflict; treated as unknown)")
+                continue
             if st == "unknown":
                 flags.append("allergen_unknown")
                 hint = (inferred_allergens.get(pid) or {}).get(g)
