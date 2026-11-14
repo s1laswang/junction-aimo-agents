@@ -7,10 +7,65 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **
    - **Recommendation:** submit **junction-aimo-agents**. Gemini is essential throughout it, it has the richer live UI, a red-teamed trust layer, 123 tests, and it's on GitHub. Port four things from Momin's repo, credited to him: recipe → order, the proactive seller agent, the standing-order drift detector, and his s0–s7 acceptance suite plus Dockerfile.
    - **Optional:** retarget the fleet's `valio` team to open `fr8/valio/*` PRs against our repo.
    - I won't touch the fleet's board, repos, jobs or branches without your OK. **Porting is done** (Sat 19:00): recipe → order, seller, drift and the s0–s7 suite (8/8 PASS live, `uv run python -m scenarios.run_all`) are all on main and credited to Momin. Say so if you prefer Momin's as the base.
-2. **Live demo hosting.** By default the demo runs on a laptop with one command, and we also record a backup video. Do you want a public URL for judges, such as Cloud Run? That needs your GCP project. If you don't answer, we go local plus video.
+2. **Live demo hosting: decided.** A cloudflared tunnel from the demo laptop, plus replay mode as the fallback.
 3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
 4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
 5. **When is the pitch slot?** The live "by Monday" story depends on a real mock-API cut-off. Stock milk can be ordered for Monday delivery only until **Sun 15 Nov 17:00**. If judging runs after about 16:30 on Sunday, we switch the request to "by Tuesday", or use the recorded video or mock mode. Tell us the slot once you know it.
+6. **ElevenLabs key, please, shared privately and put in `.env` as `ELEVENLABS_API_KEY`.** Use: a voice approval call. The procurement manager gets a phone-style voice prompt, "Approve €1,010 lactose-free milk for Monday?", answers by voice, and the approval is still bound to the quote hash and audited. ElevenLabs does speech-to-text and text-to-speech; Gemini stays the brain. It's optional and scores on "autonomy and controls" plus the demo. If you don't want it, we skip it.
+
+## Scoring checklist (official rubric, JUDGING.md)
+Tick a box only with evidence: a command, a test or a file. The status column is current as of Sat 20:15.
+
+**Must-haves**
+- [x] Product, price and availability lookup in structured form: `/v1/products/search`, `/v1/offers`, and MCP `search_products`/`get_offers`, hitting the live mock API.
+- [x] Inquiry, then an order at fixed prices: a signed quote with a 15-minute price lock, then `place_order`. Quotes re-price live (gateway round 3).
+- [x] Permissions plus human approval: YAML policies, directory-only human approvers bound to the quote hash, agents never approve.
+
+**1. Working end-to-end demo (30%): full request → lookup → order/approval in the mocked environment**
+- [x] The browser hero flow works live: Gemini agent → MCP → plan → signed quote → needs approval → approve → AP → audit verified.
+- [x] Montage 6/6 live (`docs/demo-montage.md`); s0–s7 8/8 live (`docs/SCENARIOS.md`).
+- [ ] The demo runs after Sun 17:00 and offline: `AIMO_NOW` plus replay mode (gateway lead).
+- [ ] Public URL through the laptop tunnel, smoke-tested from a phone (D-ops).
+- [ ] Backup video recorded at the freeze; 3 green rehearsals with a stopwatch (Chintufp).
+
+**2. Solving the user need (20%): matches what the buyer asked, least manual correction**
+- [x] The hero request needs zero correction; recipe → order, event, school and hospital all work live.
+- [ ] Zero-correction rate ≥95% on a 1,000-request gold set across 10 segments in fi/sv/en (swarm A, buyer `eval_gold`).
+- [ ] Escalation precision ≥90% at recall ≥99% (currently 54%): verified-best plus learned approvals (trust lead).
+- [ ] Product-type taxonomy for all 17,546 products; line acceptability ≥98% (currently 90%) (catalog lead + A-tax).
+- [ ] The agent asks one clarifying question instead of guessing (buyer lead).
+- [ ] Photo intake for handwritten orders and menus (buyer + C-img).
+- [ ] A mentor validates the approval matrix and tiers, quoted in the pitch (Silas).
+
+**3. Autonomy and controls (20%): what is autonomous vs human sign-off, logged and auditable**
+- [x] Policy engine with plain-language reasons; approvals bound to the quote hash; signed, hash-chained audit log with a readable report and live tamper detection.
+- [x] Red-teamed holes closed: self-approval, forged tiers, identity mismatch, quote hijack.
+- [ ] Explicit autonomy matrix in the UI and docs: auto vs needs approval vs reject, per customer.
+- [ ] Learned approvals ("always allow this swap"), audited.
+- [ ] Split-order aggregation and price-drift rules (trust lead).
+
+**4. Robustness (15%): partial availability, substitutions, delivery constraints**
+- [x] Cut-off passed, partial stock split, stock-out, allergen-safe substitution, injection and drift are each handled in a live scenario.
+- [ ] 40 exception-family test cards green (swarm B `B-exc-*`): split across dates, late delivery never accepted, Terminal unknown quantity, lot/pack rounding, multi-line constraints.
+- [ ] Re-quote flow when the price changes or the cut-off passes during approval (gateway lead).
+- [ ] Chaos matrix 100% graceful; wind tunnel at scale: 0 violations over ≥10k attacks (B + wind tunnel).
+
+**5. Openness / path to production (15%): open standards, visible assumptions, justified choices, next steps**
+- [x] MCP plus OpenAPI 3.1, otap.json discovery, JWKS, Peppol AP/CA/RE, GS1 GTIN; docs/ARCHITECTURE.md, docs/TRUST.md.
+- [ ] `docs/ASSUMPTIONS.md` (visible assumptions: no upstream order API, invented customers, inferred categories, mock-API quirks) and `docs/DECISIONS.md` (each choice justified, alternatives rejected), plus a "Next steps" section (pitch lead).
+- [ ] Conformance suite passes on our gateway and a second toy wholesaler, and our buyer orders from it with zero code changes (port lead).
+- [ ] Minimal OAuth 2.1 client-credentials and protected-resource metadata (gateway lead).
+- [ ] Every number reproducible from `docs/NUMBERS.md` (swarm D).
+
+**Google DeepMind (stackable):** problem, integration, innovation, why Gemini → `docs/GEMINI.md`:
+- [x] function calling over MCP;
+- [x] thinking-level escalation;
+- [x] embeddings;
+- [x] allergen inference;
+- [x] cost per order;
+- [ ] multimodal photo intake;
+- [ ] Batch API taxonomy for 17.5k products;
+- [ ] gold-set accuracy chart.
 
 ## Swarms toward 10/10 (Sat 20:00; decided with Silas)
 Plan: four humans each run a ~100-agent swarm, with Claude leads turning findings into core fixes. Kits are in [swarm/README.md](../swarm/README.md): one BRIEF plus 100 task cards per swarm, and `swarm/validate.py`.

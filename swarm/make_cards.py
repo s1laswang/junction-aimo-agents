@@ -114,14 +114,44 @@ CHAOS = ["upstream 429 storm", "upstream 5xx on price only", "upstream timeout o
          "replay mode (no Wi-Fi)", "1,000 concurrent offer lookups (query budget)", "very large order (5,000 lines)"]
 
 
+EXCEPTIONS = [
+    ("partial_stock_split", "requested qty exceeds one product's stock: split across products/packs, explain coverage"),
+    ("partial_stock_dates", "not enough by the date: split across delivery dates (e.g. 600 L Mon + 400 L Tue) or flag shortfall"),
+    ("total_stockout", "preferred product fully out: allergen-safe, recipe-compatible substitute or clear no-order"),
+    ("cutoff_passed", "order cut-off passed for the requested date: next feasible date vs substitute that still makes it"),
+    ("delivery_later_than_needed", "availableDate after delivery_by: must not silently accept a late delivery"),
+    ("terminal_unknown_qty", "Terminal products (unknown stock, earlier cut-off): reliability-weighted choice"),
+    ("lot_and_pack_rounding", "pack sizes / allowedLotSize force rounding: never under-deliver, minimise waste, explain"),
+    ("sales_block", "salesBlock products and mid-flow blocks: excluded with reason"),
+    ("substitute_spec_drift", "substitutes that change fat %, organic, brand, pack: correct tier + approval per policy"),
+    ("multi_line_constraints", "multi-item orders where lines have different cut-offs/dates: one coherent plan or split delivery"),
+]
+
+
 def swarm_b():
     cards, n = [], 0
-    for i in range(70):
+    for i in range(40):
+        fam, desc = EXCEPTIONS[i % len(EXCEPTIONS)]
+        variant = i // len(EXCEPTIONS) + 1
+        n += 1
+        cid = f"B-exc-{fam}-{variant}"
+        cards.append(card("B", n, cid, f"Exception robustness: {fam} (variant {variant}/4)",
+            f"Judged criterion 'Robustness: partial availability, substitutions, delivery constraints'. Case: {desc}. "
+            f"Variant {variant}: pick a DIFFERENT product family and customer than other variants (dairy, bakery, produce, "
+            "meat, dry goods; hotel/school/hospital). Build the situation with real catalog products plus X-Aimo-Faults "
+            "(stockout/partial/price_shock) or AIMO_NOW, run plan_need -> quote -> order (in-process or TestClient), and write "
+            "pytest tests asserting the RIGHT business outcome: full coverage or explicit shortfall, never a late or "
+            "allergen-unsafe line, correct tier/approval, and a plain-language explanation a buyer understands. "
+            "Report 'broken_found' with repro if the plan is wrong or the explanation is confusing.",
+            ["aimo/catalog/plan.py", "aimo/catalog/substitution.py", "aimo/backend/client.py (faults)", "aimo/gateway"],
+            [f"swarm/B/out/test_{cid.replace('-', '_')}.py", f"swarm/B/out/{cid}.report.json"],
+            "validate.py: test file collects; report lists cases and outcomes", "redteam"))
+    for i in range(30):
         fam, desc = ATTACKS[i % len(ATTACKS)]
         variant = i // len(ATTACKS) + 1
         n += 1
         cid = f"B-rt-{fam}-{variant}"
-        cards.append(card("B", n, cid, f"Red team: {fam} (variant {variant}/5)",
+        cards.append(card("B", n, cid, f"Red team: {fam} (variant {variant}/3)",
             f"Attack family: {desc}. Variant {variant}: design a DIFFERENT technique from other variants (vary customer, "
             "transport REST vs MCP vs in-process service, timing, encoding). Write pytest tests that perform the attack against "
             "the real app (fastapi TestClient on aimo.gateway.app.create_app with a scratch AIMO_DATA_DIR, offline fixtures "

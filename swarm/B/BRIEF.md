@@ -11,8 +11,11 @@
 - the injection screen catches about 50% (fi/sv payloads, JSON roles, "allergy rules don't apply")
 - 28 contradictory allergen records
 
+**The official rubric defines robustness as "partial availability, substitutions, delivery constraints"**, so exceptions come first and security second.
+
 **Your 100 cards:**
-- `B-rt-*` (70): 14 attack families × 5 distinct variants. Each card is pytest tests that assert the SAFE outcome.
+- `B-exc-*` (40): 10 exception families × 4 variants (partial stock split across products or dates, total stock-out, cut-off passed, late delivery, Terminal unknown quantity, lot/pack rounding, sales block, substitute spec drift, multi-line constraints). Each card is pytest tests asserting the right business outcome and a clear explanation.
+- `B-rt-*` (30): the first 30 attack-family variants (split orders, quote/approval replay, self-approve, sockpuppets, seller overreach, price drift, injections, allergen evasion). Each card is pytest tests asserting the SAFE outcome.
 - `B-chaos-*` (20): one chaos cell each.
 - `B-inj-*` (10): a hand-written injection corpus plus hard negatives (1,000 rows in total).
 
