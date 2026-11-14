@@ -17,7 +17,7 @@ ShortId = Annotated[str, Field(max_length=128)]
 class OffersRequest(BaseModel):
     product_ids: list[ProductId] = Field(..., min_length=1, max_length=1000, description="Valio Aimo product codes (max 1,000)")
     requested_date: date = Field(..., description="Requested delivery date (YYYY-MM-DD)")
-    customer_id: Optional[ShortId] = Field(None, description="Defaults to the X-Customer-Id header")
+    customer_id: Optional[str] = Field(None, description="Defaults to the X-Customer-Id header")
 
     model_config = {"json_schema_extra": {"examples": [
         {"product_ids": ["463038", "464306", "469363"], "requested_date": "2026-11-16", "customer_id": "hotel-aurora"}]}}
@@ -44,7 +44,7 @@ class QuoteLineIn(BaseModel):
 
 
 class QuoteRequest(BaseModel):
-    customer_id: Optional[ShortId] = Field(None, description="Defaults to X-Customer-Id")
+    customer_id: Optional[str] = Field(None, description="Defaults to X-Customer-Id")
     agent_id: Optional[ShortId] = Field(None, description="Defaults to X-Agent-Id")
     delivery_date: date
     lines: list[QuoteLineIn] = Field(..., min_length=1, max_length=200)
