@@ -20,22 +20,7 @@ PREPARED = r"soup|keitto|sauce|kastike|salad|salaatti|pizza|chips|crisp|pie|piir
 CASES = HOLDOUT2
 
 
-KNOWN_MISSES = {
-    'School kitchen: 120 kg carrots and 90 kg potatoes by Thursday',
-    'Koulukeittiölle 60 kg riisiä',
-    '40 kg gluten-free oats for the hospital, no nuts',
-    '25 l lactose free milk and 10 kg lactose free butter',
-    'Tilaan 50 kg lohta ja 20 kg tilliä',
-    '100 kg tomatoes, hospital, allergen free (no gluten)',
-}
-
-
-def _case(c):
-    marks = [pytest.mark.xfail(reason="known precision miss", strict=False)] if c[0] in KNOWN_MISSES else []
-    return pytest.param(*c, marks=marks, id=c[0][:40])
-
-
-@pytest.mark.parametrize("text,expect", [_case(c) for c in CASES])
+@pytest.mark.parametrize("text,expect", CASES, ids=[c[0][:40] for c in CASES])
 def test_holdout2_top_product_is_what_was_asked(text, expect):
     need = parse_need(text, "hotel-aurora", T)
     assert len(need.items) == len(expect)
