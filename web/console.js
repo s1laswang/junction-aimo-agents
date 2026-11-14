@@ -107,19 +107,40 @@ function upd(li,o){
  li.querySelector(".ms").textContent=o.ms+" ms";li.querySelector(".why").textContent=o.why;
  const d=document.createElement("details");d.innerHTML=`<summary>request / response</summary><pre>${esc(JSON.stringify({request:o.req,response:o.res},null,2))}</pre>`;li.querySelector(".h").append(d);
 }
+const HTTP_ERR={401:["unauthorized","Missing or invalid X-Agent-Key."],403:["forbidden","Access denied for this customer or key."],404:["not_found","Requested resource was not found."],409:["conflict","Request conflicted with current state."],422:["validation_error","Request payload failed validation."],500:["server_error","Internal gateway error."],503:["UPSTREAM_UNAVAILABLE","The supplier system is unavailable, try again shortly."]};
+function errInfo(le){
+ const st=Number(le&&le.status)||0,fb=HTTP_ERR[st]||["http_"+st,"Request failed with HTTP "+st+"."],d=le&&le.detail;
+ let code="",text="";
+ if(d&&typeof d==="object"&&!Array.isArray(d)){code=String(d.code||"");text=String(d.text||d.message||d.detail||"")}
+ else if(Array.isArray(d)){text=d.map(x=>x&&typeof x==="object"?x.msg||x.text||"":String(x||"")).filter(Boolean).join("; ")}
+ else if(typeof d==="string"){text=d}
+ code=code||String(le&&le.code||"")||fb[0];text=text||String(le&&le.text||"")||fb[1];
+ return{httpStatus:st,code,text};
+}
+function errBannerHtml(e){
+ if(e&&e.httpStatus)return`<div class="dec blocked err-banner" role="alert"><div class="kv"><strong>Request failed</strong><span class="tag stop">${esc(e.httpStatus)} ${esc(e.code)}</span><span class="mono">HTTP ${esc(e.httpStatus)}</span></div><ul><li><code>${esc(e.code)}</code><span>${esc(e.text)}</span></li></ul></div>`;
+ return`<div class="dec blocked" role="alert">${e&&e.message==="Gateway offline"?"Gateway offline. The API did not answer, so no prices are shown. Start the app and run again.":"Run failed: "+esc(e&&e.message||e)}</div>`;
+}
 async function call(tool,method,path,body,mock,why){
- const li=line({tool,status:"running",why:"Calling "+path+"..."},S.run.body);S.run.calls[tool]=li;
+ const rn=S.run||startRun(cust());
+ const li=line({tool,status:"running",why:"Calling "+path+"..."},rn.body);rn.calls[tool]=li;
  const t0=performance.now();let res=null,real=false;
  if(!S.mock){
   res=await aimo.api(path,{method,body});real=res!=null;
-  if(!real){S.pend=true}
+  if(!real){
+   const le=(window.aimo&&window.aimo.lastError)||aimo.lastError;
+   const ms=Math.round(performance.now()-t0);
+   if(le&&le.status>0){
+    const e=errInfo(le),raw=le.detail!=null?le.detail:{status:e.httpStatus,code:e.code,text:e.text};
+    upd(li,{cls:"err",status:String(e.httpStatus),ms,why:e.code+": "+e.text,req:body,res:raw});
+    throw Object.assign(new Error(e.code+": "+e.text),e);
+   }
+   upd(li,{cls:"err",status:"offline",ms,why:"Gateway offline: "+path+" did not answer. No data shown.",req:body,res:null});
+   throw new Error("Gateway offline");
+  }
+ }else{
+  setMock(true);await sleep(200+Math.random()*400);res=mock();
  }
- if(S.pend){S.pend=false}
- let err=null;
- if(!real&&!S.mock){try{const r=await fetch(path,{method,headers:{"Content-Type":"application/json","X-Agent-Key":localStorage.getItem("aimo.agentKey")||"demo-"+cust()},body:body?JSON.stringify(body):undefined});if(r.status>=400&&r.status<500&&r.status!==404){const e=await r.json().catch(()=>null);if(e&&e.code)err={status:r.status,...e}}}catch(e){}}
- if(err){S.mock=S.fell?S.mock:false;upd(li,{cls:"err",status:String(err.status),ms:Math.round(performance.now()-t0),why:err.code+": "+err.text,req:body,res:err});const x=new Error(err.code+": "+err.text);throw x}
- if(!real&&!S.mock){upd(li,{cls:"err",status:"offline",ms:Math.round(performance.now()-t0),why:"Gateway offline: "+path+" did not answer. No data shown.",req:body,res:null});throw new Error("Gateway offline")}
- if(!real){setMock(true);await sleep(200+Math.random()*400);res=mock()}
  const ms=Math.round(performance.now()-t0);
  upd(li,{cls:"ok",status:real?"200":"mock",ms,why:why(res),req:body,res});
  return res;
@@ -168,7 +189,7 @@ function orderHtml(o){
  const d=o.decision,lab={auto:"Auto-approved",needs_approval:"Needs approval",blocked:"Blocked"}[d.outcome];
  return`<div class="sec"><h3>Order</h3><div class="dec ${d.outcome}"><div class="kv"><strong>${lab}</strong><span class="mono">${esc(o.order_id)}</span><span class="tag">${esc(o.status)}</span><span class="mono">${money(o.total_net)}</span>${d.outcome==="needs_approval"?`<a href="/inbox.html#${encodeURIComponent(o.order_id)}">Open in Approvals</a>`:""}<a href="/audit.html?order_id=${encodeURIComponent(o.order_id)}">Audit trail</a></div><ul>${d.reasons.map(r=>`<li><code>${esc(r.code)}</code><span>${esc(r.text)}</span></li>`).join("")}</ul></div>${(o.substitutions||[]).map(s=>`<div class="note" style="margin-top:4px">Substitution ${esc(s.original_id)} to ${esc(s.substitute_id)}: ${esc(s.reason)}</div>`).join("")}</div>`;
 }
-function fillOrder(o,q,c){const L=MANDATES[c]||MANDATES["hotel-aurora"];const t=money(q.total_net);const d={...o.decision,reasons:o.decision.reasons.filter(r=>r.text!=="@OL"||q.total_net>L.o).map(r=>r.text==="@WM"?{...r,text:`Total ${t} is under the per-order limit of ${money(L.o)}.`}:r.text==="@OL"?{...r,text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}:r)};if(o.decision.outcome==="auto"&&q.total_net>L.o){d.outcome="needs_approval";d.reasons=[{code:"OVER_ORDER_LIMIT",text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}]}return{...o,decision:d,status:d.outcome==="needs_approval"&&o.status==="placed"?"pending_approval":o.status}}
+function fillOrder(o,q,c,askHuman){const L=MANDATES[c]||MANDATES["hotel-aurora"];const t=money(q.total_net);const d={...o.decision,reasons:o.decision.reasons.filter(r=>r.text!=="@OL"||q.total_net>L.o).map(r=>r.text==="@WM"?{...r,text:`Total ${t} is under the per-order limit of ${money(L.o)}.`}:r.text==="@OL"?{...r,text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}:r)};if(o.decision.outcome==="auto"&&q.total_net>L.o){d.outcome="needs_approval";d.reasons=[{code:"OVER_ORDER_LIMIT",text:`Total ${t} is over the per-order limit of ${money(L.o)}.`}]}if(askHuman&&d.outcome==="auto"){d.outcome="needs_approval";d.reasons=[{code:"AGENT_REQUESTED",text:"The agent asked for human approval."}]}return{...o,decision:d,status:d.outcome==="needs_approval"&&o.status==="placed"?"pending_approval":o.status}}
 const hex=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)).join("");
 function demoBtns(out,ord,picks){
  out.insertAdjacentHTML("beforeend",'<div class="row"><button type="button" class="ghost" id="sim">Simulate stock-out</button><button type="button" class="ghost" id="clr">Clear</button></div>');
@@ -181,6 +202,7 @@ function demoBtns(out,ord,picks){
 }
 async function run(note){
  const text=$("#text").value.trim();if(!text)return;
+ const askEl=$("#ask-human"),askHuman=!!(askEl&&askEl.checked);
  const sc=/lasagn/i.test(text)?"lasagne":/school|allergen|gluten|hospital/i.test(text)?"school":/event|guests|salmon|last-minute/i.test(text)?"event":"milk";
  const M=MOCKS[sc],c=cust(),L=MANDATES[c]||MANDATES["hotel-aurora"];
  $("#run").disabled=true;$("#live").textContent="running";$("#live").classList.add("on");
@@ -207,14 +229,14 @@ async function run(note){
    rn.qid=q.quote_id;
    out.insertAdjacentHTML("beforeend",quoteHtml(q));
    $("#copy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(q.jws);$("#copy").textContent="Copied"};
-   const ord=await call("place_order","POST","/v1/orders",{quote_id:q.quote_id,jws:q.jws},()=>({order_id:"ord_mock_"+hex(6),quote_id:q.quote_id,customer:c,agent_id:"console",lines:q.lines,total_net:q.total_net,...fillOrder(M.order,q,c)}),
+   const ord=await call("place_order","POST","/v1/orders",{quote_id:q.quote_id,jws:q.jws,...(askHuman?{ask_human:true}:{})},()=>({order_id:"ord_mock_"+hex(6),quote_id:q.quote_id,customer:c,agent_id:"console",lines:q.lines,total_net:q.total_net,...fillOrder(M.order,q,c,askHuman)}),
     o=>`Policy decision: ${o.decision.outcome.replace("_"," ")}. ${o.decision.reasons[0]?o.decision.reasons[0].text:""}`);
    rn.oid=ord.order_id;
    out.insertAdjacentHTML("beforeend",orderHtml(ord));
    rn.out=ord.decision.outcome.replace("_"," ");rn.cls=ord.decision.outcome;rn.total=ord.total_net;rn.end=Date.now();sumRun(rn);
    if(DEMO)demoBtns(out,ord,picks);
   }
- }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">${e.message==="Gateway offline"?"Gateway offline. The API did not answer, so no prices are shown. Start the app and run again.":"Run failed: "+esc(e.message)}</div>`);rn.out="failed";rn.cls="blocked";rn.end=Date.now();sumRun(rn)}
+ }catch(e){out.insertAdjacentHTML("beforeend",errBannerHtml(e));rn.out=e&&e.httpStatus?e.httpStatus+" "+e.code:"failed";rn.cls="blocked";rn.end=Date.now();sumRun(rn)}
  finally{$("#run").disabled=false;$("#live").textContent="idle";$("#live").classList.remove("on")}
 }
 async function poll(){
@@ -232,6 +254,6 @@ function init(){
  $("#req").onsubmit=e=>{e.preventDefault();run()};
  setMock(S.mock);poll();
 }
-window.aimoConsole={needHtml,offersHtml,altHtml,quoteHtml,orderHtml,fillOrder,run,MOCKS};
+window.aimoConsole={needHtml,offersHtml,altHtml,quoteHtml,orderHtml,errBannerHtml,errInfo,fillOrder,call,run,setMock,S,MOCKS};
 init();
 })();
