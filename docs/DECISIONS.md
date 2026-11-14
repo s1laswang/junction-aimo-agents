@@ -18,6 +18,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Context:** an agent (and later an auditor) must be able to prove what price was offered, by whom, until when, without trusting our database.
 - **Decision:** quotes carry `quote_hash = sha256(canonical JSON)` (close to RFC 8785) and a compact JWS (RFC 7515) with `alg: EdDSA` (RFC 8037), key id = RFC 7638 thumbprint, public key at `/.well-known/jwks.json`. Audit events are signed the same way.
 - **Rejected:** HMAC (verifiers would need the secret); RSA/ECDSA P-256 (work, but larger keys and signatures, and ECDSA needs good randomness per signature; Ed25519 is deterministic); plain hashes without signatures (prove integrity, not origin); a blockchain (cost and latency without a trust benefit for a single issuer).
+- **Consequence for AP2:** AP2 v0.2 requires a non-deterministic signature (e.g. ECDSA) for the merchant's checkout JWT, not Ed25519. So we describe the quote and approval binding as **AP2-style**, not AP2-compliant. An AP2 bridge would add an ES256 `kid` for AP2 objects only (see D-P2). We did not add ES256 to `otap/0.1` quotes: the profile and conformance suite require Ed25519 keys, both gateways pass 43/43 on it, and ES256 alone would not make the flow AP2-conformant without AP2's mandate objects.
 - **Evidence:** `tests/test_trust.py` (sign/verify, tamper, `alg: none` refused); the UI verifies the signature in the browser against the JWKS (frontend report); s1 verifies a quote as a third party (docs/SCENARIOS.md).
 
 ## D3. Hash-chained, signed, append-only audit log
@@ -88,6 +89,6 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 
 ## Production decisions (proposed)
 - **D-P1 OAuth 2.1** per the MCP authorization spec (protected resource metadata, RFC 9728) with scopes `catalog:read quote:create order:submit`; fine-grained limits as RFC 9396 `authorization_details`. Rejected: API keys per agent (say who, not what).
-- **D-P2 Mandates as W3C Verifiable Credentials** (VC Data Model 2.0), issued by the customer to its agent, comparable to AP2 mandates. Rejected: mandates stored only at Valio (the customer can't prove or revoke what it delegated).
+- **D-P2 Mandates as W3C Verifiable Credentials** (VC Data Model 2.0), issued by the customer to its agent, in the style of AP2 mandates (pattern only; an AP2 bridge needs AP2's own mandate objects and an ES256 checkout signature). Rejected: mandates stored only at Valio (the customer can't prove or revoke what it delegated).
 - **D-P3 Keys in a KMS/HSM** and audit in WORM storage with anchored chain heads.
 - **D-P4 Peppol BIS Ordering 3** over the Peppol network for orders and responses.

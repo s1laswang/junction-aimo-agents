@@ -13,12 +13,18 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from pydantic import ValidationError
+
+from aimo.backend import clock
+from aimo.gateway import resilience
 from aimo.backend import orders as store
 from aimo.backend.client import INJECTION_TEXT, UpstreamError, current_faults, get_offers_with_meta
 from aimo.models import (
@@ -87,7 +93,8 @@ class Identity:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    """Gateway clock: real time, or the simulated demo clock (AIMO_NOW / X-Aimo-Now / replay), see aimo.backend.clock."""
+    return clock.now()
 
 
 def _id(prefix: str) -> str:
@@ -185,12 +192,13 @@ def _fallback_evaluate(q: Quote, m: Mandate) -> PolicyDecision:
 def evaluate(q: Quote, m: Mandate, products: dict[str, Any] | None = None) -> PolicyDecision:
     t = _trust()
     try:
+        kw: dict[str, Any] = {"now": _now()}
         if products:
-            try:
-                return t.evaluate(q, m, products=products)  # type: ignore[union-attr]
-            except TypeError:  # older trust without products=
-                pass
-        return t.evaluate(q, m)  # type: ignore[union-attr]
+            kw["products"] = products
+        try:
+            return t.evaluate(q, m, **kw)  # type: ignore[union-attr]
+        except TypeError:  # older trust without products= / now=
+            return t.evaluate(q, m)  # type: ignore[union-attr]
     except _MISSING:
         log.warning("trust.evaluate unavailable: using gateway fallback thresholds")
         return _fallback_evaluate(q, m)
@@ -345,8 +353,20 @@ def find_products(query: str, claims: list[str] | None = None, category: str | N
     res: list[ProductSummary] | None = None
     cat = _catalog()
     if cat is not None:
+        def primary():
+            return cat.search(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
+
+        def deterministic():  # FTS only: no Gemini semantic recall
+            try:
+                from aimo.catalog.textsearch import search as fts
+
+                return fts(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit,
+                           semantic=False)
+            except (ImportError, TypeError):
+                return None
         try:
-            res = cat.search(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
+            res, _path = resilience.guarded("catalog.search", primary, deterministic,
+                                            resilience.timeout_for("catalog.search", 4.0))
         except NotImplementedError:
             res = None
     if res is None:
@@ -383,6 +403,12 @@ def get_product(product_id: str) -> Product:
     return p
 
 
+def _fallback_screen(text: str) -> dict[str, Any]:
+    low = text.lower()
+    hits = [k for k in ("ignore your", "ignore previous", "ai agent", "approval already granted", "system note") if k in low]
+    return {"suspicious": bool(hits), "reasons": hits}
+
+
 def screen_supplier_text(p: Product) -> dict[str, Any]:
     """trust.screen_text over untrusted supplier text (marketing + ingredients)."""
     text = " ".join(x for x in (p.marketing_text, p.ingredients_text) if x)
@@ -390,7 +416,16 @@ def screen_supplier_text(p: Product) -> dict[str, Any]:
         return {"suspicious": False, "reasons": []}
     t = _trust()
     try:
-        return t.screen_text(text)  # type: ignore[union-attr]
+        fn = t.screen_text  # type: ignore[union-attr]
+
+        def regex_only():
+            try:
+                return fn(text, use_gemini=False)
+            except TypeError:
+                return _fallback_screen(text)
+        res, _path = resilience.guarded("trust.screen_text", lambda: fn(text), regex_only,
+                                        resilience.timeout_for("trust.screen_text", 3.0))
+        return res
     except _MISSING:
         low = text.lower()
         hits = [k for k in ("ignore your", "ignore previous", "ai agent", "approval already granted", "system note")
@@ -423,10 +458,40 @@ def _product_name(pid: str) -> str:
 
 
 # ------------------------------------------------------------------ offers / plan
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _order_lock(key: str) -> threading.Lock:
+    """Serialises duplicate submits / double-clicked approvals for one quote or order."""
+    with _locks_guard:
+        return _locks.setdefault(key, threading.Lock())
+
+
 def _upstream(e: UpstreamError) -> ServiceError:
-    status = 503 if e.status_code in (429, 503, 504) or e.status_code >= 500 else 502
-    return ServiceError(status, "upstream_unavailable", str(e),
-                        {"upstream_status": e.status_code, "retry_after": e.retry_after or 2, "injected": e.injected})
+    """Agent-facing upstream error: plain language, safe-to-retry, and when."""
+    sc = e.status_code
+    ra = int(max(1, round(e.retry_after))) if e.retry_after else (5 if sc == 429 else 10)
+    msg = str(e)
+    if sc == 429:
+        code, text = "upstream_rate_limited", (f"Valio Aimo's price and stock service is asking us to slow down (HTTP 429). "
+                                              f"Nothing was quoted or ordered. Retry in {ra} s.")
+    elif sc == 504 or "timed out" in msg:
+        code, text = "upstream_timeout", (f"Valio Aimo's price and stock service did not answer in time. "
+                                         f"Nothing was quoted or ordered. Retry in {ra} s.")
+    elif "unreachable" in msg or "circuit open" in msg:
+        code, text = "upstream_unreachable", (f"Valio Aimo's price and stock service is unreachable and no recorded "
+                                             f"snapshot covers this request. Nothing was quoted or ordered. Retry in {ra} s.")
+    elif "replay snapshot has no" in msg:
+        code, text = "replay_no_data", f"Offline replay has no recorded data for this request: {msg}."
+    else:
+        code, text = "upstream_unavailable", (f"Valio Aimo's price and stock service returned an error (HTTP {sc}). "
+                                             f"Nothing was quoted or ordered. Retry in {ra} s.")
+    if e.injected:
+        text += " (Simulated fault from X-Aimo-Faults.)"
+    status = 503 if sc in (429, 503, 504) or sc >= 500 else 502
+    return ServiceError(status, code, text, {"upstream_status": sc, "retry_after": ra, "injected": e.injected,
+                                             "safe_to_retry": True, "nothing_committed": True, "cause": msg})
 
 
 def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
@@ -450,11 +515,49 @@ def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, *
     if cat is None or not hasattr(cat, "plan_need"):
         raise ServiceError(501, "plan_unavailable", "planner (aimo.catalog.plan_need) is not available yet")
     try:
-        return cat.plan_need(need)
+        plan, path = resilience.guarded("catalog.plan_need", lambda: cat.plan_need(need), lambda: _plan_deterministic(need),
+                                        resilience.timeout_for("catalog.plan_need", 20.0))
+        return plan
     except NotImplementedError as e:
         raise ServiceError(501, "plan_unavailable", "planner not implemented yet") from e
     except UpstreamError as e:
         raise _upstream(e) from e
+
+
+def _plan_deterministic(need: Need) -> Plan:
+    """Planner without any Gemini call: FTS candidates (+ usual products, same category, supplier substitution
+    rules) -> live offers -> catalog.substitution.rank_substitutes -> catalog.plan.fill. Same tiers and split
+    logic as aimo.catalog.plan_need, minus semantic recall and the recipe check."""
+    from aimo.catalog import plan as P
+    from aimo.catalog.substitution import rank_substitutes
+    from aimo.catalog.textsearch import fts_search, get_rows
+
+    n2 = need
+    try:
+        n2, _src = P.with_effective_query(need)
+    except Exception:  # noqa: BLE001
+        pass
+    rel: dict[str, float] = {}
+    for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, content_unit=None, limit=80):
+        rel[pid] = sc
+    if n2.excluded_allergens:
+        for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, free_of=n2.excluded_allergens, limit=80):
+            rel[pid] = max(rel.get(pid, -1e9), sc) + 2.0
+    pref_rows = get_rows(list(n2.preferred_product_ids))
+    for c in {r.get("category") for r in pref_rows.values() if r.get("category")}:
+        for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, category=c, limit=80):
+            rel[pid] = max(rel.get(pid, -1e9), sc) + 1.0
+    for pid in n2.preferred_product_ids:
+        rel.setdefault(pid, 100.0)
+    rows = get_rows(list(rel))
+    order = sorted(rows.values(), key=lambda d: P._static_priority(n2, d, rel.get(d["id"], 0)))
+    top = [d["id"] for d in order[:getattr(P, "MAX_OFFER_IDS", 30)]]
+    top += [pid for pid in n2.preferred_product_ids if pid in rows and pid not in top]
+    offers = get_offers_with_meta(top, n2.delivery_by, n2.customer_id)[0] if top else {}
+    full = rank_substitutes(n2, offers, limit=200, rows={pid: rows[pid] for pid in top}, relevance=rel)
+    plan = P.fill(n2, P._trim(full, 12))
+    note = "Planned with the deterministic planner (Gemini semantic recall and recipe check skipped: slow or unavailable)."
+    return plan.model_copy(update={"need": need, "explanation": f"{plan.explanation} {note}".strip()})
 
 
 # ------------------------------------------------------------------ quotes
@@ -518,6 +621,21 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         except ServiceError:
             pass
 
+    # Pack / lot size: the supplier only ships whole multiples of allowedLotSize (>= 1; 0.01 = any unit).
+    off_lot = []
+    for pid, q in qty_by.items():
+        lot = getattr(products.get(pid), "allowed_lot_size", None)
+        if lot and lot >= 1 and abs(q / lot - round(q / lot)) > 1e-6:
+            off_lot.append({"product_id": pid, "reason": "lot_size", "requested": q, "allowed_lot_size": lot,
+                            "next_valid_qty": math.ceil(q / lot - 1e-9) * lot})
+    if off_lot:
+        audit(ident.actor, "quote.refused", f"refused-{ident.customer_id}",
+              "Quote refused: quantity is not a multiple of the pack/lot size: " +
+              "; ".join(f"{r['product_id']} {r['requested']:g} (lot {r['allowed_lot_size']:g})" for r in off_lot),
+              {"refused": off_lot, "delivery_date": delivery_date})
+        raise ServiceError(409, "lot_size_mismatch",
+                           "quantity must be a multiple of the product's lot size; re-plan and re-quote", {"refused": off_lot})
+
     # Server-side tier + flags. What the agent claimed is kept for the audit, never used.
     from aimo.gateway.verify import verify_lines
 
@@ -559,7 +677,8 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
     } for o in offers.values()]
     provenance = {
         **meta, "price_locked_until": expires.isoformat(),
-        "line_verification": {pid: {"tier": v["tier"], "method": v["method"], "reasons": v["reasons"]}
+        "line_verification": {pid: {"tier": v["tier"], "method": v["method"], "reasons": v["reasons"],
+                                    "reference": v.get("reference")}
                               for pid, v in verified.items()},
         "client_claims": client_claims,
     }
@@ -609,13 +728,11 @@ def _expired(q: Quote) -> bool:
     return exp <= _now()
 
 
-def _finalize(order: Order, quote: Quote, actor: str) -> Order:
+def _finalize(order: Order, quote: Quote, actor: str,
+              offers_meta: tuple[dict[str, Offer], dict[str, Any]] | None = None) -> Order:
     """Re-check availability and place the order in the mock backend (Peppol order response)."""
-    qty_by: dict[str, float] = {}
-    for ln in quote.lines:
-        qty_by[ln.product_id] = qty_by.get(ln.product_id, 0) + ln.qty_sales_units
     try:
-        offers, meta = get_offers_with_meta(list(qty_by), quote.delivery_date, quote.customer_id, qty_by, fresh=True)
+        offers, meta = offers_meta if offers_meta is not None else _quote_offers(quote)
     except UpstreamError as e:
         order = order.model_copy(update={"status": "approved", "updated_at": _now()})
         store.save_order(order)
@@ -626,7 +743,7 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
     code, rlines = store.confirm_lines(quote, offers)
     status = "rejected" if code == "RE" else "placed"
     order = order.model_copy(update={"status": status, "response_code": code, "response_lines": rlines,
-                                     "updated_at": _now(), "provenance": meta})
+                                     "updated_at": _now(), "provenance": {**(order.provenance or {}), **meta}})
     store.save_order(order)
     words = {"AP": "accepted", "CA": "accepted with changes", "RE": "rejected by supplier"}[code]
     detail = "; ".join(f"{l.product_id} {l.code} {l.qty_confirmed:g}" + (f" ({l.note})" if l.code != "AP" else "")
@@ -640,6 +757,11 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
 
 
 def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
+    with _order_lock(f"quote:{quote_id}"):  # concurrent duplicate submits -> exactly one order
+        return _submit_order(ident, quote_id, quote_hash)
+
+
+def _submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
     quote = get_quote(quote_id)
     # Only the agent that obtained the quote may submit it. Checked before ANY order row exists, so a
     # refused caller can never create the per-quote idempotency record and block the real buyer.
@@ -717,6 +839,12 @@ def get_order(order_id: str) -> Order:
     return o
 
 
+def audit_refusal(order_id: str, actor: str, reason: str) -> None:
+    """Record a refused approval attempt (wrong caller or credential) on the order's audit trail."""
+    audit(actor, "approval.refused", order_id, f"{actor} tried to decide order {order_id}; refused: {reason}.",
+          {"reason": reason})
+
+
 def list_approvals(status: str | None = "pending", customer_id: str | None = None) -> list[dict[str, Any]]:
     st = {"pending": "pending_approval", None: None, "": None, "all": None}.get(status, status)
     out = []
@@ -728,6 +856,16 @@ def list_approvals(status: str | None = "pending", customer_id: str | None = Non
     return out
 
 
+def directory_approver_id(who: str) -> str | None:
+    """Canonical directory id of a human approver given an id or display name (any customer), else None."""
+    w = (who or "").strip().lower()
+    for c in list_customers():
+        for a in c.get("approvers", []) or []:
+            if w and w in (str(a.get("id", "")).lower(), str(a.get("name", "")).lower()):
+                return a.get("id")
+    return None
+
+
 def _directory_role(customer_id: str, approver: str) -> str | None:
     for c in list_customers():
         if c.get("customer_id") == customer_id:
@@ -737,63 +875,239 @@ def _directory_role(customer_id: str, approver: str) -> str | None:
     return None
 
 
+_BLOCKING = ("cutoff_passed", "sales_block", "out_of_stock", "late_delivery", "availability_not_found", "no_schedule")
+
+
+def _quote_offers(quote: Quote) -> tuple[dict[str, Offer], dict[str, Any]]:
+    qty_by: dict[str, float] = {}
+    for ln in quote.lines:
+        qty_by[ln.product_id] = qty_by.get(ln.product_id, 0) + ln.qty_sales_units
+    return get_offers_with_meta(list(qty_by), quote.delivery_date, quote.customer_id, qty_by, fresh=True)
+
+
+def _requote_reason(quote: Quote, offers: dict[str, Offer] | None) -> str | None:
+    if _expired(quote):
+        return "quote_expired"
+    for ln in quote.lines:
+        o = (offers or {}).get(ln.product_id)
+        if o is not None and any(i in o.issues for i in _BLOCKING):
+            return "cutoff_passed" if "cutoff_passed" in o.issues else "line_unavailable"
+    return None
+
+
+def _requote_error(old: Order, new_order: Order | None, new_quote: Quote | None, reason: str, note: str = "") -> ServiceError:
+    why = {"quote_expired": "the quote's 15-minute price lock expired while it waited for approval",
+           "cutoff_passed": "a line's order cut-off passed while the order waited for approval",
+           "line_unavailable": "a line can no longer be delivered for the date"}.get(reason, reason)
+    detail: dict[str, Any] = {"reason": reason, "old_order_id": old.order_id, "old_quote_id": old.quote_id}
+    if new_order is not None and new_quote is not None:
+        old_q = store.get_quote(old.quote_id)
+        detail.update({
+            "new_order": new_order.model_dump(mode="json"), "new_quote": new_quote.model_dump(mode="json"),
+            "changes": {"old_total_net": old_q.total_net if old_q else None, "new_total_net": new_quote.total_net,
+                        "old_lines": [{"product_id": l.product_id, "qty": l.qty_sales_units, "unit_price": l.unit_price}
+                                      for l in (old_q.lines if old_q else [])],
+                        "new_lines": [{"product_id": l.product_id, "qty": l.qty_sales_units, "unit_price": l.unit_price,
+                                       "tier": l.tier} for l in new_quote.lines]},
+            "approve_with": {"method": "POST", "path": f"/v1/approvals/{new_order.order_id}/decision",
+                             "body": {"decision": "approve", "quote_hash": new_quote.quote_hash}},
+        })
+        msg = (f"Re-quote needed: {why}. A fresh quote {new_quote.quote_id} (€{new_quote.total_net:.2f} net) is ready as "
+               f"order {new_order.order_id}; approve that one in one step.")
+    else:
+        msg = f"Re-quote needed: {why}. No automatic replacement was possible{': ' + note if note else ''}; ask the agent to re-plan."
+    return ServiceError(409, "requote_needed", msg, detail)
+
+
+def _requote(order: Order, quote: Quote, reason: str, human: str) -> ServiceError:
+    """Build a fresh, re-priced quote for the same lines (or a re-plan from the need) as a new pending order."""
+    owner = Identity(agent_id=quote.agent_id, customer_id=quote.customer_id)
+    lines = [{"product_id": l.product_id, "qty_sales_units": l.qty_sales_units} for l in quote.lines]
+    new_q: Quote | None = None
+    note = ""
+    try:
+        new_q = make_quote(owner, quote.delivery_date, lines, quote.need)
+    except ServiceError as e:
+        note = e.message
+        if e.status == 409 and quote.need is not None:
+            try:
+                plan = plan_need(quote.need, identity=owner)
+                if plan.lines:
+                    new_q = make_quote(owner, quote.delivery_date,
+                                       [{"product_id": l.product_id, "qty_sales_units": l.qty_sales_units} for l in plan.lines],
+                                       quote.need)
+            except ServiceError as e2:
+                note = e2.message
+    new_order = None
+    if new_q is not None:
+        products = {}
+        for ln in new_q.lines:
+            try:
+                products[ln.product_id] = get_product(ln.product_id)
+            except ServiceError:
+                pass
+        decision = evaluate(new_q, mandate_for(owner), products=products or None)
+        now = _now()
+        status = "rejected" if decision.outcome == "reject" else "pending_approval"  # a human is reviewing: keep it with them
+        new_order = Order(order_id=_id("ORD"), quote_id=new_q.quote_id, quote_hash=new_q.quote_hash or "",
+                          customer_id=new_q.customer_id, agent_id=owner.agent_id, status=status, decision=decision,
+                          created_at=now, updated_at=now,
+                          provenance={"supersedes": order.order_id, "requote_reason": reason})
+        store.save_order(new_order)
+        if not _trust_log("log_decision", new_q, decision, new_order.order_id):
+            audit("system:policy-engine", "policy.evaluated", new_order.order_id,
+                  f"Policy {decision.policy_id} on re-quote {new_q.quote_id}: {decision.outcome}.",
+                  {"quote_id": new_q.quote_id, "decision": decision.model_dump()}, related_ids=[new_q.quote_id])
+    old = order.model_copy(update={"status": "expired", "updated_at": _now(), "provenance": {
+        **(order.provenance or {}), "requote_reason": reason,
+        "requoted_as": new_order.order_id if new_order else None, "requote_quote_id": new_q.quote_id if new_q else None}})
+    store.save_order(old)
+    audit("system:gateway", "order.requoted", order.order_id,
+          (f"Order {order.order_id} could not be approved ({reason.replace('_', ' ')}); the gateway re-priced it as quote "
+           f"{new_q.quote_id} (€{quote.total_net:.2f} -> €{new_q.total_net:.2f} net), new order {new_order.order_id} "
+           f"is waiting for approval." if new_q and new_order else
+           f"Order {order.order_id} could not be approved ({reason.replace('_', ' ')}) and no automatic re-quote was "
+           f"possible: {note}"),
+          {"reason": reason, "old_quote_id": quote.quote_id, "new_quote_id": new_q.quote_id if new_q else None,
+           "new_order_id": new_order.order_id if new_order else None, "requested_by": human},
+          related_ids=[x for x in (quote.quote_id, new_q.quote_id if new_q else None,
+                                   new_order.order_id if new_order else None) if x])
+    return _requote_error(old, new_order, new_q, reason, note)
+
+
+def _existing_requote(order: Order) -> ServiceError | None:
+    prov = order.provenance or {}
+    if order.status != "expired" or "requote_reason" not in prov:
+        return None
+    new_order = store.get_order(prov["requoted_as"]) if prov.get("requoted_as") else None
+    new_q = store.get_quote(prov["requote_quote_id"]) if prov.get("requote_quote_id") else None
+    return _requote_error(order, new_order, new_q, prov["requote_reason"])
+
+
+def _remember(order: Order, quote: Quote, approver: str, role: str, scope: str, note: str | None) -> dict[str, Any]:
+    """Learned approvals: tell trust to remember the approved swaps (aimo.trust.learned.remember_swap)."""
+    try:
+        from aimo.trust import learned  # type: ignore[attr-defined]
+
+        fn = learned.remember_swap
+    except (ImportError, AttributeError):
+        return {"remembered": False, "reason": "aimo.trust.learned is not available yet"}
+    verif = (quote.provenance or {}).get("line_verification") or {}
+    done, errors = [], []
+    for ln in quote.lines:
+        if ln.tier == "preferred":
+            continue
+        ref = (verif.get(ln.product_id) or {}).get("reference")
+        kw = dict(customer_id=quote.customer_id, from_product_id=ref, to_product_id=ln.product_id, scope=scope,
+                  approver=approver, approver_role=role or None, quote_id=quote.quote_id, order_id=order.order_id,
+                  note=note)
+        try:
+            try:
+                res = fn(**kw)
+            except TypeError:
+                res = fn(quote.customer_id, ref, ln.product_id, scope)
+            done.append({"product_id": ln.product_id, "from_product_id": ref, "scope": scope,
+                         "result": res if isinstance(res, (dict, list, str, bool, type(None))) else str(res)})
+        except Exception as e:  # noqa: BLE001  learning must never block the order
+            errors.append({"product_id": ln.product_id, "error": str(e)})
+    return {"remembered": bool(done), "swaps": done, "errors": errors}
+
+
+def learned_for(customer_id: str) -> dict[str, Any]:
+    try:
+        from aimo.trust import learned  # type: ignore[attr-defined]
+    except ImportError:
+        return {"customer_id": customer_id, "available": False, "swaps": []}
+    for fn in ("list_learned", "learned_for", "get_learned", "list_swaps"):
+        f = getattr(learned, fn, None)
+        if f is not None:
+            try:
+                res = f(customer_id)
+            except Exception as e:  # noqa: BLE001
+                return {"customer_id": customer_id, "available": True, "swaps": [], "error": str(e)}
+            return {"customer_id": customer_id, "available": True, "swaps": json.loads(json.dumps(res, default=str))}
+    return {"customer_id": customer_id, "available": False, "swaps": []}
+
+
 def decide(order_id: str, decision: str, approver: str, quote_hash: str, note: str | None = None,
-           approver_role: str | None = None) -> Order:
+           approver_role: str | None = None, remember: bool = False, remember_scope: str = "product") -> Order:
     if decision not in ("approve", "reject"):
         raise ServiceError(400, "bad_decision", "decision must be 'approve' or 'reject'")
     if not approver:
         raise ServiceError(400, "approver_required", "approver is required")
-    order = get_order(order_id)
-    if order.status != "pending_approval":
-        raise ServiceError(409, "not_pending", f"order is {order.status}, not pending_approval")
-    quote = get_quote(order.quote_id)
-    role = approver_role or _directory_role(order.customer_id, approver) or order.decision.approver_role or ""
-    expired = _expired(quote)
-    human = f"human:{approver}"
+    if remember_scope not in ("product", "product_type"):
+        raise ServiceError(400, "bad_remember_scope", "remember_scope must be 'product' or 'product_type'")
+    with _order_lock(order_id):
+        order = get_order(order_id)
+        if order.status != "pending_approval":
+            prev = store.approvals_for(order_id)
+            if prev and prev[-1]["decision"] == decision and prev[-1]["approver"] == approver \
+                    and prev[-1]["quote_hash"] == quote_hash and order.status in ("placed", "rejected", "approved"):
+                return order  # duplicate click: same decision, same approver, same quote -> same result
+            rq = _existing_requote(order)
+            if rq is not None and decision == "approve":
+                raise rq
+            raise ServiceError(409, "not_pending", f"order is {order.status}, not pending_approval")
+        quote = get_quote(order.quote_id)
+        role = approver_role or _directory_role(order.customer_id, approver) or order.decision.approver_role or ""
+        human = f"human:{approver}"
 
-    t = _trust()
-    try:
-        chk = t.check_approval(quote, order.decision, approver, role, quote_hash,  # type: ignore[union-attr]
-                               decision_kind=decision, note=note or "", order_id=order_id)
-    except _MISSING:
-        chk = None
+        t = _trust()
+        try:
+            chk = t.check_approval(quote, order.decision, approver, role, quote_hash,  # type: ignore[union-attr]
+                                   decision_kind=decision, note=note or "", order_id=order_id, now=_now())
+        except _MISSING:
+            chk = None
+            if quote_hash != order.quote_hash:
+                audit(human, "approval.refused", order_id,
+                      f"{approver} tried to {decision} order {order_id} with a different quote_hash.",
+                      {"quote_hash": quote_hash, "expected": order.quote_hash}, related_ids=[quote.quote_id])
+            elif not verify_quote(quote):
+                raise ServiceError(409, "quote_signature_invalid", "quote signature/hash verification failed")
+
         if quote_hash != order.quote_hash:
-            audit(human, "approval.refused", order_id,
-                  f"{approver} tried to {decision} order {order_id} with a different quote_hash.",
-                  {"quote_hash": quote_hash, "expected": order.quote_hash}, related_ids=[quote.quote_id])
-        elif not verify_quote(quote):
-            raise ServiceError(409, "quote_signature_invalid", "quote signature/hash verification failed")
+            raise ServiceError(409, "quote_hash_mismatch",
+                               "approval is bound to a different quote_hash: the quote changed, re-review it",
+                               {"expected": order.quote_hash})
+        offers_meta = None
+        if decision == "approve":
+            if not _expired(quote):
+                try:
+                    offers_meta = _quote_offers(quote)
+                except UpstreamError as e:
+                    raise _upstream(e) from e
+            reason = _requote_reason(quote, offers_meta[0] if offers_meta else None)
+            if reason:
+                raise _requote(order, quote, reason, human)
+        if chk is not None and not chk.get("ok"):
+            raise ServiceError(403, "approval_refused", chk.get("reason") or "approval refused by trust layer")
 
-    if quote_hash != order.quote_hash:
-        raise ServiceError(409, "quote_hash_mismatch",
-                           "approval is bound to a different quote_hash: the quote changed, re-review it",
-                           {"expected": order.quote_hash})
-    if expired and decision == "approve":
-        order = order.model_copy(update={"status": "expired", "updated_at": _now()})
+        store.record_approval(order_id, decision, approver, note, quote_hash)
+        who = f"{approver} ({role})" if role else approver  # wording for fallback audit only
+        if decision == "reject":
+            order = order.model_copy(update={"status": "rejected", "approved_by": approver, "approver_role": role or None,
+                                             "approval_note": note, "updated_at": _now()})
+            store.save_order(order)
+            _log_order(order, quote, human, note or f"rejected by {who}", "order.rejected_by_human",
+                       f"{who} rejected order {order_id}." + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
+            return order
+        learned_res = _remember(order, quote, approver, role, remember_scope, note) if remember else None
+        prov = dict(order.provenance or {})
+        if learned_res is not None:
+            prov["learned"] = learned_res
+        order = order.model_copy(update={"status": "approved", "approved_by": approver, "approver_role": role or None,
+                                         "approval_note": note, "updated_at": _now(), "provenance": prov or None})
         store.save_order(order)
-        _log_order(order, quote, human, "the quote's price lock expired before approval; re-quote needed",
-                   "order.expired", f"{approver} tried to approve order {order_id}, but its quote expired; re-quote needed.")
-        raise ServiceError(409, "quote_expired", "re-quote needed: the quote's price lock expired before the decision",
-                           {"expires_at": quote.expires_at.isoformat()})
-    if chk is not None and not chk.get("ok"):
-        raise ServiceError(403, "approval_refused", chk.get("reason") or "approval refused by trust layer")
-
-    store.record_approval(order_id, decision, approver, note, quote_hash)
-    who = f"{approver} ({role})" if role else approver  # wording for fallback audit only
-    if decision == "reject":
-        order = order.model_copy(update={"status": "rejected", "approved_by": approver, "approver_role": role or None,
-                                         "approval_note": note, "updated_at": _now()})
-        store.save_order(order)
-        _log_order(order, quote, human, note or f"rejected by {who}", "order.rejected_by_human",
-                   f"{who} rejected order {order_id}." + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
-        return order
-    order = order.model_copy(update={"status": "approved", "approved_by": approver, "approver_role": role or None,
-                                     "approval_note": note, "updated_at": _now()})
-    store.save_order(order)
-    _log_order(order, quote, human, note or "", "order.approved",
-               f"{who} approved order {order_id} (quote {quote.quote_id}, €{quote.total_net:.2f}, hash {quote_hash[:12]}…)."
-               + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
-    return _finalize(order, quote, human)
+        _log_order(order, quote, human, note or "", "order.approved",
+                   f"{who} approved order {order_id} (quote {quote.quote_id}, €{quote.total_net:.2f}, hash {quote_hash[:12]}…)."
+                   + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
+        if learned_res is not None:
+            audit(human, "approval.remembered" if learned_res.get("remembered") else "approval.remember_failed", order_id,
+                  (f"{approver} asked to remember this approval ({remember_scope}): "
+                   + (", ".join(f"{s['from_product_id'] or 'usual'} -> {s['product_id']}" for s in learned_res.get("swaps", []))
+                      or learned_res.get("reason", "nothing to remember (no substitutes)"))),
+                  learned_res, related_ids=[quote.quote_id])
+        return _finalize(order, quote, human, offers_meta)
 
 
 # ------------------------------------------------------------------ customers / policies
@@ -828,6 +1142,19 @@ def _policies() -> list[dict[str, Any]]:
 
 
 # ------------------------------------------------------------------ discovery
+def _mcp_versions() -> dict[str, Any]:
+    """MCP spec revision: the pin from aimo.config plus what the installed SDK actually speaks."""
+    from aimo import config as _cfg
+    out: dict[str, Any] = {"protocol_version": _cfg.MCP_SPEC_VERSION, "handshake_protocol_version": _cfg.MCP_HANDSHAKE_VERSION,
+                           "sdk": _cfg.MCP_SDK}
+    try:
+        from mcp_types import version as v
+        out["sdk_supported_versions"] = list(v.KNOWN_PROTOCOL_VERSIONS)
+    except Exception:  # noqa: BLE001  older SDKs: the pin still stands
+        pass
+    return out
+
+
 def manifest(base_url: str) -> dict[str, Any]:
     b = base_url.rstrip("/")
     return {
@@ -839,7 +1166,7 @@ def manifest(base_url: str) -> dict[str, Any]:
         "openapi_url": f"{b}/openapi.json",
         "docs_url": f"{b}/docs",
         "mcp": {"url": f"{b}/mcp", "transport": "streamable-http", "server_name": "valio-aimo-trusted-trade",
-                "stdio": "python -m aimo.gateway.mcp_server"},
+                "stdio": "python -m aimo.gateway.mcp_server", **_mcp_versions()},
         "jwks_url": f"{b}/.well-known/jwks.json",
         "identity": {"headers": ["X-Agent-Id", "X-Customer-Id"],
                      "production": "OAuth 2.1 bearer tokens with scopes catalog:read quote:create order:submit (MCP auth spec)"},
@@ -904,7 +1231,11 @@ def _as_need(need: Any, ident: Identity) -> Need | None:
         return need
     d = dict(need)
     d.setdefault("customer_id", ident.customer_id)
-    return Need.model_validate(d)
+    try:
+        return Need.model_validate(d)
+    except ValidationError as e:  # MCP / in-process callers: a clean 422, never a 500
+        errs = [{"loc": list(x.get("loc", ())), "msg": x.get("msg"), "type": x.get("type")} for x in e.errors()]
+        raise ServiceError(422, "invalid_need", "need failed validation (e.g. quantity must be > 0)", errs) from e
 
 
 def _j(x: Any) -> Any:
@@ -947,5 +1278,6 @@ def get_audit_trail(subject_id: str, **_: Any) -> dict[str, Any]:
     return {"events": audit_events(subject_id), "report": audit_report(subject_id), "verify": audit_verify()}
 
 
-def list_policies(**_: Any) -> dict[str, Any]:
-    return {"policies": _policies()}
+def list_policies(identity: Any = None, **_: Any) -> dict[str, Any]:
+    ident = resolve_identity(identity)
+    return {"policies": _policies(), "learned_swaps": learned_for(ident.customer_id)}

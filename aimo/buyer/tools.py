@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -242,6 +243,12 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
                     httpx.get(mcp_url, timeout=1.5)  # any HTTP status means something listens
                 return MCPTransport(mcp_url, headers=headers, timeout=60)  # create_quote re-fetches live prices; the mock API can be slow
             if k == "inproc":
+                if kind == "auto":
+                    import aimo.backend.client as backend_client
+                    from aimo import config
+                    has_key = bool((config.AIMO_API_KEY or os.environ.get("VALIO_API_KEY") or "").strip() or config.OFFLINE)
+                    if not (backend_client._client is not None or (config.PRODUCT_JSON.exists() and has_key)):
+                        raise ToolError("in-process gateway needs challenge catalog data and AIMO_API_KEY")
                 return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":
                 from aimo.buyer.fakes import FakeGateway

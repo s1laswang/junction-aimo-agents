@@ -122,7 +122,9 @@ class Client:
         who = approver_for(self, order["decision"].get("approver_role"))
         body = {"decision": "approve" if approve else "reject", "approver": who[0], "approver_role": who[1],
                 "note": note, "quote_hash": quote_hash}
-        return self.j("POST", f"/v1/approvals/{order['order_id']}/decision", json=body)
+        # a human decides: no agent identity, plus the operator's approver credential
+        human = {"X-Agent-Id": "", "X-Customer-Id": "", "X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "")}
+        return self.j("POST", f"/v1/approvals/{order['order_id']}/decision", json=body, headers=human)
 
     def audit(self, subject_id: str) -> list[dict]:
         return self.j("GET", "/v1/audit", params={"subject_id": subject_id})

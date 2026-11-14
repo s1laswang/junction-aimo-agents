@@ -44,6 +44,14 @@ def _build_catalog(gemini_builds: str = "background") -> None:
     except NotImplementedError:
         print("catalog store not implemented yet: using gateway fallback search")
         return
+    except FileNotFoundError as e:
+        print(
+            "warning: challenge catalog data is missing "
+            f"({e.filename or e}); the gateway still starts (UI, /healthz, "
+            "/.well-known, OpenAPI). Set AIMO_API_KEY in .env and rerun "
+            "`uv run aimo fetch-data` (or `uv run aimo serve`) to download it."
+        )
+        return
 
     missing = []
     try:
@@ -108,17 +116,26 @@ def cmd_serve(a: argparse.Namespace) -> None:
         print(f"warning: data download failed: {e}")
     _build_catalog("skip" if a.no_build else "sync" if a.build_sync else "background")
     print(f"Valio Aimo Trusted Trade gateway on http://{a.host}:{a.port}  (docs /docs, MCP /mcp, UI /ui)")
-    uvicorn.run("aimo.gateway.app:app", host=a.host, port=a.port, reload=a.reload, log_level="info")
+    try:
+        from aimo.gateway.human_auth import credential_warning
+        w = credential_warning()
+        if w:
+            print(f"warning: {w}")
+    except Exception:  # noqa: BLE001
+        pass
+    # proxy_headers=False: never trust X-Forwarded-For, so per-client approver lockouts cannot be dodged by spoofing
+    uvicorn.run("aimo.gateway.app:app", host=a.host, port=a.port, reload=a.reload, log_level="info",
+                proxy_headers=False)
 
 
 def cmd_demo(a: argparse.Namespace, rest: list[str]) -> None:
     try:
-        from aimo.buyer.run_demo import main as demo_main  # type: ignore
+        from aimo.buyer.run_demo import main as demo_main
     except ImportError:
         raise SystemExit("aimo.buyer.run_demo is not available yet (buyer engineer). "
                          "Meanwhile: `aimo serve` and follow docs/reports/gateway.md curl walkthrough.")
-    sys.argv = ["aimo demo", *rest]
-    demo_main()
+    rc = demo_main(rest)
+    raise SystemExit(rc if isinstance(rc, int) else 0)
 
 
 def cmd_mcp(_: argparse.Namespace) -> None:

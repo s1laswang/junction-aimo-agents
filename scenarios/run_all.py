@@ -97,6 +97,10 @@ def run_all(base: str, only: str | None = None, verbose: bool = False) -> list[t
 
 
 def main() -> int:
+    # One approver credential shared by the booted gateway (child env) and the scenario "humans".
+    if not os.environ.get("AIMO_APPROVER_PIN"):
+        import secrets
+        os.environ["AIMO_APPROVER_PIN"] = secrets.token_urlsafe(9)  # 12-char passphrase
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", help="run against an already running server instead of booting one")
     ap.add_argument("--only")

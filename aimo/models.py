@@ -89,7 +89,7 @@ class Need(BaseModel):
     product_query: str                        # e.g. "lactose-free milk"
     required_claims: list[str] = []           # e.g. ["FREE_FROM_LACTOSE"]
     excluded_allergens: list[str] = []        # EU14 keys; contains/may_contain/unknown all excluded
-    quantity: float
+    quantity: float = Field(..., gt=0, description="Total amount needed in `unit`; must be > 0 (0 or negative -> 422)")
     unit: Literal["L", "KG", "PCS"]
     delivery_by: date
     preferred_product_ids: list[str] = []

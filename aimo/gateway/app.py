@@ -10,13 +10,14 @@ import logging
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
+from fastapi import APIRouter, Body, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.routing import Route
 
 from aimo import config
 from aimo.backend.client import reset_request_faults, set_request_faults
-from aimo.gateway import service
+from aimo.backend import clock
+from aimo.gateway import human_auth, service
 from aimo.gateway.schemas import DecisionRequest, OffersRequest, OrderRequest, QuoteRequest
 from aimo.models import Need, Offer, Order, Plan, Product, ProductSummary, Quote
 
@@ -72,6 +73,58 @@ def identity(
     return ident
 
 
+class HumanCred:
+    def __init__(self, pin: Optional[str], session: Optional[str], source: str):
+        self.pin, self.session, self.source = pin, session, source
+
+
+def human_cred(request: Request,
+               x_approver_pin: Optional[str] = Header(None, description="Human approver credential (never given to agents)"),
+               x_approver_session: Optional[str] = Header(None, description="Signed approver session from "
+                                                                            "POST /v1/auth/approver-session")) -> HumanCred:
+    return HumanCred(x_approver_pin, x_approver_session, (request.client.host if request.client else "?"))
+
+
+def _is_human(cred: HumanCred) -> bool:
+    return human_auth.check_session(cred.session) or human_auth.check_pin(cred.pin, cred.source)
+
+
+def _locked_error(cred: HumanCred) -> service.ServiceError:
+    return service.ServiceError(429, "approver_locked", "Too many wrong approver credentials from this client; try "
+                                "again in a few minutes (a signed-in approver session is not affected).",
+                                {"retry_after": int(human_auth.locked_for(cred.source)) + 1})
+
+
+def _require_human(cred: HumanCred, subject_id: str, actor: str) -> None:
+    """Session token, or approver credential with a per-source brute-force lockout. Audits at most MAX_FAILURES
+    refusals per source and window plus the lock itself, so guessing cannot flood the audit log or lock out the
+    real (signed-in) approver."""
+    if human_auth.check_session(cred.session):
+        return
+    if human_auth.locked_for(cred.source) > 0:
+        raise _locked_error(cred)
+    if human_auth.check_pin(cred.pin, cred.source):
+        return
+    if human_auth.locked_for(cred.source) > 0:  # this attempt triggered the lock
+        service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials from one "
+                                                 f"client; that client is locked for {int(human_auth.LOCK_S)} s")
+        raise _locked_error(cred)
+    service.audit_refusal(subject_id, actor, "wrong approver credential" if cred.pin else "missing approver credential")
+    raise service.ServiceError(401, "approver_auth_required",
+                               "Approval needs a signed-in human approver (X-Approver-Session or X-Approver-Pin).")
+
+
+def strict_identity(
+    x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1 (required)"),
+    x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora (required)"),
+) -> service.Identity:
+    """Routes that create quotes or orders need an explicit, known caller: no default identity."""
+    if not x_agent_id or not x_customer_id:
+        raise service.ServiceError(401, "identity_required",
+                                   "Quotes and orders need X-Customer-Id and X-Agent-Id (production: OAuth 2.1 bearer).")
+    return identity(x_agent_id, x_customer_id)
+
+
 def _with_body_claims(ident: service.Identity, customer_id: Optional[str], agent_id: Optional[str]) -> service.Identity:
     """Headers win: a body customer_id/agent_id that disagrees with a header is 403. Without the header
     (demo convenience) the body value is used."""
@@ -82,7 +135,7 @@ def _with_body_claims(ident: service.Identity, customer_id: Optional[str], agent
 
 
 class FaultsMiddleware:
-    """Pure ASGI middleware: header X-Aimo-Faults -> per-request fault context var."""
+    """Pure ASGI middleware: headers X-Aimo-Faults and X-Aimo-Now (demo mode) -> per-request context vars."""
 
     def __init__(self, app):
         self.app = app
@@ -90,15 +143,42 @@ class FaultsMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        spec = None
+        spec = now_hdr = None
         for k, v in scope.get("headers", []):
             if k == b"x-aimo-faults":
                 spec = v.decode("latin-1")
+            elif k == b"x-aimo-now":
+                now_hdr = v.decode("latin-1")
         token = set_request_faults(spec)
+        ntoken = clock.set_request_now(now_hdr)
         try:
             await self.app(scope, receive, send)
         finally:
+            clock.reset_request_now(ntoken)
             reset_request_faults(token)
+
+
+def _replay_info() -> dict[str, Any]:
+    from aimo.backend import replay
+
+    return replay.info()
+
+
+def _breakers() -> dict[str, Any]:
+    from aimo.gateway import resilience
+
+    return resilience.states()
+
+
+def _upstream_state() -> dict[str, Any]:
+    import time as _t
+
+    from aimo.backend.client import get_client
+
+    c = get_client()
+    down = getattr(c, "down_until", 0.0) or 0.0
+    return {"client": type(c).__name__, "circuit_open": down > _t.time(),
+            "retry_in_s": max(0, round(down - _t.time())), "last_error": getattr(c, "last_error", None)}
 
 
 def _prov_headers(meta: dict[str, Any]) -> dict[str, str]:
@@ -125,7 +205,8 @@ def build_router() -> APIRouter:
     @r.get("/healthz", tags=["discovery"], summary="Health and integration status")
     def healthz() -> dict[str, Any]:
         return {"ok": True, "version": service.VERSION, "integrations": service.integration_status(),
-                "offline": config.OFFLINE}
+                "offline": config.OFFLINE, "clock": clock.describe(), "replay": _replay_info(),
+                "upstream": _upstream_state(), "breakers": _breakers()}
 
     # ---------------------------------------------------------- catalog
     @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary])
@@ -162,7 +243,7 @@ def build_router() -> APIRouter:
 
     # ---------------------------------------------------------- quotes
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
-    def create_quote(body: QuoteRequest, ident: service.Identity = Depends(identity)):
+    def create_quote(body: QuoteRequest, ident: service.Identity = Depends(strict_identity)):
         """Re-fetches live offers, refuses lines that are unavailable / past cut-off / short of stock (409 with
         per-line reasons), computes totals, signs the quote (quote_hash + JWS) and fixes the price until
         `expires_at`."""
@@ -175,7 +256,7 @@ def build_router() -> APIRouter:
 
     # ---------------------------------------------------------- orders
     @r.post("/v1/orders", tags=["orders"], summary="Place an order for a signed quote", response_model=Order, responses=ERR)
-    def place_order(body: OrderRequest, ident: service.Identity = Depends(identity)):
+    def place_order(body: OrderRequest, ident: service.Identity = Depends(strict_identity)):
         """Verifies quote hash, signature and expiry, then evaluates the customer's policy:
         `placed` (auto-approved, with Peppol-style response), `pending_approval` or `rejected`. Idempotent per quote."""
         return service.submit_order(ident, body.quote_id, body.quote_hash)
@@ -184,20 +265,65 @@ def build_router() -> APIRouter:
     def get_order(order_id: str):
         return service.get_order(order_id)
 
+    @r.get("/v1/orders/{order_id}/peppol-order-response.xml", tags=["orders"], responses=ERR,
+           summary="Peppol BIS Advanced Ordering 3.0 Order Response Advanced (T116, UBL 2.3) for the order",
+           response_class=PlainTextResponse)
+    def get_order_peppol(order_id: str):
+        """AP/CA/RE from placement; AB while the order waits for approval. Party ids are placeholders.
+        Checked against the UBL 2.3 XSD and the PEPPOL-T116 rules in tests, not the full Peppol schematron."""
+        from aimo.backend.peppol import order_response_xml
+        o = service.get_order(order_id)
+        return PlainTextResponse(order_response_xml(o, service.get_quote(o.quote_id)), media_type="application/xml")
+
     # ---------------------------------------------------------- approvals
     @r.get("/v1/approvals", tags=["approvals"], summary="Approval inbox")
     def approvals(
         status: Optional[str] = Query("pending", description="pending | placed | rejected | expired | all"),
         customer_id: Optional[str] = Query(None),
+        x_customer_id: Optional[str] = Header(None),
+        cred: HumanCred = Depends(human_cred),
     ) -> list[dict[str, Any]]:
-        """Orders with their exact quote and policy decision: `[{order, quote, decision, expired, approvals}]`."""
-        return service.list_approvals(status, customer_id)
+        """Orders with their exact quote and policy decision: `[{order, quote, decision, expired, approvals}]`.
+        A signed-in human approver sees the inbox; an agent sees only its own customer's orders."""
+        if _is_human(cred):
+            return service.list_approvals(status, customer_id)
+        if not x_customer_id:
+            raise service.ServiceError(401, "identity_required",
+                                       "Send X-Customer-Id (agents) or X-Approver-Pin (human approvers).")
+        if customer_id and customer_id != x_customer_id:
+            raise service.ServiceError(403, "customer_mismatch", "you can only list your own customer's orders")
+        return service.list_approvals(status, x_customer_id)
 
-    @r.post("/v1/approvals/{order_id}/decision", tags=["approvals"], summary="Approve or reject", response_model=Order, responses=ERR)
-    def decide(order_id: str, body: DecisionRequest):
-        """Human decision. `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409
-        "re-quote needed". Approve places the order and returns the order response."""
-        return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role)
+    @r.post("/v1/approvals/{order_id}/decision", tags=["approvals"], summary="Approve or reject (humans only)",
+            response_model=Order, responses=ERR)
+    def decide(order_id: str, body: DecisionRequest,
+               x_agent_id: Optional[str] = Header(None),
+               cred: HumanCred = Depends(human_cred)):
+        """Human decision. Requires a signed-in approver (`X-Approver-Session` from POST /v1/auth/approver-session,
+        or `X-Approver-Pin`); any request carrying agent identity (`X-Agent-Id`) is refused,
+        and the approver must be a human in the order customer's directory with an allowed role.
+        `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409 "re-quote needed".
+        Approve places the order and returns the order response."""
+        if x_agent_id:
+            service.audit_refusal(order_id, f"agent:{x_agent_id}", "agent identity on the approval endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve",
+                                       "Agents can never approve orders; a human approver must decide in the inbox.")
+        approver = body.approver
+        bound = human_auth.session_approver(cred.session)
+        if bound:  # a session is bound to one person: decisions are recorded under that person only
+            if approver and service.directory_approver_id(approver) != bound:
+                service.audit_refusal(order_id, f"human:{bound}", f"session of {bound} tried to decide as {approver}")
+                raise service.ServiceError(403, "approver_mismatch",
+                                           f"This session belongs to {bound}; it cannot decide as {approver}.")
+            approver = bound
+        else:
+            # demo path: shared PIN + self-declared name (production: per-person SSO; see docs/TRUST.md)
+            _require_human(cred, order_id, f"human:{body.approver}")
+            if not approver:
+                raise service.ServiceError(422, "approver_required", "Name the approver, or sign in with "
+                                           "POST /v1/auth/approver-session to bind decisions to you.")
+        return service.decide(order_id, body.decision, approver, body.quote_hash, body.note, body.approver_role,
+                              remember=body.remember, remember_scope=body.remember_scope)
 
     # ---------------------------------------------------------- audit
     @r.get("/v1/audit", tags=["audit"], summary="Audit events")
@@ -216,19 +342,59 @@ def build_router() -> APIRouter:
     # ---------------------------------------------------------- demo-only
     @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
     def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
-                                                                                 "'approved' to 'rejected')")):
+                                                                                 "'approved' to 'rejected')"),
+                    cred: HumanCred = Depends(human_cred)):
         """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
-        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. 404 when AIMO_ENV=production."""
+        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs a signed-in approver; 404 when
+        AIMO_ENV=production."""
+        _require_human(cred, f"audit:{seq}", "human:demo-tamper")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
-    def demo_untamper(seq: int):
+    def demo_untamper(seq: int, cred: HumanCred = Depends(human_cred)):
+        _require_human(cred, f"audit:{seq}", "human:demo-untamper")
         return service.demo_untamper(seq)
 
+    # ---------------------------------------------------------- human sign-in
+    @r.post("/v1/auth/approver-session", tags=["approvals"], summary="Human approver sign-in (returns a session token)",
+            responses=ERR)
+    def approver_session(body: dict[str, Any] = Body(default={}, examples=[{"approver": "anna@hotel-aurora.example"}]),
+                         x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
+        """Sign in as ONE named human approver: `{"approver": "<directory id or name>"}` + `X-Approver-Pin` returns
+        an 8-hour signed session token bound to that person, to send as `X-Approver-Session`. Decisions made with
+        it are recorded under that approver only. Agents are refused. A session keeps working even if someone else
+        triggers a brute-force lock."""
+        if x_agent_id:
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
+        who = str((body or {}).get("approver") or "").strip()
+        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{who or '?'}")
+        canonical = service.directory_approver_id(who) if who else None
+        if not canonical:
+            raise service.ServiceError(404, "unknown_approver",
+                                       "Name a human from a customer's approver directory, e.g. anna@hotel-aurora.example.")
+        return human_auth.issue_session(canonical)
+
     # ---------------------------------------------------------- customers
+    @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)")
+    def learned(customer_id: str, x_customer_id: Optional[str] = Header(None)) -> dict[str, Any]:
+        """Swaps a human approved with `remember: true`. Visible only to the customer itself (403 otherwise)."""
+        if x_customer_id and x_customer_id != customer_id:
+            raise service.ServiceError(403, "customer_mismatch", "you can only read your own customer's learned approvals")
+        return service.learned_for(customer_id)
+
     @r.get("/v1/customers", tags=["customers"], summary="Demo customers and policy summaries")
-    def customers() -> list[dict[str, Any]]:
-        return service.list_customers()
+    def customers(cred: HumanCred = Depends(human_cred)) -> list[dict[str, Any]]:
+        """Customers, mandates and plain-language policy summaries. Approver identities (ids/emails) are shown only
+        to a signed-in human approver; agents see names and roles."""
+        out = service.list_customers()
+        if _is_human(cred):
+            return out
+        masked = []
+        for c in out:
+            c = dict(c)
+            c["approvers"] = [{"name": a.get("name"), "role": a.get("role")} for a in (c.get("approvers") or [])]
+            masked.append(c)
+        return masked
 
     return r
 

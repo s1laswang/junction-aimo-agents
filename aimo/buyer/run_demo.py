@@ -48,7 +48,8 @@ def c(s: str, *styles: str) -> str:
 
 ICON = {"thought": ("·", "dim"), "tool_call": ("→", "cyan"), "tool_result": ("←", "blue"), "plan": ("▤", "mag"),
         "quote": ("€", "yellow"), "decision": ("⚖", "yellow"), "approval_wait": ("⏸", "yellow"),
-        "order": ("✓", "green"), "error": ("!", "red"), "final": ("■", "green")}
+        "order": ("✓", "green"), "error": ("!", "red"), "final": ("■", "green"),
+        "needs_clarification": ("?", "yellow")}
 
 
 def wrap(s: str, indent: int = 7) -> str:
@@ -85,6 +86,14 @@ def print_step(step: Any) -> None:
     elif kind == "approval_wait":
         print(wrap(f"quote_hash={str(d.get('quote_hash'))[:16]}…  approve in the UI (/ui) or "
                    f"POST /v1/approvals/{d.get('order_id')}/decision"))
+    elif kind == "needs_clarification":
+        for o in d.get("options", []):
+            print(c(f"       [{o['id']}] {o['label']}", "yellow"))
+    elif kind == "thought" and d.get("lines") is not None and "extracted" in d:
+        for ln in d["lines"]:
+            print(wrap(f"\"{ln.get('original_text') or ln.get('product')}\" -> {ln.get('product')} "
+                       f"{ln.get('quantity') if ln.get('quantity') is not None else '?'} {ln.get('unit', '')}"))
+        print(c(wrap("Request: " + str(d.get("request_text"))), "mag"))
     elif kind == "error":
         print(c(wrap(str(d.get("error", ""))[:300]), "red"))
     elif kind == "final":
@@ -100,10 +109,12 @@ def print_step(step: Any) -> None:
 def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: threading.Event,
                        delay: float = 3.0, decision: str = "approve") -> None:
     import httpx
+    from aimo.gateway.human_auth import local_pin
+    human = {"X-Approver-Pin": local_pin()}  # the operator's approver credential (env AIMO_APPROVER_PIN or data/keys)
     seen: set[str] = set()
     while not stop.is_set():
         try:
-            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, timeout=5)
+            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, headers=human, timeout=5)
             items = r.json() if r.status_code == 200 else []
             for it in items if isinstance(items, list) else []:
                 order = it.get("order", it)
@@ -116,7 +127,7 @@ def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: thr
                 body = {"decision": decision, "approver": approver,
                         "note": "Approved from the terminal demo" if decision == "approve" else "Rejected from the terminal demo",
                         "quote_hash": order.get("quote_hash") or quote.get("quote_hash")}
-                resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body, timeout=10)
+                resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body, headers=human, timeout=10)
                 print(c(f"       [human] {approver} {decision}d {oid} via HTTP -> {resp.status_code}", "green"), flush=True)
         except Exception as e:  # noqa: BLE001
             print(c(f"       [human] approval poll failed: {type(e).__name__}", "red"), flush=True)
@@ -126,10 +137,52 @@ def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: thr
 def fake_auto_approver(gw, approver: str, stop: threading.Event, delay: float = 3.0, decision: str = "approve") -> None:
     while not stop.is_set():
         for o in gw.pending():
-            time.sleep(delay)
+            if stop.wait(delay):
+                return
             gw.decide(o["order_id"], decision, approver, "Simulated approval (fake gateway)")
             print(c(f"       [human] {approver} {decision}d {o['order_id']} (fake gateway)", "green"), flush=True)
-        stop.wait(0.5)
+        stop.wait(0.2)
+
+
+def inproc_auto_approver(approver: str, customer_id: str, stop: threading.Event,
+                         delay: float = 1.0, decision: str = "approve") -> None:
+    from aimo.gateway import service
+    seen: set[str] = set()
+    while not stop.is_set():
+        try:
+            items = service.list_approvals(status="pending", customer_id=customer_id)
+            for it in items if isinstance(items, list) else []:
+                order = it.get("order", it) if isinstance(it, dict) else {}
+                quote = (it.get("quote") or {}) if isinstance(it, dict) else {}
+                oid = order.get("order_id")
+                if not oid or oid in seen or order.get("customer_id") not in (None, customer_id):
+                    continue
+                seen.add(oid)
+                if isinstance(it, dict) and it.get("expired") and decision == "approve":
+                    continue
+                if stop.wait(delay):
+                    return
+                note = ("Approved from the terminal demo (in-process)"
+                        if decision == "approve" else "Rejected from the terminal demo (in-process)")
+                qhash = order.get("quote_hash") or quote.get("quote_hash") or ""
+                decide_fn = getattr(service, "decide_approval", None) or service.decide
+                try:
+                    decide_fn(oid, decision=decision, approver=approver, note=note, quote_hash=qhash)
+                    print(c(f"       [human] {approver} {decision}d {oid} (in-process gateway)", "green"), flush=True)
+                except Exception as e:
+                    print(c(f"       [human] approval of {oid} failed: {type(e).__name__}", "red"), flush=True)
+        except Exception as e:
+            print(c(f"       [human] approval poll failed: {type(e).__name__}", "red"), flush=True)
+        stop.wait(0.2)
+
+
+def _env_approver(customer: str) -> str | None:
+    raw = (os.environ.get("AIMO_AUTO_APPROVE") or "").strip()
+    if not raw or raw.lower() in ("0", "false", "no", "off"):
+        return None
+    if raw.lower() in ("1", "true", "yes", "on"):
+        return APPROVERS.get(customer, "anna@hotel-aurora.example")
+    return raw
 
 
 # ---------------------------------------------------------------- main
@@ -138,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scenario", default="happy", choices=sorted(SCENARIOS))
     ap.add_argument("--text", help="override the request text")
     ap.add_argument("--customer", help="override the customer id")
-    ap.add_argument("--auto-approve-as", metavar="EMAIL", help="simulate the human approver (via HTTP)")
+    ap.add_argument("--auto-approve-as", metavar="EMAIL", help="simulate the human approver")
+    ap.add_argument("--no-auto-approve", action="store_true",
+                    help="disable automatic simulated approval in fake/inproc runs")
     ap.add_argument("--reject", action="store_true", help="the simulated human rejects instead")
     ap.add_argument("--approve-delay", type=float, default=3.0)
     ap.add_argument("--transport", default=os.environ.get("AIMO_BUYER_TRANSPORT", "auto"),
@@ -150,6 +205,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-escalate", action="store_true", help="never switch to the reasoning model")
     ap.add_argument("--max-steps", type=int, default=14)
     ap.add_argument("--approval-timeout", type=float, default=1800, help="seconds to wait for a human")
+    ap.add_argument("--image", metavar="PATH", help="photo of a handwritten order / menu / invoice (Gemini vision)")
+    ap.add_argument("--answer", default="auto", choices=["auto", "ask", "none"],
+                    help="clarifying questions: auto = first option (non-interactive), ask = prompt in the terminal, "
+                         "none = leave unanswered")
     ap.add_argument("--json", metavar="PATH", help="write the full run result as JSON")
     ap.add_argument("--faults", help="X-Aimo-Faults spec for the gateway (default: per scenario)")
     ap.add_argument("--montage", action="store_true",
@@ -174,11 +233,18 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_scenario(a, scenario: str, approver: str | None) -> dict:
     sc = SCENARIOS[scenario]
-    text = a.text or sc["text"]
+    image = None
+    if getattr(a, "image", None):
+        import mimetypes
+        with open(a.image, "rb") as fh:
+            image = (fh.read(), mimetypes.guess_type(a.image)[0] or "image/png")
+        text = a.text or ""
+    else:
+        text = a.text or sc["text"]
     customer = a.customer or sc["customer"]
     base = a.base_url.rstrip("/")
-    print(c(f"\nValio Aimo Trusted Trade: Gemini buyer agent  [{scenario}]", "b"))
-    print(c(f'  {customer}: "{text}"\n', "dim"))
+    print(c(f"\nValio Aimo Trusted Trade: Gemini buyer agent  [{'photo' if image else scenario}]", "b"))
+    print(c(f'  {customer}: "{text}"' + (f" + photo {a.image}" if image else "") + "\n", "dim"))
     stop = threading.Event()
     decision = "reject" if a.reject else "approve"
 
@@ -204,17 +270,38 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
              "fake": "FAKE offline gateway (aimo.buyer.fakes; not real data)"}[kind]
     print(c(f"  tools via {label}: {', '.join(t.name for t in transport.list_tools())}\n",
             "red" if kind == "fake" else "dim"))
+    from aimo.buyer.mock_model import MOCK_LABEL, mock_wanted
+    if mock_wanted():
+        print(c(f"  {MOCK_LABEL}\n  Set GEMINI_API_KEY in .env for the real Gemini agent.\n", "red"))
+
+    delay = a.approve_delay
+    no_auto = bool(getattr(a, "no_auto_approve", False))
+    if no_auto:
+        approver = None
+    elif approver is None:
+        env_app = _env_approver(customer)
+        if env_app:
+            approver = env_app
+        elif kind in ("fake", "inproc") and scenario != "drift":
+            approver = APPROVERS.get(customer, "anna@hotel-aurora.example")
+            delay = min(a.approve_delay, 0.5)
+            print(c(f"  simulated human approval enabled as {approver} "
+                    f"(no external HTTP /ui server is attached in {kind} mode; pass --no-auto-approve to disable)\n",
+                    "yellow"))
 
     if approver:
         if gw is not None:
-            target, args = fake_auto_approver, (gw, approver, stop, a.approve_delay, decision)
+            target, args = fake_auto_approver, (gw, approver, stop, delay, decision)
+        elif kind == "inproc":
+            target, args = inproc_auto_approver, (approver, customer, stop, delay, decision)
         else:
-            target, args = http_auto_approver, (base, approver, customer, stop, a.approve_delay, decision)
+            target, args = http_auto_approver, (base, approver, customer, stop, delay, decision)
         threading.Thread(target=target, args=args, daemon=True).start()
 
     agent = BuyerAgent(transport, customer, model=a.model, thinking=a.thinking, escalate=not a.no_escalate,
                        max_steps=a.max_steps, emit=print_step, audit_base_url=base if kind != "fake" else "",
-                       poll_s=1.0 if kind == "fake" else 2.0, approval_timeout_s=a.approval_timeout)
+                       poll_s=0.5 if kind in ("fake", "inproc") else 2.0, approval_timeout_s=a.approval_timeout,
+                       image=image, answer_fn=_answer_fn(getattr(a, "answer", "auto")))
     try:
         result = agent.run(text)
     finally:
@@ -224,6 +311,24 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
     result["scenario"] = scenario
     result["customer_id"] = customer
     return result
+
+
+def _answer_fn(mode: str):
+    """How the terminal demo answers needs_clarification questions."""
+    if mode == "none":
+        return lambda q: None
+    if mode == "ask" and sys.stdin.isatty():
+        def ask(q):
+            ids = [o["id"] for o in q["options"]]
+            raw = input(c(f"       your answer {ids} or free text: ", "yellow")).strip()
+            return {"option_id": raw} if raw in ids else ({"text": raw} if raw else None)
+        return ask
+
+    def first(q):
+        o = q["options"][0]
+        print(c(f"       [auto-answer] {o['id']}: {o['label']}", "yellow"), flush=True)
+        return {"option_id": o["id"]}
+    return first
 
 
 # ---------------------------------------------------------------- montage
@@ -309,7 +414,13 @@ def run_montage(a) -> int:
     results = []
     for name in MONTAGE:
         sc = SCENARIOS[name]
-        approver = a.auto_approve_as or (APPROVERS.get(sc["customer"]) if name != "drift" else None)
+        cust = a.customer or sc["customer"]
+        if getattr(a, "no_auto_approve", False):
+            approver = None
+        elif name == "drift":
+            approver = a.auto_approve_as
+        else:
+            approver = a.auto_approve_as or _env_approver(cust) or APPROVERS.get(cust, "anna@hotel-aurora.example")
         try:
             r = run_scenario(a, name, approver)
         except Exception as e:  # noqa: BLE001  one broken scenario must not stop the montage
@@ -345,14 +456,18 @@ def run_montage(a) -> int:
 
 def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -> None:
     from aimo.buyer.costs import CACHED_FRACTION, PRICES_PER_M
+    from aimo.buyer.mock_model import MOCK_MODEL_NAME, mock_wanted
     kinds = {r.get("transport") for _, r, *_ in rows}
+    is_mock = mock_wanted() and not a.model
+    model_name = MOCK_MODEL_NAME if is_mock else (a.model or "gemini-3.8-flash")
+    esc_text = "off" if (a.no_escalate or is_mock) else "on (gemini-4-hydrogen, HIGH)"
     out = [
         "# Demo montage results",
         "",
         f"Generated by `uv run aimo demo --montage` on {started.strftime('%a %d %b %Y %H:%M')} Helsinki time "
         f"against {a.base_url} (transport: {', '.join(sorted(k or '?' for k in kinds))}). "
-        f"Agent model `{a.model or 'gemini-3.8-flash'}`, thinking {a.thinking}, escalation "
-        f"{'off' if a.no_escalate else 'on (gemini-4-hydrogen, HIGH)'}. Every number below comes from this run "
+        f"Agent model `{model_name}`, thinking {a.thinking}, escalation "
+        f"{esc_text}. Every number below comes from this run "
         "(agent results plus the Gemini usage ledger, data/gemini/ledger).",
         "",
         "| Scenario | Customer | Verdict | Outcome | Wall s | Gemini calls | Tokens in (cached) / out / thinking | Cost USD |",
@@ -391,8 +506,9 @@ def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -
 
 def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, decision: str) -> int:
     import httpx
-    if a.auto_approve_as:
-        threading.Thread(target=http_auto_approver, args=(base, a.auto_approve_as, customer, stop,
+    approver = None if getattr(a, "no_auto_approve", False) else (a.auto_approve_as or _env_approver(customer))
+    if approver:
+        threading.Thread(target=http_auto_approver, args=(base, approver, customer, stop,
                                                           a.approve_delay, decision), daemon=True).start()
     body = {"text": text, "customer_id": customer, "thinking": a.thinking, "escalate": not a.no_escalate}
     if a.model:

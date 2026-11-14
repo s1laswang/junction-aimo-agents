@@ -10,3 +10,4 @@ data/
 keys/
 *.pem
 .DS_Store
+.git_rev

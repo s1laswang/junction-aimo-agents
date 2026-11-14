@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 import time
 
 import httpx
@@ -101,15 +103,21 @@ def main() -> None:
     r = c.get("/v1/approvals", params={"status": "pending"})
     check(any(x["order"]["order_id"] == o["order_id"] for x in r.json()), "order is in the approval inbox")
 
-    step("POST decision with a wrong quote_hash (expect 409)")
+    step("POST decision as the AGENT naming a real approver (expect 403)")
     bad = {"decision": "approve", "approver": "anna@hotel-aurora.example",
-           "approver_role": "procurement_manager", "note": "QA", "quote_hash": "0" * 64}
+           "approver_role": "procurement_manager", "note": "QA", "quote_hash": q["quote_hash"]}
     r = c.post(f"/v1/approvals/{o['order_id']}/decision", json=bad)
+    check(r.status_code == 403, f"status {r.status_code} {r.json().get('error')}")
+
+    # the human approver: no agent identity, plus the operator's approver credential
+    pin = os.environ.get("AIMO_APPROVER_PIN") or (Path(os.environ.get("AIMO_DATA_DIR", "data")) / "keys" / "approver_pin").read_text().strip()
+    human = {"X-Agent-Id": "", "X-Customer-Id": "", "X-Approver-Pin": pin}
+    step("POST decision with a wrong quote_hash (expect 409)")
+    r = c.post(f"/v1/approvals/{o['order_id']}/decision", json=dict(bad, quote_hash="0" * 64), headers=human)
     check(r.status_code == 409, f"status {r.status_code} {r.json().get('error')}")
 
-    t = step("POST decision approve")
-    good = dict(bad, quote_hash=q["quote_hash"])
-    r = c.post(f"/v1/approvals/{o['order_id']}/decision", json=good)
+    t = step("POST decision approve (human approver)")
+    r = c.post(f"/v1/approvals/{o['order_id']}/decision", json=bad, headers=human)
     check(r.status_code == 200, f"status {r.status_code} in {time.time() - t:.2f}s")
     o2 = r.json()
     print(f"       status={o2.get('status')} response_code={o2.get('response_code')} approved_by={o2.get('approved_by')}")
