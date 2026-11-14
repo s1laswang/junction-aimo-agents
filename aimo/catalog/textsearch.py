@@ -150,6 +150,43 @@ def _con() -> sqlite3.Connection:
     return connect()
 
 
+# ---------------------------------------------------------------- food vs non-food signal
+# Category names are not in the data, so "non-food" is inferred from the data itself: categories where
+# < 20 % of products carry a nutrition declaration AND whose code family is equipment / cleaning /
+# disposables / paper / office (20xxx, 3xxxx, 6xxxx, 7xxxx, 9xxxx; UNVERIFIED code semantics, checked
+# by eye: pans, plates, Tork napkins, cleaners, candles, office paper). Fresh produce (17xxx) and
+# coffee/tea (22xxx) also lack nutrition data but stay food. Names add a second signal.
+_NONFOOD_NAME = re.compile(r"\b(?:jugs?|kannu\w*|kaadin|pitcher|cleaner\w*|cleaning|pesu\w*|puhdist\w*|detergent|"
+                           r"rinse aid|soap|saippua|dispenser|annostelija|napkins?|servet\w*|gloves?|käsine\w*|"
+                           r"cloth|liina|foil|folio|film|kalvo|tray|tarjotin|cup|cups|mug|muki|plate|lautanen|"
+                           r"bowl|kulho|lid|kansi|frother|vaahdotin|machine|kone|thermometer|brush|harja|"
+                           r"container|rasia|bag|bags|pussi)\b", re.I)
+_NONFOOD_QUERY = _NONFOOD_NAME
+
+
+@lru_cache(maxsize=1)
+def _nonfood_categories() -> frozenset[str]:
+    rows = _con().execute("select category, avg(nutrition != '{}') as r from products group by category").fetchall()
+    return frozenset(r["category"] for r in rows
+                     if r["category"] and r["r"] < 0.2 and r["category"][0] in "23679" and not r["category"].startswith("22"))
+
+
+def food_class(d: dict[str, Any]) -> str:
+    """'food' | 'nonfood' | 'unknown' for ranking only (never a safety decision)."""
+    if d.get("category") in _nonfood_categories():
+        return "nonfood"
+    if d.get("nutrition"):
+        return "food"
+    name = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi")))
+    if _NONFOOD_NAME.search(name) and not d.get("ingredients_text"):
+        return "nonfood"
+    return "food" if d.get("ingredients_text") else "unknown"
+
+
+def query_wants_nonfood(query: str) -> bool:
+    return bool(_NONFOOD_QUERY.search(query or ""))
+
+
 def summary_from_row(d: dict[str, Any], score: Optional[float] = None) -> ProductSummary:
     cu = d.get("content_unit")
     return ProductSummary(
@@ -226,6 +263,7 @@ def fts_search(query: str, *, claims: list[str] | None = None, category: Optiona
     top = max(bm.values()) or 1.0
     rows = get_rows(list(bm))
     ql = " ".join(f.lower() for _c, forms in concepts for f in forms)
+    wants_nonfood = query_wants_nonfood(query)
     results: dict[str, float] = {}
     for pid, d in rows.items():
         names = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi"), d.get("name_sv"))).lower()
@@ -240,6 +278,9 @@ def fts_search(query: str, *, claims: list[str] | None = None, category: Optiona
                 score += 2.0
         score += 2.0 * bm[pid] / top                       # 0..2 tie-breaker
         score -= 0.01 * max(0, len(n_en) - 40)             # long names usually = more specific products
+        if not wants_nonfood:                              # food words should find food, not milk jugs
+            fc = food_class(d)
+            score += 1.0 if fc == "food" else (-8.0 if fc == "nonfood" else 0.0)
         results[pid] = round(score, 4)
     return sorted(results.items(), key=lambda x: -x[1])[:limit]
 
@@ -288,6 +329,11 @@ def search(query: str, *, claims: list[str] | None = None, category: str | None 
             fused[pid] = fused.get(pid, 0) + 1.0 / (20 + rank) + (0.05 if pid in full else 0)
         for rank, (pid, _sim) in enumerate(sem):
             fused[pid] = fused.get(pid, 0) + 0.8 / (20 + rank)
+        if not query_wants_nonfood(query):
+            frows = get_rows(list(fused))
+            for pid in fused:
+                if pid in frows and food_class(frows[pid]) == "nonfood":
+                    fused[pid] *= 0.3
         hits = sorted(((pid, sc * 100) for pid, sc in fused.items()), key=lambda x: -x[1])[:limit]
     rows = get_rows([h[0] for h in hits])
     return [summary_from_row(rows[pid], round(score, 4)) for pid, score in hits if pid in rows]

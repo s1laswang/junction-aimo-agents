@@ -107,6 +107,15 @@ Coverage: 9,978 products have some structured allergen data. 7,568 have none, so
 - `plan_need(need, offers_fn=None)` takes an optional injected offers function `(ids, date, customer_id=...) -> dict[str, Offer]`.
 - An `UpstreamError` from `aimo.backend.get_offers` propagates out of `plan_need`, so the gateway can return a 503. The catalog does not swallow it.
 
+## Round 4: food beats equipment in search
+- **Bug (pitch QA):** "maito" ranked two milk jugs (466434, 466594) and "WMF Cleaner for milk systems" above actual milk.
+- **Fix:** `textsearch.food_class()` classifies each product as food, non-food or unknown, for ranking only.
+  - Non-food categories are inferred from the data, because category names are not in it. A category counts as non-food when under 20 % of its products have nutrition data and its code family is 2/3/6/7/9xxxx (pans, plates, Tork paper, cleaners, office supplies). Coffee and tea (22xxx) and fresh produce (17xxx) stay food. The code meanings are UNVERIFIED.
+  - A name signal adds a second check: jug, kannu, cleaner, pesu, napkin, cup and similar words.
+  - Effect on ranking: food gets +1 and non-food -8 in the text-search score, and non-food is weighted ×0.3 in the hybrid merge. This applies only when the query itself names no equipment, so "milk jug" still finds jugs.
+- **Result:** the top 5 for "maito", "milk" and "laktoositon maito" are all milk drinks (category 10400). The hero plan is unchanged: €1,010, 464306 best.
+- **New tests:** `test_milk_queries_rank_milk_drinks_above_jugs_and_cleaners` (3 queries) and `test_equipment_queries_still_find_equipment`. The full suite passes 142 tests.
+
 ## Round 3 (must-fix): preferences no longer disable the product-type check
 - **Bug:** a non-empty `need.preferences` (for example `{"parsed_by": "gemini"}`) with no usual product made `reference_spec` drop the type reference.
   - School "oat drink" 120 L then planned 21 × 477410 Pepsi Max for €249.69.
