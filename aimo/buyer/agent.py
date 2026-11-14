@@ -328,15 +328,35 @@ class BuyerAgent:
             if self.injections and isinstance(args.get("need"), dict):
                 # trust convention (docs/interfaces.md): screen results go to need.preferences
                 prefs = dict(args["need"].get("preferences") or {})
-                prefs["injection_flags"] = self.injections
+                prefs["injection_flags"] = self._injection_flags()
                 args["need"] = {**args["need"], "preferences": prefs}
-            if self.plan:  # never quote a candidate the planner rejected
-                planned = {l.get("product_id") for l in self.plan.get("lines", [])}
-                rejected = {c.get("product", {}).get("id") for c in self.plan.get("candidates", [])
-                            if c.get("tier") == "rejected"} - planned
-                bad = [l.get("product_id") for l in args.get("lines", []) if l.get("product_id") in rejected]
-                if bad:
-                    return {"__blocked__": f"Products {bad} were rejected by the planner (hard constraint, cut-off or allergen)."}
+            return self._enforce_plan_lines(args)
+        return args
+
+    def _enforce_plan_lines(self, args: dict) -> dict:
+        """Quantities come from the deterministic planner, never from the LLM: the quote must carry
+        exactly the plan's lines (product_id, qty_sales_units). A mismatch is corrected to the plan
+        and logged as a thought, so the Plan and the Quote/Approval views always agree."""
+        if not self.plans:
+            return {"__blocked__": "Call plan_need first: quote lines must come from the planner."}
+        unplanned = [x.product_query for i, x in enumerate(self.needs) if i not in self.plans]
+        if unplanned:
+            return {"__blocked__": f"Call plan_need for every item first (not planned yet: {unplanned})."}
+        plan_lines = [{"product_id": l["product_id"], "qty_sales_units": l["qty_sales_units"],
+                       **({"tier": l["tier"]} if l.get("tier") else {})} for l in self.plan.get("lines", [])]
+        if not plan_lines:
+            return {"__blocked__": "The plan has no orderable lines (full shortfall), so there is nothing to quote. "
+                                   "Report the shortfall and its reasons to the buyer."}
+
+        def key(ls):
+            return sorted((str(l.get("product_id")), round(float(l.get("qty_sales_units") or 0), 4)) for l in ls)
+
+        proposed = args.get("lines") or []
+        if key(proposed) != key(plan_lines):
+            self.emit("thought", "Quote lines corrected to the planner's lines (quantities never come from the model)",
+                      proposed=[{"product_id": l.get("product_id"), "qty_sales_units": l.get("qty_sales_units")}
+                                for l in proposed], plan_lines=plan_lines)
+            args = {**args, "lines": plan_lines}
         return args
 
     def _match_need(self, given: dict) -> int:
@@ -384,16 +404,18 @@ class BuyerAgent:
                            "total_net": p.get("total_net")} for p in ps]}
 
     def _screen(self, name: str, result: Any) -> Any:
+        found: list[dict] = []
+
         def visit(x: Any, path: str) -> Any:
             if isinstance(x, dict):
                 out = {}
+                pid = x.get("id") or x.get("product_id")
                 for k, v in x.items():
                     if k in UNTRUSTED_FIELDS and isinstance(v, str) and v:
                         s = screen_text(v)
                         if s.get("suspicious"):
-                            self.injections.append({"tool": name, "field": f"{path}.{k}", "reasons": s.get("reasons")})
-                            self.emit("thought", f"Flagged suspected prompt injection in supplier text ({k}); redacted",
-                                      tool=name, field=f"{path}.{k}", reasons=s.get("reasons"), excerpt=v[:160])
+                            found.append({"tool": name, "product_id": pid, "field": f"{path}.{k}",
+                                          "reasons": list(s.get("reasons") or []), "excerpt": v[:160]})
                             out[k] = "[REDACTED by buyer harness: suspected prompt injection in supplier text]"
                             out["_untrusted_text_flagged"] = True
                             continue
@@ -402,7 +424,26 @@ class BuyerAgent:
             if isinstance(x, list):
                 return [visit(v, f"{path}[{i}]") for i, v in enumerate(x)]
             return x
-        return visit(result, name)
+        screened = visit(result, name)
+        if found:
+            self.injections += found
+            ids = [f["product_id"] for f in found if f["product_id"]]
+            reasons = sorted({r for f in found for r in f["reasons"]})
+            self.emit("thought", f"Flagged suspected prompt injection in supplier text of {len(found)} item(s); "
+                                 f"redacted before the model saw it",
+                      tool=name, product_ids=ids, reasons=reasons, excerpt=found[0]["excerpt"])
+        return screened
+
+    def _injection_flags(self) -> list[str]:
+        """Plain-language flags for need.preferences.injection_flags (read by trust's policy)."""
+        seen, out = set(), []
+        for f in self.injections:
+            key = (f.get("product_id"), f.get("field", "").rsplit(".", 1)[-1])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(f"{f.get('product_id') or f.get('tool')} {key[1]}: {', '.join(f.get('reasons') or [])}")
+        return out
 
     def _after(self, name: str, args: dict, result: Any) -> Any:
         if not isinstance(result, dict):
@@ -513,7 +554,7 @@ class BuyerAgent:
             "approved_by": (self.order or {}).get("approved_by"),
             "approval_note": (self.order or {}).get("approval_note"),
             "drift_hold": self.drift,
-            "injections_flagged": self.injections,
+            "injections_flagged": self._injection_flags(),
             "agent_final_text": agent_text,
             "audit_report_link": self._audit_link(),
         }

@@ -208,6 +208,26 @@ def test_one_order_per_run_and_reject_blocks_retry():
     assert any(s.kind == "tool_call" and "blocked" in s.title for s in agent.steps)
 
 
+def test_quote_lines_always_equal_plan_lines():
+    gw = FakeGateway()
+
+    class Model(ScriptedModel):  # the model "simplifies" the plan to a round 120 units
+        def __call__(self, feature, model, contents, config):
+            r = super().__call__(feature, model, contents, config)
+            fc = r.candidates[0].content.parts[0].function_call
+            if fc and fc.name == "create_quote":
+                fc.args["lines"] = [{"product_id": "464306", "qty_sales_units": 120}]
+            return r
+
+    _approve_soon(gw)
+    agent = _agent(gw, Model())
+    r = agent.run(HERO)
+    plan_lines = [(l["product_id"], l["qty_sales_units"]) for l in r["plan"]["lines"]]
+    quoted = [(l["product_id"], l["qty_sales_units"]) for l in r["quote"]["lines"]]
+    assert quoted == plan_lines == [("464306", 1000)]
+    assert any(s.kind == "thought" and "corrected to the planner" in s.title for s in agent.steps)
+
+
 def test_drift_holds_order():
     gw = FakeGateway()
     agent = _agent(gw, ScriptedModel())

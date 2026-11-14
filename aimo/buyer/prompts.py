@@ -42,8 +42,10 @@ Work through the gateway tools:
    you can see prices, stock, logistic model and order cut-offs.
 3. plan_need with the structured need above. The planner ranks good-better-best substitutes and
    splits quantities across lines when stock is partial.
-4. Decide the lines (normally the plan's lines; never add a rejected candidate) and call
-   create_quote with delivery_date {delivery_by}.
+4. Review the plan, then call create_quote with delivery_date {delivery_by} and EXACTLY the plan's
+   lines (same product_id and qty_sales_units). Quantities come from the deterministic planner,
+   never from you; the system enforces this. If the plan has no lines, do not quote: report the
+   shortfall and the reasons.
 5. place_order with the quote_id and quote_hash you got back. The gateway applies the policy.
    If the order is pending approval, the system waits for the human and then tells you the outcome.
 6. Finish with a short plain-text answer for the buyer: what was ordered (or not) and why."""

@@ -31,7 +31,8 @@ SCENARIOS: dict[str, dict[str, str]] = {
     "drift": {"customer": "hotel-aurora", "fake": "happy",
               "text": "Standing order for next week: 4,000 litres of lactose-free milk by Monday."},
     "event": {"customer": "hotel-aurora", "fake": "happy",
-              "text": "Conference dinner for 150 tomorrow evening: we need 40 L cream and 20 kg butter, lactose-free."},
+              # Sunday delivery is impossible in the live data (all cut-offs passed); Monday's cut-off is Sun 17:00.
+              "text": "Last-minute conference dinner for 150 on Monday evening: we need 40 L cream and 20 kg butter, lactose-free."},
 }
 
 # ---------------------------------------------------------------- pretty printing
