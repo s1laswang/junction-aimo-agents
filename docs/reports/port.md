@@ -1,5 +1,29 @@
 # Port report: Momin's junction26-valio → junction-aimo-agents
 
+## Swarm D (openness / conformance), Sat ~19:30: done
+- **Conformance suite** in `conformance/`. Run it with `uv run python -m conformance --base <url> [--query ...] [--json out.json]`.
+  - It covers 43 checks: otap.json, JWKS (Ed25519, RFC 7638 kid), OpenAPI paths, MCP tools/list names and schemas, and that there is no approval tool.
+  - It verifies the quote JWS and hash binding with its own crypto code, never `aimo`'s, and a tampered quote must fail.
+  - Orders: a wrong hash gets 409, an intruder agent and another customer get 403, and the policy decision must come with plain-language hits.
+  - Approvals: escalation to approval, an agent can't approve (403), a wrong hash on the approval gets 409, and a human approval places the order. Peppol AP/CA/RE codes are checked.
+  - Audit: /v1/audit/verify plus an independent re-hash and signature check of the full chain from genesis.
+  - It prints a table, writes JSON, and exits with the number of FAILs.
+  - Results: **Valio gateway 43/43, Nordic Bakery Supply 43/43** (reports in `docs/openness/`).
+- **Second wholesaler** in `toywholesaler/`: "Nordic Bakery Supply", with 30 synthetic products, its own Ed25519 key, state DB, audit chain and policies.
+  - It reuses the aimo gateway, trust and catalog unchanged, with a static `BackendClient` and the product data in the same JSON shape.
+  - It runs offline. `tests/test_openness.py` boots it and runs conformance (4 tests).
+- **Zero-code agent run:** the Gemini buyer ordered 40 kg rye bread from Nordic over MCP using only `--base-url`.
+  - Nordic's own policy gave needs_approval; anna approved and the order was placed.
+  - Log: `docs/openness/buyer-run-nordic-bakery.log`.
+- **Offline verifier** `scripts/verify_quote.py` (about 30 lines, cryptography only). It handles a quote, an evidence pack or a list of events, and takes keys only from the JWKS you pass. A Nordic quote fails against Valio's JWKS.
+- **Docs:** `docs/OPENNESS.md` is new, and `docs/SCENARIOS.md` has a new openness section. The Dockerfile now also copies conformance/ and toywholesaler/.
+- **Portability gaps for the owners** (listed in OPENNESS.md; not fixed, not my files):
+  - Offer provenance has `source: "valio-aimo-mock-api"` hard-coded (`backend/client.py`).
+  - "signed by Valio Aimo" in `trust/policy.py:197`, and "Valio Aimo issued…" / "placed with Valio Aimo" in `trust/approvals.py`.
+  - The buyer profile seeds Valio ids.
+- The quote-poisoning finding below was fixed on main by gateway round 4 ("only the quoting agent may submit"). Conformance O2 and O5 now test it.
+
+
 Branch `team/port`. Last updated Sat 14 Nov, around 19:00 Helsinki. Merged origin/main at d2fe641 and later. **Items 1–5 are done.** Full pytest: 155 passed, 1 skipped (the live wrapper). Scenarios: **8/8 PASS against the live mock API.**
 
 Source: a read-only snapshot of Momin's `junction26-valio` (branch dev, 75dbbed) at `/tmp/momin-review/junction26-valio`. Nothing on his side was touched. Every ported file credits him in its header, and the recipe and seller payloads say so in `provenance`.

@@ -1,0 +1,92 @@
+# Hotel Aurora's purchasing policy AT NORDIC BAKERY SUPPLY (synthetic second wholesaler, openness demo).
+# Same customer and agent as at Valio Aimo, different supplier, different limits: the policy travels with the
+# supplier relationship. Evaluated by the unchanged aimo.trust.policy engine.
+policy_id: hotel-aurora
+version: "1.0.0-nbs"
+effective_from: "2026-11-01"
+customer:
+  id: hotel-aurora
+  name: Hotel Aurora Helsinki
+  segment: hotel
+  description: 180-room city hotel; breakfast bread and the restaurant's bread basket from Nordic Bakery Supply.
+
+approver_roles: [procurement_manager]
+override_roles: [general_manager]
+approvers:
+  - {id: anna@hotel-aurora.example, name: Anna Virtanen, role: procurement_manager}
+  - {id: mikko@hotel-aurora.example, name: Mikko Laine, role: general_manager}
+
+agents:
+  - agent_id: hotel-aurora/buyer-1
+    label: Gemini purchasing agent (the same agent that buys from Valio Aimo)
+    scopes: [catalog:read, quote:create, order:submit]
+
+preferred_products:
+  - {product_id: "NB1001", label: Rye bread 500 g sliced}
+approved_alternatives:
+  - {product_id: "NB1002", tier: best, for: "NB1001", label: Rye bread 1 kg whole loaf (same bread, bigger loaf)}
+
+standing_orders:
+  - id: rye_bread
+    label: rye bread
+    keywords: [rye, ruis, bread, leipä]
+    weekly_qty: 60
+    unit: KG
+
+rules:
+  - id: mandate_scope
+    type: scope
+    required_scopes: [order:submit]
+
+  - id: quote_freshness
+    type: quote_freshness
+
+  - id: spend
+    type: spend_threshold
+    auto_max: 300
+    approval_max: 3000
+    approver_role: procurement_manager
+
+  - id: weekly_budget
+    type: period_spend
+    period_days: 7
+    limit: 2000
+    outcome: needs_approval
+    approver_role: procurement_manager
+
+  - id: category_scope
+    type: category_scope
+    allowed:
+      - {prefix: "B1", label: bread and pastry}
+      - {prefix: "B2", label: flour and baking}
+    on_violation: needs_approval
+    on_unknown: needs_approval
+    approver_role: procurement_manager
+
+  - id: substitution
+    type: substitution
+    require_claims: true
+    tiers: {preferred: allow, best: allow, better: needs_approval, good: needs_approval, rejected: reject}
+    outside_preference: needs_approval
+    unverified: needs_approval
+    approver_role: procurement_manager
+
+  - id: allergens
+    type: allergen_block
+    excluded: []
+    on_contains: reject
+    on_may_contain: reject
+    on_unknown: needs_approval
+    approver_role: procurement_manager
+
+  - id: delivery
+    type: delivery
+
+  - id: quantity_drift
+    type: quantity_drift
+    max_factor: 3
+    approver_role: procurement_manager
+
+  - id: injection
+    type: injection
+    approver_role: procurement_manager
