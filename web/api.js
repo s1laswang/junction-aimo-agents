@@ -10,22 +10,24 @@ export function createLiveApi(base) {
 
   // Human approver sign-in: approvals need X-Approver-Pin, which no agent ever receives.
   // Asked once per browser session (production: the customer's SSO).
-  const PIN_KEY = "aimoApproverPin";
-  function approverPin(forceAsk) {
-    let pin = null;
-    try { pin = forceAsk ? null : sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
-    if (!pin) {
-      pin = window.prompt("Approver sign-in: enter the approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "";
-      try { if (pin) sessionStorage.setItem(PIN_KEY, pin); } catch { /* storage blocked */ }
-    }
-    return pin;
+  // The PIN is exchanged once for a signed 8-hour session token (X-Approver-Session); the PIN itself is not stored.
+  const PIN_KEY = "aimoApproverSession";
+  async function approverSession(forceAsk) {
+    let s = null;
+    try { s = forceAsk ? null : sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
+    if (s) return s;
+    const pin = window.prompt("Approver sign-in: enter the approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "";
+    if (!pin) return "";
+    const r = await req("POST", "/v1/auth/approver-session", null, { "X-Approver-Pin": pin });
+    try { sessionStorage.setItem(PIN_KEY, r.session); } catch { /* storage blocked */ }
+    return r.session;
   }
   async function humanReq(method, path, body) {
     try {
-      return await req(method, path, body, { "X-Approver-Pin": approverPin(false) });
+      return await req(method, path, body, { "X-Approver-Session": await approverSession(false) });
     } catch (e) {
       if (e.status !== 401) throw e;
-      return req(method, path, body, { "X-Approver-Pin": approverPin(true) });  // wrong/expired PIN: ask again once
+      return req(method, path, body, { "X-Approver-Session": await approverSession(true) });  // expired: sign in again
     }
   }
 
@@ -61,9 +63,9 @@ export function createLiveApi(base) {
     },
     // approver ids are only returned to a signed-in approver: send the stored PIN if we have one (never prompts)
     customers: () => {
-      let pin = null;
-      try { pin = sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
-      return req("GET", "/v1/customers", null, pin ? { "X-Approver-Pin": pin } : {});
+      let s = null;
+      try { s = sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
+      return req("GET", "/v1/customers", null, s ? { "X-Approver-Session": s } : {});
     },
     startRun: ({ text, customer_id, model, thinking }) =>
       // `thinking` is an optional extra field (UNVERIFIED: not yet in interfaces.md); model is documented.

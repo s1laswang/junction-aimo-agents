@@ -73,21 +73,45 @@ def identity(
     return ident
 
 
-def _require_human(pin: Optional[str], subject_id: str, actor: str) -> None:
-    """Approver credential check with brute-force lockout. Audits at most MAX_FAILURES refusals per window plus
-    the lock itself, so guessing cannot flood the audit log."""
-    if human_auth.locked_for() > 0:
-        raise service.ServiceError(429, "approver_locked", "Too many wrong approver credentials; approvals are "
-                                   "locked for a few minutes.", {"retry_after": int(human_auth.locked_for()) + 1})
-    if human_auth.check_pin(pin):
+class HumanCred:
+    def __init__(self, pin: Optional[str], session: Optional[str], source: str):
+        self.pin, self.session, self.source = pin, session, source
+
+
+def human_cred(request: Request,
+               x_approver_pin: Optional[str] = Header(None, description="Human approver credential (never given to agents)"),
+               x_approver_session: Optional[str] = Header(None, description="Signed approver session from "
+                                                                            "POST /v1/auth/approver-session")) -> HumanCred:
+    return HumanCred(x_approver_pin, x_approver_session, (request.client.host if request.client else "?"))
+
+
+def _is_human(cred: HumanCred) -> bool:
+    return human_auth.check_session(cred.session) or human_auth.check_pin(cred.pin, cred.source)
+
+
+def _locked_error(cred: HumanCred) -> service.ServiceError:
+    return service.ServiceError(429, "approver_locked", "Too many wrong approver credentials from this client; try "
+                                "again in a few minutes (a signed-in approver session is not affected).",
+                                {"retry_after": int(human_auth.locked_for(cred.source)) + 1})
+
+
+def _require_human(cred: HumanCred, subject_id: str, actor: str) -> None:
+    """Session token, or approver credential with a per-source brute-force lockout. Audits at most MAX_FAILURES
+    refusals per source and window plus the lock itself, so guessing cannot flood the audit log or lock out the
+    real (signed-in) approver."""
+    if human_auth.check_session(cred.session):
         return
-    if human_auth.locked_for() > 0:  # this attempt triggered the lock
-        service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials; "
-                                                 f"approvals locked for {int(human_auth.LOCK_S)} s")
-        raise service.ServiceError(429, "approver_locked", "Too many wrong approver credentials; approvals are "
-                                   "locked for a few minutes.", {"retry_after": int(human_auth.locked_for()) + 1})
-    service.audit_refusal(subject_id, actor, "wrong approver credential" if pin else "missing approver credential")
-    raise service.ServiceError(401, "approver_auth_required", "Approval needs a signed-in human approver (X-Approver-Pin).")
+    if human_auth.locked_for(cred.source) > 0:
+        raise _locked_error(cred)
+    if human_auth.check_pin(cred.pin, cred.source):
+        return
+    if human_auth.locked_for(cred.source) > 0:  # this attempt triggered the lock
+        service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials from one "
+                                                 f"client; that client is locked for {int(human_auth.LOCK_S)} s")
+        raise _locked_error(cred)
+    service.audit_refusal(subject_id, actor, "wrong approver credential" if cred.pin else "missing approver credential")
+    raise service.ServiceError(401, "approver_auth_required",
+                               "Approval needs a signed-in human approver (X-Approver-Session or X-Approver-Pin).")
 
 
 def strict_identity(
@@ -257,11 +281,11 @@ def build_router() -> APIRouter:
         status: Optional[str] = Query("pending", description="pending | placed | rejected | expired | all"),
         customer_id: Optional[str] = Query(None),
         x_customer_id: Optional[str] = Header(None),
-        x_approver_pin: Optional[str] = Header(None, description="Human approver credential (never given to agents)"),
+        cred: HumanCred = Depends(human_cred),
     ) -> list[dict[str, Any]]:
         """Orders with their exact quote and policy decision: `[{order, quote, decision, expired, approvals}]`.
-        A signed-in human approver (X-Approver-Pin) sees the inbox; an agent sees only its own customer's orders."""
-        if human_auth.check_pin(x_approver_pin):
+        A signed-in human approver sees the inbox; an agent sees only its own customer's orders."""
+        if _is_human(cred):
             return service.list_approvals(status, customer_id)
         if not x_customer_id:
             raise service.ServiceError(401, "identity_required",
@@ -274,8 +298,9 @@ def build_router() -> APIRouter:
             response_model=Order, responses=ERR)
     def decide(order_id: str, body: DecisionRequest,
                x_agent_id: Optional[str] = Header(None),
-               x_approver_pin: Optional[str] = Header(None, description="Human approver credential (never given to agents)")):
-        """Human decision. Requires `X-Approver-Pin`; any request carrying agent identity (`X-Agent-Id`) is refused,
+               cred: HumanCred = Depends(human_cred)):
+        """Human decision. Requires a signed-in approver (`X-Approver-Session` from POST /v1/auth/approver-session,
+        or `X-Approver-Pin`); any request carrying agent identity (`X-Agent-Id`) is refused,
         and the approver must be a human in the order customer's directory with an allowed role.
         `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409 "re-quote needed".
         Approve places the order and returns the order response."""
@@ -283,7 +308,7 @@ def build_router() -> APIRouter:
             service.audit_refusal(order_id, f"agent:{x_agent_id}", "agent identity on the approval endpoint")
             raise service.ServiceError(403, "agent_cannot_approve",
                                        "Agents can never approve orders; a human approver must decide in the inbox.")
-        _require_human(x_approver_pin, order_id, f"human:{body.approver}")
+        _require_human(cred, order_id, f"human:{body.approver}")
         return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role,
                               remember=body.remember, remember_scope=body.remember_scope)
 
@@ -305,18 +330,29 @@ def build_router() -> APIRouter:
     @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
     def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
                                                                                  "'approved' to 'rejected')"),
-                    x_approver_pin: Optional[str] = Header(None)):
+                    cred: HumanCred = Depends(human_cred)):
         """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
-        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs X-Approver-Pin; 404 when AIMO_ENV=production."""
-        if not human_auth.check_pin(x_approver_pin):
-            raise service.ServiceError(401, "approver_auth_required", "Demo tamper needs X-Approver-Pin.")
+        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs a signed-in approver; 404 when
+        AIMO_ENV=production."""
+        _require_human(cred, f"audit:{seq}", "human:demo-tamper")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
-    def demo_untamper(seq: int, x_approver_pin: Optional[str] = Header(None)):
-        if not human_auth.check_pin(x_approver_pin):
-            raise service.ServiceError(401, "approver_auth_required", "Demo untamper needs X-Approver-Pin.")
+    def demo_untamper(seq: int, cred: HumanCred = Depends(human_cred)):
+        _require_human(cred, f"audit:{seq}", "human:demo-untamper")
         return service.demo_untamper(seq)
+
+    # ---------------------------------------------------------- human sign-in
+    @r.post("/v1/auth/approver-session", tags=["approvals"], summary="Human approver sign-in (returns a session token)",
+            responses=ERR)
+    def approver_session(x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
+        """Exchange the approver credential (`X-Approver-Pin`) for an 8-hour signed session token to send as
+        `X-Approver-Session`. Agents are refused. A session keeps working even if someone else triggers the
+        per-client brute-force lock."""
+        if x_agent_id:
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
+        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", "human:sign-in")
+        return human_auth.issue_session()
 
     # ---------------------------------------------------------- customers
     @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)")
@@ -327,11 +363,11 @@ def build_router() -> APIRouter:
         return service.learned_for(customer_id)
 
     @r.get("/v1/customers", tags=["customers"], summary="Demo customers and policy summaries")
-    def customers(x_approver_pin: Optional[str] = Header(None)) -> list[dict[str, Any]]:
+    def customers(cred: HumanCred = Depends(human_cred)) -> list[dict[str, Any]]:
         """Customers, mandates and plain-language policy summaries. Approver identities (ids/emails) are shown only
         to a signed-in human approver; agents see names and roles."""
         out = service.list_customers()
-        if human_auth.locked_for() == 0 and human_auth.check_pin(x_approver_pin):
+        if _is_human(cred):
             return out
         masked = []
         for c in out:
