@@ -206,7 +206,13 @@ def get_rows(ids: list[str]) -> dict[str, dict[str, Any]]:
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
         for r in con.execute(f"select * from products where id in ({','.join('?' * len(chunk))})", chunk):
-            out[r["id"]] = row_to_dict(r)
+            d = row_to_dict(r)
+            try:  # allergen contradiction sweep: structured FREE_FROM vs ingredient text -> unknown
+                from aimo.catalog.data_quality import apply as _dq
+                _dq(d)
+            except Exception:  # noqa: BLE001
+                pass
+            out[r["id"]] = d
     return out
 
 
@@ -290,7 +296,8 @@ def semantic_hits(query: str, *, claims: list[str] | None = None, category: Opti
     """Gemini-embedding recall with the same filters as FTS. [] if embeddings are not built/available."""
     try:
         from aimo.catalog.embeddings import available, semantic_search
-        if not available() or not (query or "").strip():
+        from aimo.catalog.netcheck import semantic_enabled
+        if not semantic_enabled() or not available() or not (query or "").strip():
             return []
         raw = semantic_search(query, k=k * 3)
     except Exception:  # noqa: BLE001 - embeddings are optional (no key, offline, not built)
