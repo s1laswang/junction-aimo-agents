@@ -77,6 +77,7 @@ See [Open standards](docs/STANDARDS.md) and [Trust protocol](docs/TRUST.md) for 
 - [Production path](docs/PRODUCTION.md)
 - [MCP client and Docker setup](deploy/mcp-clients.md)
 - [Public URL plan](deploy/PUBLIC_URL.md)
+- [Stage and operator runbook](deploy/RUNBOOK.md)
 - [Contract](CONTRACT.md)
 
 ## Pitch and demo
