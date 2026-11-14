@@ -37,6 +37,68 @@ def test_human_without_pin_gets_401_with_pin_places(api):
     assert r.status_code == 200 and r.json()["status"] == "placed"
 
 
+def test_pin_brute_force_locks_out(api):
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    q, o = _pending(api)
+    anon = _anon()
+    body = {"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER}
+    codes = [anon.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Approver-Pin": f"guess{i}"},
+                       json=body).status_code for i in range(7)]
+    assert codes[:4] == [401] * 4 and codes[4] == 429 and codes[5] == 429, codes
+    # the guessing client (same source) is refused even with the right PIN while locked ...
+    assert api.post(f"/v1/approvals/{o['order_id']}/decision", json=body).status_code == 429
+    human_auth.reset_for_tests()
+    assert api.post(f"/v1/approvals/{o['order_id']}/decision", json=body).status_code == 200
+
+
+def test_signed_in_approver_is_not_locked_out_by_guessers(api):
+    """No denial of service: a signed-in approver session keeps working while a guesser triggers the lock."""
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    sess = api.post("/v1/auth/approver-session", json={"approver": "anna@hotel-aurora.example"}).json()["session"]
+    assert api.post("/v1/auth/approver-session", headers={"X-Agent-Id": "buyer-1"},
+                    json={"approver": "anna@hotel-aurora.example"}).status_code == 403
+    assert api.post("/v1/auth/approver-session", json={"approver": "nobody@example.com"}).status_code == 404
+    q, o = _pending(api)
+    anon = _anon()
+    body = {"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER}
+    for i in range(6):
+        anon.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Approver-Pin": f"guess{i}"}, json=body)
+    r = anon.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Approver-Session": sess}, json=body)
+    assert r.status_code == 200 and r.json()["status"] == "placed"
+    assert anon.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Approver-Session": sess + "x"},
+                     json=body).status_code in (401, 429)
+    human_auth.reset_for_tests()
+
+
+def test_session_is_bound_to_one_approver(api):
+    """Anna's session cannot decide as someone else; the decision is recorded under the session's approver."""
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    q, o = _pending(api)
+    anon = _anon()
+    sess = api.post("/v1/auth/approver-session", json={"approver": "Anna Virtanen"}).json()
+    assert sess["approver"] == "anna@hotel-aurora.example"
+    h = {"X-Approver-Session": sess["session"]}
+    r = anon.post(f"/v1/approvals/{o['order_id']}/decision", headers=h,
+                  json={"decision": "approve", "quote_hash": q["quote_hash"], "approver": "mikko@hotel-aurora.example"})
+    assert r.status_code == 403 and r.json()["error"] == "approver_mismatch"
+    r = anon.post(f"/v1/approvals/{o['order_id']}/decision", headers=h,
+                  json={"decision": "approve", "quote_hash": q["quote_hash"]})
+    assert r.status_code == 200 and r.json()["approved_by"] == "anna@hotel-aurora.example"
+
+
+def test_approver_ids_hidden_from_agents(api):
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    for c in _anon().get("/v1/customers").json():
+        for a in c.get("approvers") or []:
+            assert "id" not in a and "@" not in str(a), a
+    full = api.get("/v1/customers").json()
+    assert any("@" in str(a.get("id", "")) for c in full for a in c.get("approvers") or [])
+
+
 def test_quotes_and_orders_need_identity_and_inbox_is_scoped(api):
     anon = _anon()
     r = anon.post("/v1/quotes", json={"delivery_date": D.isoformat(), "lines": [{"product_id": "464306", "qty_sales_units": 10}]})

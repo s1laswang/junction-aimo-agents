@@ -10,22 +10,28 @@ export function createLiveApi(base) {
 
   // Human approver sign-in: approvals need X-Approver-Pin, which no agent ever receives.
   // Asked once per browser session (production: the customer's SSO).
-  const PIN_KEY = "aimoApproverPin";
-  function approverPin(forceAsk) {
-    let pin = null;
-    try { pin = forceAsk ? null : sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
-    if (!pin) {
-      pin = window.prompt("Approver sign-in: enter the approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "";
-      try { if (pin) sessionStorage.setItem(PIN_KEY, pin); } catch { /* storage blocked */ }
-    }
-    return pin;
+  // The PIN is exchanged once for a signed 8-hour session token (X-Approver-Session); the PIN itself is not stored.
+  const PIN_KEY = "aimoApproverSession";
+  async function approverSession(forceAsk) {
+    let s = null;
+    try { s = forceAsk ? null : sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
+    if (s) return s;
+    const who = window.prompt("Approver sign-in: your name or email from the approver directory (e.g. Anna Virtanen)") || "";
+    const pin = who ? (window.prompt("Approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "") : "";
+    if (!pin) return "";
+    const r = await req("POST", "/v1/auth/approver-session", { approver: who }, { "X-Approver-Pin": pin });
+    try { sessionStorage.setItem(PIN_KEY, r.session); sessionStorage.setItem(PIN_KEY + ".who", r.approver); } catch { /* storage blocked */ }
+    return r.session;
+  }
+  function signedInApprover() {
+    try { return sessionStorage.getItem(PIN_KEY + ".who"); } catch { return null; }
   }
   async function humanReq(method, path, body) {
     try {
-      return await req(method, path, body, { "X-Approver-Pin": approverPin(false) });
+      return await req(method, path, body, { "X-Approver-Session": await approverSession(false) });
     } catch (e) {
       if (e.status !== 401) throw e;
-      return req(method, path, body, { "X-Approver-Pin": approverPin(true) });  // wrong/expired PIN: ask again once
+      return req(method, path, body, { "X-Approver-Session": await approverSession(true) });  // expired: sign in again
     }
   }
 
@@ -59,7 +65,12 @@ export function createLiveApi(base) {
       jwks: url("/.well-known/jwks.json"),
       mcp: url("/mcp"),
     },
-    customers: () => req("GET", "/v1/customers"),
+    // approver ids are only returned to a signed-in approver: send the stored PIN if we have one (never prompts)
+    customers: () => {
+      let s = null;
+      try { s = sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
+      return req("GET", "/v1/customers", null, s ? { "X-Approver-Session": s } : {});
+    },
     startRun: ({ text, customer_id, model, thinking }) =>
       // `thinking` is an optional extra field (UNVERIFIED: not yet in interfaces.md); model is documented.
       req("POST", "/v1/agent/runs", { text, customer_id, model, thinking: thinking ? String(thinking).toUpperCase() : undefined }, { "X-Customer-Id": customer_id }),
@@ -92,7 +103,13 @@ export function createLiveApi(base) {
     },
 
     approvals: (status = "pending") => humanReq("GET", `/v1/approvals?status=${encodeURIComponent(status)}`),
-    decide: (orderId, body) => humanReq("POST", `/v1/approvals/${encodeURIComponent(orderId)}/decision`, body),
+    // the session is bound to one approver: the decision is always recorded under the signed-in person
+    decide: async (orderId, body) => {
+      const r = await humanReq("POST", `/v1/approvals/${encodeURIComponent(orderId)}/decision`,
+                               { ...body, approver: signedInApprover() || "", approver_role: undefined });
+      return r;
+    },
+    signedInApprover,
     getOrder: (id) => req("GET", `/v1/orders/${encodeURIComponent(id)}`),
     getQuote: (id) => req("GET", `/v1/quotes/${encodeURIComponent(id)}`),
     audit: (subjectId) => req("GET", subjectId ? `/v1/audit?subject_id=${encodeURIComponent(subjectId)}` : "/v1/audit"),
