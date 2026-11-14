@@ -27,6 +27,8 @@ def to_product(x):
 
 @pytest.fixture(scope="module")
 def products():
+    if not os.path.exists(DATA):
+        pytest.skip("needs Valio product data")
     return {x["id"]: to_product(x) for x in json.load(open(DATA))}
 
 
@@ -113,6 +115,7 @@ def test_tradeoff_public(products, offers):
     assert "reliability" not in same
 
 
+@pytest.mark.skipif(not os.path.exists(DATA), reason="needs Valio product data")
 def test_safe_alternatives_when_milk_excluded():
     from aimo import catalog
     from aimo.substitute import safe_alternatives
@@ -128,6 +131,7 @@ def test_safe_alternatives_when_milk_excluded():
     assert safe_alternatives(NeedItem(query="milk", quantity=1, unit="l"), ["egg"]) == []
 
 
+@pytest.mark.skipif(not os.path.exists(DATA), reason="needs Valio product data")
 @pytest.mark.parametrize("query,must", [("whipping cream", "kuohukerma"), ("butter", "voi"), ("carrots", "porkkana"), ("cucumber", "kurkku")])
 def test_top_match_is_the_product_asked(query, must):
     from aimo import catalog
@@ -138,6 +142,7 @@ def test_top_match_is_the_product_asked(query, must):
     assert must in top.name.lower() and match_score(item, top) >= 0.5, top.name
 
 
+@pytest.mark.skipif(not os.path.exists(DATA), reason="needs Valio product data")
 def test_mince_top_is_jauheliha():
     from aimo import catalog
 
@@ -146,6 +151,7 @@ def test_mince_top_is_jauheliha():
     assert "jauheliha" in top.name.lower(), top.name
 
 
+@pytest.mark.skipif(not os.path.exists(DATA), reason="needs Valio product data")
 def test_oat_drink_requires_oat():
     from aimo import catalog
 
@@ -154,3 +160,142 @@ def test_oat_drink_requires_oat():
     assert re.search(r"oat|kaura", top.name.lower()), top.name
     prot = next(p for p in catalog.search("protein drink", Constraint(), limit=50) if "PROTEINDRINK" in p.name.upper())
     assert match_score(item, prot) < 0.5
+
+
+def _offer(
+    pid,
+    name,
+    price,
+    size_l=1.0,
+    category="10400",
+    allergens=None,
+    labels=None,
+    available=100.0,
+    sales_block=None,
+    reliability=0.95,
+    co2=1.1,
+    sales_unit="ST",
+):
+    p = Product(
+        product_id=pid,
+        name=name,
+        category=category,
+        sales_unit=sales_unit,
+        unit_size=UnitSize(value=size_l, unit="l"),
+        allergens=allergens if allergens is not None else ["milk"],
+        labels=labels if labels is not None else ["free_from_lactose"],
+    )
+    return Offer(
+        product_id=pid,
+        product=p,
+        units_needed=10,
+        unit_price_net=price,
+        total_net=price * 10,
+        total_gross=price * 10,
+        available_amount=available,
+        sales_block=sales_block,
+        reliability=reliability,
+        co2_per_kg=co2,
+    )
+
+
+def test_offline_allergen_safe():
+    lf_label = Product(product_id="lf1", name="Semi-skimmed milk", allergens=["milk"], labels=["free_from_lactose"])
+    lf_name = Product(product_id="lf2", name="Laktoositon kevytmaito", allergens=["milk"])
+    reg_milk = Product(product_id="m1", name="Semi-skimmed milk", allergens=["milk"])
+    assert allergen_safe(lf_label, Constraint(lactose_free=True), [])
+    assert allergen_safe(lf_name, Constraint(lactose_free=True), ["lactose"])
+    assert not allergen_safe(reg_milk, Constraint(lactose_free=True), [])
+    assert not allergen_safe(lf_label, Constraint(lactose_free=True), ["milk"])
+
+    gf_label = Product(product_id="gf1", name="Oat bread", allergens=["oats"], labels=["free_from_gluten"])
+    gf_name = Product(product_id="gf2", name="Gluten-free roll", allergens=["egg"])
+    gf_wheat = Product(product_id="gf3", name="Gluten-free wheat mix", allergens=["wheat"], labels=["free_from_gluten"])
+    reg_oat = Product(product_id="gf4", name="Oat bread", allergens=["oats"])
+    assert allergen_safe(gf_label, Constraint(gluten_free=True), [])
+    assert allergen_safe(gf_name, Constraint(gluten_free=True), [])
+    assert not allergen_safe(gf_wheat, Constraint(gluten_free=True), [])
+    assert not allergen_safe(reg_oat, Constraint(gluten_free=True), [])
+
+    trace = Product(product_id="tr1", name="Seed bread", allergens=["oats", "may_contain:sesame"])
+    assert not allergen_safe(trace, Constraint(), ["sesame"])
+    assert not allergen_safe(trace, Constraint(exclude_allergens=["sesame"]), [])
+    assert allergen_safe(trace, Constraint(), ["egg"])
+
+    peanut_p = Product(product_id="n1", name="Satay sauce", allergens=["peanuts"])
+    treenut_p = Product(product_id="n2", name="Granola", allergens=["tree nuts"])
+    trace_nut = Product(product_id="n3", name="Muesli", allergens=["may_contain:tree nuts"])
+    soy_p = Product(product_id="n4", name="Tofu", allergens=["soy"])
+    assert not allergen_safe(peanut_p, Constraint(), ["nuts"])
+    assert not allergen_safe(treenut_p, Constraint(), ["nuts"])
+    assert not allergen_safe(trace_nut, Constraint(), ["nuts"])
+    assert allergen_safe(soy_p, Constraint(), ["nuts"])
+
+    no_meta = Product(product_id="nm1", name="Lactose-free gluten-free water")
+    assert allergen_safe(no_meta, Constraint(), [])
+    assert not allergen_safe(no_meta, Constraint(lactose_free=True), [])
+    assert not allergen_safe(no_meta, Constraint(gluten_free=True), [])
+    assert not allergen_safe(no_meta, Constraint(), ["egg"])
+
+    assert not allergen_safe(lf_label, Constraint(), ["unknownium"])
+    assert not allergen_safe(lf_label, Constraint(exclude_allergens=["mystery_allergen"]), [])
+
+
+def test_offline_match_score():
+    plain_en = Product(product_id="p1", name="Valio lactose free semi-skimmed milk 1 l", category="10400")
+    plain_fi = Product(product_id="p2", name="Valio kevytmaito laktoositon 1 l", category="10400")
+    assert match_score(MILK, plain_en) >= 0.8
+    assert match_score(MILK, plain_fi) >= 0.8
+
+    choc = Product(product_id="c1", name="Valio chocolate milk lactose free 1 l", category="10400")
+    prot = Product(product_id="c2", name="Valio vanilla protein milk 250 ml", category="10400")
+    prot_plain = Product(product_id="c3", name="Valio protein milk 1 l", category="10405")
+    coffee = Product(product_id="c4", name="Valio coffee milk latte 250 ml", category="10400")
+    for bad in (choc, prot, prot_plain, coffee):
+        assert match_score(MILK, bad) <= 0.3, bad.name
+
+    portion_pack = Product(product_id="pp1", name="Valio lactose free milk 100 x 2 cl", category="10400")
+    portion_word = Product(product_id="pp2", name="Valio portion milk lactose free", category="10400")
+    assert match_score(MILK, portion_pack) < 0.5
+    assert match_score(MILK, portion_pack) < match_score(MILK, plain_en)
+    assert match_score(MILK, portion_word) < match_score(MILK, plain_en)
+
+
+def test_offline_rank_substitutes():
+    orig = _offer("orig", "Valio lactose free milk 1 l", price=1.50, size_l=1.0, reliability=0.96)
+    good = _offer("good1", "Valio lactose free semi-skimmed milk bag 10 l", price=11.00, size_l=10.0, reliability=0.85)
+    better = _offer("bet1", "Valio lactose free milk carton 1 l", price=1.30, size_l=1.0, reliability=0.99)
+    best = _offer("best1", "Valio milk lactose free", price=1.60, size_l=1.0, reliability=1.0)
+    blocked = _offer("blk", "Valio lactose free milk 1 l", price=0.90, sales_block="STOP")
+    zero = _offer("zero", "Valio lactose free milk 1 l", price=0.80, available=0)
+    neg = _offer("neg", "Valio lactose free milk 1 l", price=0.70, available=-3)
+    unsafe_lf = _offer("ulf", "Valio regular milk 1 l", price=0.60, labels=[])
+    unsafe_soy = _offer("usoy", "Valio lactose free milk 1 l", price=0.50, allergens=["milk", "soy"])
+
+    pool = [orig, blocked, zero, neg, unsafe_lf, unsafe_soy, good, better, best]
+    res = rank_substitutes(MILK, pool, ["soy"], original=orig.product)
+    assert [o.tier for o in res] == ["good", "better", "best"]
+    assert [o.product_id for o in res] == ["good1", "bet1", "best1"]
+    assert {"orig", "blk", "zero", "neg", "ulf", "usoy"}.isdisjoint({o.product_id for o in res})
+    assert all(o.notes and "\n" not in o.notes[0] for o in res)
+    assert rank_substitutes(MILK, pool, ["milk"], original=orig.product) == []
+
+
+def test_offline_tradeoff():
+    base = _offer("b1", "Valio lactose free milk 1 l", price=2.00, size_l=1.0, reliability=0.95, co2=1.2, sales_unit="PRK")
+    alt = _offer("b2", "Valio lactose free milk 10 l", price=15.00, size_l=10.0, reliability=0.99, co2=1.05, sales_unit="ST")
+    line = tradeoff(alt, base)
+    assert "\n" not in line
+    assert "25% cheaper per l" in line
+    assert "10 l packs instead of 1 l packs" in line
+    assert "reliability 0.99 vs 0.95" in line
+    assert "CO2 1.05 vs 1.2 kg/kg" in line
+
+    rev = tradeoff(base, alt)
+    assert "\n" not in rev
+    assert "33% pricier per l" in rev
+    assert "1 l packs instead of 10 l packs" in rev
+
+    same = tradeoff(base, base)
+    assert "\n" not in same
+    assert same == "same price per l"
