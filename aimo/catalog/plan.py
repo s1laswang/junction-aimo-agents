@@ -10,11 +10,31 @@ import math
 import os
 from typing import Any, Callable, Optional
 
-from aimo.catalog.textsearch import fts_search, get_rows, _con
+from aimo.catalog.allergens import blocking
+from aimo.catalog.textsearch import clean_query, fts_search, get_rows, parse_query, _con
 from aimo.catalog.substitution import TIER_ORDER, rank_substitutes
 from aimo.models import Candidate, Need, Offer, Plan, PlanLine
 
 MAX_OFFER_IDS = 30
+
+
+def effective_query(need: Need) -> tuple[str, str]:
+    """(search query, source). need.product_query wins; allergen-exclusion mentions are stripped
+    (they must never feed search or product-type inference). need.raw_text is only a weak
+    fallback when the product_query yields nothing searchable (e.g. a mis-parsed 'by Wednesday')."""
+    q1 = clean_query(need.product_query)
+    if parse_query(q1) and fts_search(q1, claims=need.required_claims, limit=1):
+        return q1, "product_query"
+    if need.raw_text:
+        q2 = clean_query(need.raw_text)
+        if parse_query(q2) and fts_search(q2, claims=need.required_claims, limit=1):
+            return " ".join(c for c, _ in parse_query(q2)), "raw_text"   # 'oat drink', not the whole sentence
+    return q1 or need.product_query, "product_query"
+
+
+def with_effective_query(need: Need) -> tuple[Need, str]:
+    q, src = effective_query(need)
+    return (need if q == need.product_query else need.model_copy(update={"product_query": q})), src
 
 
 def find_candidates(need: Need, pool: int = 80) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
@@ -24,6 +44,10 @@ def find_candidates(need: Need, pool: int = 80) -> tuple[dict[str, dict[str, Any
     rel: dict[str, float] = {}
     for pid, s in fts_search(need.product_query, claims=need.required_claims, content_unit=None, limit=pool):
         rel[pid] = s
+    if need.excluded_allergens:  # make sure allergen-safe products (structured 'free') are in the pool
+        for pid, s in fts_search(need.product_query, claims=need.required_claims, free_of=need.excluded_allergens,
+                                 limit=pool):
+            rel[pid] = max(rel.get(pid, -1e9), s) + 2.0
     pref_rows = get_rows(list(need.preferred_product_ids))
     con = _con()
     cats = {r.get("category") for r in pref_rows.values() if r.get("category")}
@@ -54,7 +78,9 @@ def find_candidates(need: Need, pool: int = 80) -> tuple[dict[str, dict[str, Any
 def _static_priority(need: Need, d: dict[str, Any], rel: float) -> tuple:
     ok_claims = set(need.required_claims) <= set(d.get("claims") or [])
     ok_unit = d.get("content_unit") == need.unit
-    return (0 if d["id"] in need.preferred_product_ids else 1, 0 if (ok_claims and ok_unit) else 1, -rel)
+    safe = not blocking(d.get("allergens") or {}, need.excluded_allergens)
+    return (0 if d["id"] in need.preferred_product_ids else 1, 0 if (ok_claims and ok_unit) else 1,
+            0 if safe else 1, -rel)
 
 
 def _round_lot(units: float, lot: Optional[float], up: bool = True) -> float:
@@ -71,6 +97,8 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
               limit: int = 12) -> Plan:
     if offers_fn is None:
         from aimo.catalog.offers import get_offers as offers_fn  # type: ignore[no-redef]
+    original = need
+    need, qsrc = with_effective_query(need)
     rows, rel = find_candidates(need)
     order = sorted(rows.values(), key=lambda d: _static_priority(need, d, rel.get(d["id"], 0)))
     top_ids = [d["id"] for d in order[:MAX_OFFER_IDS]]
@@ -89,11 +117,79 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
                     hints[pid] = h
         except Exception:  # noqa: BLE001
             pass
-    cands = rank_substitutes(need, offers, limit=limit, rows=shortlist, relevance=rel, inferred_allergens=hints)
+    full = rank_substitutes(need, offers, limit=200, rows=shortlist, relevance=rel, inferred_allergens=hints)
+    cands = _trim(full, limit)
     plan = fill(need, cands)
+    notes = []
+    if need.product_query != original.product_query:
+        notes.append(f"Searched the catalog for '{need.product_query}'"
+                     + (" (taken from the request text because the parsed product phrase found nothing)"
+                        if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
+                        " enforced as exclusions, not searched for)") + ".")
+    advice = shortfall_advice(need, plan, full)
+    plan = plan.model_copy(update={"need": original,
+                                   "explanation": " ".join([*notes, plan.explanation, *advice]).strip()})
     if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
-        _recipe_checks(need, plan)
+        _recipe_checks(original, plan)
     return plan
+
+
+def _trim(full: list[Candidate], limit: int) -> list[Candidate]:
+    out, n_ok, n_rej = [], 0, 0
+    for c in full:
+        if c.tier == "rejected":
+            if n_rej >= max(6, limit // 2):
+                continue
+            n_rej += 1
+        else:
+            if n_ok >= limit:
+                continue
+            n_ok += 1
+        out.append(c)
+    return out
+
+
+def shortfall_advice(need: Need, plan: Plan, full: list[Candidate]) -> list[str]:
+    """When the plan does not cover the need, say why in numbers and what a human can do."""
+    if plan.shortfall <= 1e-9:
+        return []
+    rej = [c for c in full if c.tier == "rejected"]
+    excl = sorted(set(need.excluded_allergens))
+
+    def first(c: Candidate) -> str:
+        return c.reasons[0] if c.reasons else ""
+
+    n_cut = sum(1 for c in rej if "cutoff_passed" in c.flags)
+    n_unav = sum(1 for c in rej if "unavailable" in c.flags or "sales_block" in c.flags)
+    n_unknown = sum(1 for c in rej if "allergen_unknown" in c.flags)
+    n_contains = sum(1 for c in rej if "contain per supplier data" in first(c) or "contains per supplier data" in first(c))
+    n_claim = sum(1 for c in rej if "missing required claim" in first(c))
+    out = [f"Why not covered: {len(full)} candidates evaluated, {len(full) - len(rej)} orderable"
+           + (f" (covering {plan.covered_amount:g} {need.unit})" if plan.lines else "") + "."]
+    bits = []
+    if n_contains:
+        bits.append(f"{n_contains} contain or may contain {', '.join(excl)} per supplier data")
+    if n_unknown:
+        bits.append(f"{n_unknown} have no structured allergen data for {', '.join(excl)} (unknown is never treated as safe)")
+    if n_cut:
+        bits.append(f"{n_cut} missed the order cut-off for {need.delivery_by:%a %d %b}")
+    if n_unav:
+        bits.append(f"{n_unav} are not available or sales-blocked for that date")
+    if n_claim:
+        bits.append(f"{n_claim} lack the required claim(s) {', '.join(need.required_claims)}")
+    if bits:
+        out.append("Rejected: " + "; ".join(bits) + ".")
+    actions = []
+    if n_cut or n_unav:
+        actions.append("re-plan for a later delivery date (cut-off-blocked products become orderable)")
+    if n_unknown:
+        actions.append("have a qualified person confirm allergen status from the label for the 'unknown' candidates "
+                       "(Gemini ingredient hints are shown in their reasons)")
+    if plan.lines:
+        actions.append(f"accept the partial plan and source the remaining {plan.shortfall:g} {need.unit} separately")
+    actions.append("broaden the product phrase or relax a non-safety preference")
+    out.append("What a human can do: " + "; ".join(actions) + ".")
+    return out
 
 
 def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:

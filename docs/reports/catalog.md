@@ -107,6 +107,18 @@ Coverage: 9,978 products have some structured allergen data. 7,568 have none, so
 - `plan_need(need, offers_fn=None)` takes an optional injected offers function `(ids, date, customer_id=...) -> dict[str, Offer]`.
 - An `UpstreamError` from `aimo.backend.get_offers` propagates out of `plan_need`, so the gateway can return a 503. The catalog does not swallow it.
 
+## Round 2 (Sat evening): allergen text and query robustness
+- **Buyer bug fixed: the school allergen scenario returned an empty plan.** The cause was the planner's product-type guess, not raw_text itself.
+  - The catalog never reads raw_text for types. But when a query carried allergy words ("milk-free oat drink", "oat drink, pupils have milk and nut allergies"), or the buyer's regex fallback produced a junk phrase ("by Wednesday"), the "milk" mention became the reference product type. Every oat drink was then rejected as "different product type".
+  - Fix 1: `textsearch.clean_query()` strips allergy clauses and exclusion mentions ("X allergy", "allergic to", "no X", "without X", "X-free", "maidoton", coeliac) before search and before any type inference. Gluten-free and lactose-free stay in the query because they are positive claims that appear in product names. Safety is enforced only through `excluded_allergens`.
+  - Fix 2: `plan.effective_query()` prefers the cleaned `product_query`. It falls back to the cleaned `raw_text` (reduced to concepts) only when the product phrase finds nothing. The explanation says which one was used, and `Plan.need` is returned unchanged.
+  - Fix 3: when there is no usual product, the guessed reference is now the most relevant candidate that itself passes the claims, allergen and unit checks. A product-type mismatch against a guessed reference demotes the candidate to "good" with a note. It is rejected only when the reference is the customer's real usual product.
+- **Hospital gluten-free.** When allergens are excluded, the candidate pool now also includes allergen-safe matches (FTS filtered on structured `free`), and safe products are ranked first for live offers.
+  - "bread", "pasta", "gluten free bread" and "gluten-free pasta" with gluten excluded each give an orderable, structurally gluten-free line, for example Fria white bread 467032 and SamMills penne 462324.
+  - Before this fix, "bread" returned nothing and "pasta" picked "Pasta Filata Mozzarella".
+- **Shortfall explanation.** When the need is not covered, the explanation adds counts per rejection cause (contains the allergen, unknown allergen data, cut-off missed, unavailable, missing claim). It also lists actions a human can take: re-plan for a later date, have a qualified person confirm allergen status from the label, accept the partial plan, or broaden the phrase.
+- New tests: `test_clean_query_strips_allergen_mentions`, `test_school_oat_drink_with_allergy_text` (4 variants of the product phrase, all with the CEO's raw_text), `test_hospital_gluten_free_bread_and_pasta` (3 variants) and `test_shortfall_explanation_is_actionable`. They run offline with a fake offers function and no semantic recall. The catalog has 31 tests, and the full suite passes 99 tests.
+
 ## Gemini (verified live, all calls logged through aimo.gemini to data/gemini/ledger)
 - **(a) Embeddings** (`aimo/catalog/embeddings.py`): `gemini-embedding-2`, 768 dimensions, over the en and fi name, brand, the first 200 characters of ingredients and the free-from claims.
   - All 17,546 products took 44 s: 176 calls of 100 texts, 8 concurrent.
