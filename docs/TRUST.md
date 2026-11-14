@@ -15,7 +15,7 @@ An outside agent never gets a bare price. It gets a signed commitment, acts insi
 - `valid_until` is computed from the Valio order cutoff (`closingTime`, the day before delivery in `Europe/Helsinki`).
 - `place_order` (`POST /v1/orders`) verifies the signature with the algorithm pinned to `EdDSA`, checks `quote_id`, `customer`, `agent_id`, and `valid_until`, and atomically sets `used_at` so a quote can only be redeemed once. Failed redemptions create no order and write `order.rejected` to the audit log.
 - Key rotation (`python -m aimo.keys rotate`) moves the previous public key to `retired-<kid>.json` and keeps publishing it in `/.well-known/jwks.json`, so pre-rotation quotes remain verifiable and redeemable. Anyone can verify a quote offline with the public keys; see [STANDARDS](STANDARDS.md).
-- Quote errors return HTTP 409 with `code` and `text`: `BAD_SIGNATURE`, `QUOTE_MISMATCH`, `WRONG_AGENT`, `QUOTE_EXPIRED`, `QUOTE_USED`, `UNKNOWN_QUOTE`, and `INVALID_QUOTE` (for example a delivery date in the past). Request lines with `quantity <= 0` are rejected at schema validation with HTTP 422.
+- Quote errors return HTTP 409 with `code` and `text`: `BAD_SIGNATURE`, `QUOTE_MISMATCH`, `WRONG_AGENT`, `QUOTE_EXPIRED`, `QUOTE_USED`, `UNKNOWN_QUOTE`, `OUT_OF_STOCK` (requested quantity exceeds available stock or product is sales-blocked), and `INVALID_QUOTE` (for example a delivery date in the past). Request lines with `quantity <= 0` are rejected at schema validation with HTTP 422.
 
 ## Policy decisions
 
