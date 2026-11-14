@@ -157,7 +157,7 @@ def _priced(customer: str, day: date, item: NeedItem, products: list[Product], s
     return offers
 
 
-def _item(need: Need, item: NeedItem, mandate: Mandate | None, now: datetime | None = None) -> OfferGroup:
+def _item(need: Need, item: NeedItem, mandate: Mandate | None, now: datetime | None = None, _allow_swap: bool = True) -> OfferGroup:
     catalog, subst, allocate = _mod("catalog"), _mod("substitute"), _mod("allocate")
     excl = list(dict.fromkeys([*item.constraints.exclude_allergens, *(mandate.exclude_allergens if mandate else [])]))
     c = item.constraints.model_copy(update={"exclude_allergens": excl})
@@ -198,9 +198,12 @@ def _item(need: Need, item: NeedItem, mandate: Mandate | None, now: datetime | N
             x.substitute_for = original.product_id
             x.notes.insert(0, subst.tradeoff(x, base))
             chosen.append(x)
-    if shortfall > 1e-9 and subst:
+    if shortfall > 1e-9 and remaining > 1e-9 and subst and _allow_swap:
+        norm = " ".join(item.query.lower().replace("-", " ").split())
         for alt, why in subst.safe_alternatives(item, excl):
-            g = _item(need, alt.model_copy(update={"quantity": alt.quantity * remaining / item.quantity}), mandate, now)
+            if " ".join(alt.query.lower().replace("-", " ").split()) == norm:
+                continue
+            g = _item(need, alt.model_copy(update={"quantity": alt.quantity * remaining / item.quantity}), mandate, now, _allow_swap=False)
             if g.offers:
                 for x in g.offers:
                     x.tier = "good"

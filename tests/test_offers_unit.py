@@ -574,3 +574,118 @@ def test_quotes_route_returns_409_on_simulated_stockout(monkeypatch, future_day)
     assert resp.json() == {"code": "OUT_OF_STOCK", "text": "Insufficient stock for product p1."}
 
 
+def test_get_offers_zero_stock_lactose_free_milk_no_recursion_error(monkeypatch, future_day):
+    p1 = _milk_product("p1", "Lactose free milk 1L")
+    p2 = _milk_product("p2", "Lactose free milk 1L organic")
+    p_oat = Product(
+        product_id="p_oat",
+        name="Oat drink 1L",
+        brand="Oddlygood",
+        category="10400",
+        sales_unit="ST",
+        unit_size=UnitSize(value=1.0, unit="l"),
+        allergens=["oats"],
+        labels=["vegan", "free_from_lactose"],
+    )
+    _wire(
+        monkeypatch,
+        [p1, p2, p_oat],
+        {
+            "p1": _price_entry("p1", 1.20),
+            "p2": _price_entry("p2", 1.35),
+            "p_oat": _price_entry("p_oat", 1.60),
+        },
+        {
+            "p1": _avail_entry("p1", future_day, 0.0),
+            "p2": _avail_entry("p2", future_day, 0.0),
+            "p_oat": _avail_entry("p_oat", future_day, 0.0),
+        },
+    )
+    now = datetime.combine(future_day - timedelta(days=3), time(9, 0), tzinfo=offers.HEL)
+    for q in ("lactose-free milk", "lactose free milk"):
+        need = Need(
+            customer="hotel-aurora",
+            deliver_by=future_day,
+            items=[NeedItem(query=q, quantity=50, unit="L", constraints=Constraint(lactose_free=True))],
+        )
+        group = offers.get_offers(need, now=now).items[0]
+        assert group.offers == []
+        assert group.shortfall == 50.0
+
+    _wire(
+        monkeypatch,
+        [p1],
+        {"p1": _price_entry("p1", 1.20)},
+        {"p1": _avail_entry("p1", future_day, 200.0)},
+    )
+    offers.simulate(SimulateStock(product_id="p1", available_amount=0.0))
+    need_sim = Need(
+        customer="hotel-aurora",
+        deliver_by=future_day,
+        items=[NeedItem(query="lactose-free milk", quantity=35, unit="L", constraints=Constraint(lactose_free=True))],
+    )
+    group_sim = offers.get_offers(need_sim, now=now).items[0]
+    assert group_sim.offers == []
+    assert group_sim.shortfall == 35.0
+
+
+def test_get_offers_milk_excluded_single_hop_swap_to_oat_drink(monkeypatch, future_day):
+    p_milk = _milk_product("p_milk", "Lactose free milk 1L")
+    p_oat = Product(
+        product_id="p_oat",
+        name="Oat drink 1L",
+        brand="Oddlygood",
+        category="10400",
+        sales_unit="ST",
+        unit_size=UnitSize(value=1.0, unit="l"),
+        allergens=["oats"],
+        labels=["vegan", "free_from_lactose"],
+    )
+    _wire(
+        monkeypatch,
+        [p_milk, p_oat],
+        {"p_milk": _price_entry("p_milk", 1.20), "p_oat": _price_entry("p_oat", 1.65)},
+        {"p_milk": _avail_entry("p_milk", future_day, 500.0), "p_oat": _avail_entry("p_oat", future_day, 200.0)},
+    )
+    now = datetime.combine(future_day - timedelta(days=3), time(9, 0), tzinfo=offers.HEL)
+
+    mandate = Mandate(
+        customer="hotel-aurora",
+        agent_id="buyer-1",
+        per_order_eur=2500.0,
+        per_week_eur=10000.0,
+        exclude_allergens=["milk"],
+    )
+    need_mandate = Need(
+        customer="hotel-aurora",
+        deliver_by=future_day,
+        items=[NeedItem(query="milk", quantity=25, unit="L")],
+    )
+    g_mandate = offers.get_offers(need_mandate, mandate=mandate, now=now).items[0]
+    assert [o.product_id for o in g_mandate.offers] == ["p_oat"]
+    assert g_mandate.offers[0].units_needed == 25.0
+    assert g_mandate.offers[0].tier == "good"
+    assert g_mandate.offers[0].substitute_for is None
+    assert any(n.startswith("Swap for milk:") for n in g_mandate.offers[0].notes)
+
+    need_constraint = Need(
+        customer="hotel-aurora",
+        deliver_by=future_day,
+        items=[
+            NeedItem(
+                query="lactose-free milk",
+                quantity=20,
+                unit="L",
+                constraints=Constraint(lactose_free=True, exclude_allergens=["milk"]),
+            )
+        ],
+    )
+    g_constraint = offers.get_offers(need_constraint, now=now).items[0]
+    assert [o.product_id for o in g_constraint.offers] == ["p_oat"]
+    assert g_constraint.offers[0].units_needed == 20.0
+    assert g_constraint.offers[0].tier == "good"
+    assert g_constraint.offers[0].substitute_for is None
+    assert any(n.startswith("Swap for lactose-free milk:") for n in g_constraint.offers[0].notes)
+
+
+
