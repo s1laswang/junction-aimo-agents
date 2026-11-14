@@ -33,6 +33,12 @@ def find_candidates(need: Need, pool: int = 80) -> tuple[dict[str, dict[str, Any
         rel.setdefault(pid, 100.0)
         for r in con.execute("select substitute from subs where product = ?", (pid,)):
             rel.setdefault(r[0], 5.0)
+    try:  # Gemini semantic recall for the query itself (adds products FTS misses)
+        from aimo.catalog.textsearch import semantic_hits
+        for pid, sim in semantic_hits(need.product_query, claims=need.required_claims, k=30):
+            rel.setdefault(pid, 6.0 * sim)
+    except Exception:  # noqa: BLE001
+        pass
     try:  # semantic neighbours of the usual product (Gemini embeddings), if the cache exists
         from aimo.catalog.embeddings import similar_products
         for pid in need.preferred_product_ids:

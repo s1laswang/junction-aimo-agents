@@ -199,29 +199,50 @@ def fts_search(query: str, *, claims: list[str] | None = None, category: Optiona
     return sorted(results.items(), key=lambda x: -x[1])[:limit]
 
 
+def semantic_hits(query: str, *, claims: list[str] | None = None, category: Optional[str] = None,
+                  content_unit: Optional[str] = None, k: int = 40) -> list[tuple[str, float]]:
+    """Gemini-embedding recall with the same filters as FTS. [] if embeddings are not built/available."""
+    try:
+        from aimo.catalog.embeddings import available, semantic_search
+        if not available() or not (query or "").strip():
+            return []
+        raw = semantic_search(query, k=k * 3)
+    except Exception:  # noqa: BLE001 - embeddings are optional (no key, offline, not built)
+        return []
+    rows = get_rows([pid for pid, _ in raw])
+    out = []
+    for pid, sim in raw:
+        d = rows.get(pid)
+        if not d:
+            continue
+        if claims and not set(claims) <= set(d.get("claims") or []):
+            continue
+        if category and d.get("category") != category:
+            continue
+        if content_unit and d.get("content_unit") != content_unit:
+            continue
+        out.append((pid, float(sim)))
+        if len(out) >= k:
+            break
+    return out
+
+
 def search(query: str, *, claims: list[str] | None = None, category: str | None = None,
            content_unit: str | None = None, limit: int = 20, semantic: bool = True) -> list[ProductSummary]:
-    hits = fts_search(query, claims=claims, category=category, content_unit=content_unit, limit=limit)
-    if semantic and len(hits) < max(3, limit // 2):
-        try:
-            from aimo.catalog.embeddings import semantic_search
-            have = {h[0] for h in hits}
-            extra = semantic_search(query, k=limit * 3)
-            rows = get_rows([pid for pid, _ in extra if pid not in have])
-            for pid, sim in extra:
-                d = rows.get(pid)
-                if not d:
-                    continue
-                if claims and not set(claims) <= set(d.get("claims") or []):
-                    continue
-                if category and d.get("category") != category:
-                    continue
-                if content_unit and d.get("content_unit") != content_unit:
-                    continue
-                hits.append((pid, round(float(sim), 4)))
-                if len(hits) >= limit:
-                    break
-        except Exception:  # noqa: BLE001 - embeddings are optional
-            pass
+    """Hybrid search: FTS (exact words, fi/en/sv synonyms) fused with Gemini semantic recall by
+    weighted reciprocal rank fusion. FTS that matches every query concept in the name keeps
+    priority; semantic recall rescues free-form queries ("dairy-free drink for coffee")."""
+    fts = fts_search(query, claims=claims, category=category, content_unit=content_unit, limit=limit * 2)
+    sem = semantic_hits(query, claims=claims, category=category, content_unit=content_unit, k=limit * 2) if semantic else []
+    if not sem:
+        hits = fts[:limit]
+    else:
+        fused: dict[str, float] = {}
+        full = {pid for pid, sc in fts if sc >= 9.0}          # every concept found in the name
+        for rank, (pid, _sc) in enumerate(fts):
+            fused[pid] = fused.get(pid, 0) + 1.0 / (20 + rank) + (0.05 if pid in full else 0)
+        for rank, (pid, _sim) in enumerate(sem):
+            fused[pid] = fused.get(pid, 0) + 0.8 / (20 + rank)
+        hits = sorted(((pid, sc * 100) for pid, sc in fused.items()), key=lambda x: -x[1])[:limit]
     rows = get_rows([h[0] for h in hits])
     return [summary_from_row(rows[pid], round(score, 4)) for pid, score in hits if pid in rows]
