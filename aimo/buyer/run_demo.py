@@ -48,7 +48,8 @@ def c(s: str, *styles: str) -> str:
 
 ICON = {"thought": ("·", "dim"), "tool_call": ("→", "cyan"), "tool_result": ("←", "blue"), "plan": ("▤", "mag"),
         "quote": ("€", "yellow"), "decision": ("⚖", "yellow"), "approval_wait": ("⏸", "yellow"),
-        "order": ("✓", "green"), "error": ("!", "red"), "final": ("■", "green")}
+        "order": ("✓", "green"), "error": ("!", "red"), "final": ("■", "green"),
+        "needs_clarification": ("?", "yellow")}
 
 
 def wrap(s: str, indent: int = 7) -> str:
@@ -85,6 +86,14 @@ def print_step(step: Any) -> None:
     elif kind == "approval_wait":
         print(wrap(f"quote_hash={str(d.get('quote_hash'))[:16]}…  approve in the UI (/ui) or "
                    f"POST /v1/approvals/{d.get('order_id')}/decision"))
+    elif kind == "needs_clarification":
+        for o in d.get("options", []):
+            print(c(f"       [{o['id']}] {o['label']}", "yellow"))
+    elif kind == "thought" and d.get("lines") is not None and "extracted" in d:
+        for ln in d["lines"]:
+            print(wrap(f"\"{ln.get('original_text') or ln.get('product')}\" -> {ln.get('product')} "
+                       f"{ln.get('quantity') if ln.get('quantity') is not None else '?'} {ln.get('unit', '')}"))
+        print(c(wrap("Request: " + str(d.get("request_text"))), "mag"))
     elif kind == "error":
         print(c(wrap(str(d.get("error", ""))[:300]), "red"))
     elif kind == "final":
@@ -150,6 +159,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-escalate", action="store_true", help="never switch to the reasoning model")
     ap.add_argument("--max-steps", type=int, default=14)
     ap.add_argument("--approval-timeout", type=float, default=1800, help="seconds to wait for a human")
+    ap.add_argument("--image", metavar="PATH", help="photo of a handwritten order / menu / invoice (Gemini vision)")
+    ap.add_argument("--answer", default="auto", choices=["auto", "ask", "none"],
+                    help="clarifying questions: auto = first option (non-interactive), ask = prompt in the terminal, "
+                         "none = leave unanswered")
     ap.add_argument("--json", metavar="PATH", help="write the full run result as JSON")
     ap.add_argument("--faults", help="X-Aimo-Faults spec for the gateway (default: per scenario)")
     ap.add_argument("--montage", action="store_true",
@@ -174,11 +187,18 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_scenario(a, scenario: str, approver: str | None) -> dict:
     sc = SCENARIOS[scenario]
-    text = a.text or sc["text"]
+    image = None
+    if getattr(a, "image", None):
+        import mimetypes
+        with open(a.image, "rb") as fh:
+            image = (fh.read(), mimetypes.guess_type(a.image)[0] or "image/png")
+        text = a.text or ""
+    else:
+        text = a.text or sc["text"]
     customer = a.customer or sc["customer"]
     base = a.base_url.rstrip("/")
-    print(c(f"\nValio Aimo Trusted Trade: Gemini buyer agent  [{scenario}]", "b"))
-    print(c(f'  {customer}: "{text}"\n', "dim"))
+    print(c(f"\nValio Aimo Trusted Trade: Gemini buyer agent  [{'photo' if image else scenario}]", "b"))
+    print(c(f'  {customer}: "{text}"' + (f" + photo {a.image}" if image else "") + "\n", "dim"))
     stop = threading.Event()
     decision = "reject" if a.reject else "approve"
 
@@ -214,7 +234,8 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
 
     agent = BuyerAgent(transport, customer, model=a.model, thinking=a.thinking, escalate=not a.no_escalate,
                        max_steps=a.max_steps, emit=print_step, audit_base_url=base if kind != "fake" else "",
-                       poll_s=1.0 if kind == "fake" else 2.0, approval_timeout_s=a.approval_timeout)
+                       poll_s=1.0 if kind == "fake" else 2.0, approval_timeout_s=a.approval_timeout,
+                       image=image, answer_fn=_answer_fn(getattr(a, "answer", "auto")))
     try:
         result = agent.run(text)
     finally:
@@ -224,6 +245,24 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
     result["scenario"] = scenario
     result["customer_id"] = customer
     return result
+
+
+def _answer_fn(mode: str):
+    """How the terminal demo answers needs_clarification questions."""
+    if mode == "none":
+        return lambda q: None
+    if mode == "ask" and sys.stdin.isatty():
+        def ask(q):
+            ids = [o["id"] for o in q["options"]]
+            raw = input(c(f"       your answer {ids} or free text: ", "yellow")).strip()
+            return {"option_id": raw} if raw in ids else ({"text": raw} if raw else None)
+        return ask
+
+    def first(q):
+        o = q["options"][0]
+        print(c(f"       [auto-answer] {o['id']}: {o['label']}", "yellow"), flush=True)
+        return {"option_id": o["id"]}
+    return first
 
 
 # ---------------------------------------------------------------- montage
