@@ -552,7 +552,7 @@ function renderRequest() {
       h("div", { class: "req-compact" },
         h("div", { style: { minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" } },
           h("span", { class: "section-label" }, c ? `${c.name}${c.segment ? " · " + c.segment : ""}` : S.customerId),
-          h("div", { class: "q" }, S.run.image ? h("img", { class: "q-thumb", src: S.run.image, alt: "Attached photo" }) : null, "“", S.text, "”"),
+          h("div", { class: "q" }, S.run.image ? h("img", { class: "q-thumb", src: S.run.image, alt: "Attached photo" }) : null, S.text ? ["“", S.text, "”"] : h("span", { class: "muted" }, "Order from the photo")),
           h("span", { class: "faint small mono" }, `${S.model} · thinking ${S.thinking}${S.optimize !== "agent" ? ` · optimize ${S.optimize}` : ""}`)),
         h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } },
           running ? h("span", { class: "status neutral" }, h("span", { class: "spinner", style: { width: "10px", height: "10px" } }), "Running")
@@ -895,7 +895,7 @@ function clarCard(step) {
     rerenderStep(step);
   };
   const box = h("div", { class: "clar" },
-    h("div", { class: "clar-q" }, d.question || step.title),
+    d.question && d.question !== step.title ? h("div", { class: "clar-q" }, d.question) : null,
     d.why ? h("div", { class: "faint small" }, d.why) : null);
   if (answered && !answered.error) {
     box.appendChild(h("div", { class: "clar-a" }, answered.pending ? h("span", { class: "spinner" }) : "✓", ` You answered: ${answered.label}`));
@@ -932,7 +932,7 @@ function renderPlan() {
     h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } },
       h("span", { class: "section-label" }, "Structured need"),
       r.need ? needChips(r.need) : h("div", { class: "skeleton", style: { height: "22px", width: "60%" } }),
-      h("div", { class: "muted sm" }, "“", (r.need && r.need.raw_text) || S.text, "”")),
+      (r.need && r.need.raw_text) || S.text ? h("div", { class: "muted sm" }, "“", (r.need && r.need.raw_text) || S.text, "”") : null),
     p ? h("div", { class: "kpis" },
       h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(p.covered_amount)} / ${num(p.need?.quantity)} ${p.need?.unit || ""}`), h("span", { class: "l" }, p.shortfall ? `Shortfall ${num(p.shortfall)} ${p.need?.unit}` : "Covered")),
       planCo2(p) != null ? h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(planCo2(p), 0)} kg`), h("span", { class: "l" }, "CO₂e, category average")) : null,
