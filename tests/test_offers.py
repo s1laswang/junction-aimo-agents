@@ -3,6 +3,7 @@ import tempfile
 
 os.environ.setdefault('AIMO_DB', os.path.join(tempfile.mkdtemp(), 't.db'))
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,15 @@ from aimo.models import Need, NeedItem, QuoteRequestLine, SimulateStock
 
 catalog = pytest.importorskip("aimo.catalog")
 
+needs_live = pytest.mark.skipif(
+    not Path(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json").exists()
+    or (
+        not os.environ.get("VALIO_API_BASE")
+        and not any(Path(os.environ.get("AIMO_CACHE_DIR", "var/cache")).glob("price__*.json"))
+    ),
+    reason="needs live data and VALIO_API_BASE or price cache",
+)
+
 D = date(2026, 11, 16)
 
 
@@ -18,6 +28,7 @@ def milk():
     return Need(customer="hotel-aurora", deliver_by=D, items=[NeedItem(query="lactose-free milk", quantity=1000, unit="L")])
 
 
+@needs_live
 def test_milk_offers_priced():
     offers.clear_simulation()
     g = offers.get_offers(milk()).items[0]
@@ -26,6 +37,7 @@ def test_milk_offers_priced():
     assert o.unit_price_net > 0 and o.units_needed >= 1 and o.total_gross >= o.total_net
 
 
+@needs_live
 def test_stockout_changes_result():
     offers.clear_simulation()
     top = offers.get_offers(milk()).items[0].offers[0].product_id
@@ -38,6 +50,7 @@ def test_stockout_changes_result():
         offers.clear_simulation()
 
 
+@needs_live
 def test_price_lines():
     top = offers.get_offers(milk()).items[0].offers[0]
     lines, gross, valid = offers.price_lines("hotel-aurora", D, [QuoteRequestLine(product_id=top.product_id, quantity=10)])
@@ -45,6 +58,7 @@ def test_price_lines():
     assert gross > lines[0].line_total_net and valid.tzinfo
 
 
+@needs_live
 def test_alternatives_and_options():
     offers.clear_simulation()
     g = offers.get_offers(milk()).items[0]
@@ -72,6 +86,7 @@ def test_cutoff_rule():
     assert offers.cutoff("2026-11-12T15:00:00+0200", None, date(2026, 12, 1)).isoformat() == "2026-11-30T15:00:00+02:00"
 
 
+@needs_live
 def test_far_delivery_not_expired():
     from datetime import timedelta
     far = date.today() + timedelta(days=5)
@@ -84,6 +99,7 @@ def test_far_delivery_not_expired():
     assert valid > datetime.now(timezone.utc)
 
 
+@needs_live
 def test_split_filler_same_brand_not_substitute():
     offers.clear_simulation()
     top = offers.get_offers(milk()).items[0].offers[0].product_id
@@ -99,6 +115,7 @@ def test_split_filler_same_brand_not_substitute():
         offers.clear_simulation()
 
 
+@needs_live
 def test_cutoff_passed_shifts_date(monkeypatch):
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
@@ -119,6 +136,7 @@ def test_past_delivery_rejected():
     assert e.value.code == "INVALID_QUOTE"
 
 
+@needs_live
 def test_fillers_sized_to_shortfall():
     offers.clear_simulation()
     top = offers.get_offers(milk()).items[0].offers[0]
@@ -132,12 +150,14 @@ def test_fillers_sized_to_shortfall():
         offers.clear_simulation()
 
 
+@needs_live
 def test_allergen_swap():
     n = Need(customer="hotel-aurora", deliver_by=D, items=[NeedItem(query="lactose-free milk", quantity=20, unit="L", constraints=__import__("aimo.models", fromlist=["Constraint"]).Constraint(exclude_allergens=["milk"]))])
     g = offers.get_offers(n).items[0]
     assert g.offers and any(n.startswith("Swap for") for n in g.offers[0].notes) and g.offers[0].tier == "good" and g.offers[0].substitute_for is None
 
 
+@needs_live
 def test_primary_is_cheapest_equivalent_and_stable():
     from aimo import allocate
     offers.clear_simulation()
@@ -154,6 +174,7 @@ def test_primary_is_cheapest_equivalent_and_stable():
     assert len({x.tier for x in a.alternatives}) == len(a.alternatives)
 
 
+@needs_live
 def test_exclusion_note():
     from aimo.models import Constraint
     n = Need(customer="hotel-aurora", deliver_by=D, items=[NeedItem(query="lactose-free milk", quantity=20, unit="L", constraints=Constraint(exclude_allergens=["egg", "peanuts"]))])
