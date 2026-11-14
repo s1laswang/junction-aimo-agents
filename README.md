@@ -6,8 +6,8 @@ Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" chall
 
 > A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L dispenser box missed its order cut-off (Thu 12 Nov 15:00, live data from the challenge's mock API; all challenge data is synthetic). The gateway plans a same-brand substitute (Valio Eila 1 L, 464306, €1.01/L, €1,010 total), issues an Ed25519-signed quote, and the hotel's own policy says **needs approval**: €1,010 is over the €500 auto limit and 3.3× the usual weekly milk volume. The procurement manager approves the exact quote hash. The order is placed in our own mock order service (the challenge API has price and availability but no order endpoint) and answered with a Peppol-style response `AP`, and the whole story is in a hash-chained, signed audit log that anyone can verify.
 
-![Approval UI: the agent paused for the procurement manager, every rule explained, order placed with Peppol AP](docs/pitch/img/approval-ui.png)
-<!-- Screenshot from the frontend engineer's live integration run (team/frontend, Sat 14 Nov 14:45). Newer screenshots: docs/reports/frontend/. -->
+![Approval UI: the agent paused, Anna Virtanen signed in as the human approver, three rules need her approval, the decision is bound to the quote hash](docs/reports/frontend/s5-approval-signed-in.png)
+<!-- Live run on main, Sat 14 Nov 23:17 (S5 ui session). More screenshots: docs/reports/frontend/ (sign-in panel, voice approval, ops feed, photo intake). -->
 
 ## Prerequisites
 
@@ -26,6 +26,7 @@ Environment variables (names only; copy `.env.example` to `.env` and fill them i
 | `GEMINI_API_KEY` | `uv run aimo demo` (Gemini buyer), embeddings / allergen hints, wind-tunnel live runs | Keyless path: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (still needs the product data + a running gateway). `aimo serve --no-build` skips Gemini catalog builds. |
 | `AIMO_APPROVER_PIN` | the **human approver credential** (see [Approving as a human](#approving-as-a-human)) | Generated once into `data/keys/approver_pin` (a random 12-character passphrase). No API route or MCP tool ever returns it. |
 | `AIMO_REPLAY` | `=tests/fixtures/snapshot` serves recorded mock-API price and availability responses with no network | Unset: live mock API. `make accept` sets it automatically when `AIMO_API_KEY` is empty. Responses say `served_from: replay`. |
+| `ELEVENLABS_API_KEY` | optional: ElevenLabs voice for **Decide by voice** | The browser's own speech synthesis and recognition are used instead. |
 | `AIMO_NOW` | simulated clock, e.g. `AIMO_NOW=2026-11-15T10:00:00+02:00` (add `AIMO_NOW_FROZEN=1` to stop it running forward) | Real clock. Replay mode anchors the clock at the snapshot's recording time (Sat 14 Nov 14:20 Helsinki) unless `AIMO_NOW` is set. |
 
 Do not put real values in the README. A judge machine with none of these variables set can still run `make accept`, which will SKIP key-gated steps and must not crash.
@@ -87,7 +88,8 @@ Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **267 pa
 
 Approvals are human-only. The approver credential is `AIMO_APPROVER_PIN` from `.env`, or, if that is empty, the passphrase the gateway generated into `data/keys/approver_pin` on first start (`cat data/keys/approver_pin` on the machine running the gateway). No API route and no MCP tool ever returns it; in production it is replaced by the customer's SSO.
 
-- **In the UI:** the first time you approve or reject, the UI asks you to sign in as an approver (your name or email from the customer's approver directory, e.g. Anna Virtanen, then the PIN). It exchanges them once for a signed 8-hour session bound to that person and stores only the session, never the PIN.
+- **In the UI:** click **Sign in as approver** (header, or the "Approvals are human-only" card in the inbox). Pick yourself from the approver directory (the role the order needs is preselected, e.g. Anna Virtanen · Procurement Manager) and type the PIN in a masked field. The UI exchanges them once for a signed 8-hour session bound to that person and keeps only the session (per browser tab), never the PIN. The decision form then reads "Deciding as Anna Virtanen". A header pill counts blocked attacks (audited `approval.refused` and other refusals).
+- **By voice (optional):** **Decide by voice** reads the order out (ElevenLabs if `ELEVENLABS_API_KEY` is set, else the browser's speech), transcribes the answer and classifies it with Gemini plus a rule safety net. Voice never decides: it shows the transcript and intent, and one confirm click sends the normal signed-in decision bound to the quote hash. `aimo/voice/`, docs/reports/ui.md.
 - **Over REST:** `POST /v1/auth/approver-session` with `X-Approver-Pin` and `{"approver": "anna@hotel-aurora.example"}` returns `{"session": ...}`; send it as `X-Approver-Session` on decisions. A session cannot decide as anyone else (403 `approver_mismatch`).
 - **Agents can never approve:** any decision request carrying `X-Agent-Id` gets 403 `agent_cannot_approve`, even if it names a real approver; no credential gets 401. Every refusal is written to the audit log as `approval.refused`. Five wrong credentials from one client lock that client for 5 minutes (429); signed-in sessions are never locked out.
 - `uv run aimo demo --auto-approve-as …` and `qa_milk_flow.py` read the operator's credential from the same env var or file, so they only work on the machine that runs the gateway.

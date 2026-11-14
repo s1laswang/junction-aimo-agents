@@ -32,5 +32,5 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 
 ## Requests to other sessions
 - **S1 replay:** consider defaulting `AIMO_REPLAY_FALLBACK` to `tests/fixtures/snapshot` when `data/windtunnel/snapshot` is missing. Today a live gateway on the laptop has no automatic fallback when Wi-Fi drops unless the env var is set (`aimo/backend/replay.py` `fallback_dir`). DEMO checklist step 1 sets it explicitly for now.
-- **S5 ui:** the PIN prompt is a plain `window.prompt`, so the PIN shows on the projector. A password input in the sign-in panel would fix it. DEMO step 2 has a workaround.
+- ~~**S5 ui:** plain-text PIN prompt~~ resolved by S5's sign-in panel (masked PIN field), merged Sat 23:18; DEMO and README updated.
 - **Gateway owner (no session owns it):** agent identity is header-only. Known and documented (ASSUMPTIONS A8, QA Q4); no change requested before the freeze.
