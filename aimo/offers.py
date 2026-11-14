@@ -7,6 +7,7 @@ from .models import (
     Mandate, Need, NeedItem, Offer, OfferGroup, OffersResponse, Product,
     QuoteLine, QuoteRequestLine, SimulateStock,
 )
+from .quotes import QuoteError
 
 HEL = ZoneInfo("Europe/Helsinki")
 _overrides: dict[str, SimulateStock] = {}
@@ -17,6 +18,15 @@ def _mod(name: str):
     try:
         return importlib.import_module(f"aimo.{name}")
     except ImportError:
+        return None
+
+
+def _catalog_get(catalog, product_id: str) -> Product | None:
+    if not catalog:
+        return None
+    try:
+        return catalog.get(product_id)
+    except FileNotFoundError:
         return None
 
 
@@ -32,7 +42,7 @@ def fresh_offers(customer: str, day: date, product_ids) -> list[Offer]:
     catalog = _mod("catalog")
     seen, out = set(), []
     for pid in product_ids:
-        p = catalog.get(pid)
+        p = _catalog_get(catalog, pid)
         if not p:
             continue
         pool = [p] + [c for c in catalog.search(p.name, limit=10) if c.product_id != pid]
@@ -227,8 +237,7 @@ def _local_noon(day: date) -> datetime:
 
 
 def price_lines(customer: str, delivery_date: date, lines: list[QuoteRequestLine]):
-    if delivery_date < date.today():
-        from .quotes import QuoteError
+    if delivery_date < datetime.now(HEL).date():
         raise QuoteError("INVALID_QUOTE", "Delivery date is in the past.")
     catalog = _mod("catalog")
     ids = [l.product_id for l in lines]
@@ -238,10 +247,10 @@ def price_lines(customer: str, delivery_date: date, lines: list[QuoteRequestLine
     for l in lines:
         pr = prices.get(l.product_id)
         if not pr or pr.get("error") or not pr.get("catalogPrice"):
-            raise ValueError(f"no price for {l.product_id}")
+            raise QuoteError("INVALID_QUOTE", f"No price available for product {l.product_id}.")
         net = pr["catalogPrice"]["value"]
         gross += l.quantity * (pr.get("priceWithTax") or {}).get("value", net)
-        p = catalog.get(l.product_id) if catalog else None
+        p = _catalog_get(catalog, l.product_id)
         out.append(QuoteLine(
             product_id=l.product_id,
             name=p.name if p else None,
