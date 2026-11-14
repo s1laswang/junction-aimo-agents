@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Overview · Aimo Trade Gateway</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%231F4E8C%27/%3E%3Cpath d=%27M4 11l4-6 4 6%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%271.5%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<style>.lead{max-width:60ch;color:var(--ink-2);margin:4px 0 20px}.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.tile{display:flex;flex-direction:column;gap:4px;color:var(--ink);padding:12px 16px}.tile:hover{text-decoration:none;border-color:var(--rule-2)}.tile .n{font:500 26px var(--mono);letter-spacing:-.02em}.tile .t{display:flex;align-items:center;gap:6px;font-weight:600}.tile .d{font-size:12px;color:var(--ink-3)}.ph-r{display:flex;align-items:center;gap:8px}.links a{overflow-wrap:anywhere}.links{display:flex;flex-wrap:wrap;gap:16px;margin-top:8px}.sec{margin-top:24px}.cx{display:flex;flex-direction:column;gap:8px}.cl{display:flex;align-items:center;gap:8px;min-width:0}.cl .k{flex:none;width:96px;font-size:12px;color:var(--ink-3)}.cl code,.cl a.mono{flex:1;min-width:0;padding:4px 8px;background:var(--well);border:1px solid var(--rule);border-radius:4px;overflow-x:auto;white-space:pre}pre.cl-pre{margin:0}.trust{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,.8fr) minmax(0,1.1fr);gap:10px;padding:8px 12px;background:var(--well);border:1px solid var(--rule);border-radius:4px;margin-bottom:10px}.ti{display:flex;flex-direction:column;gap:2px;min-width:0}.ti .k{font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em}.ti .v{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;font-size:13px}.ti code{padding:1px 6px;background:var(--sheet);border:1px solid var(--rule);border-radius:3px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:640px){.cl{flex-wrap:wrap}.cl .k{width:100%}.cl code,.cl a.mono{flex:1 1 0}}.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.row{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--rule);color:var(--ink);font-size:13px;min-width:0}.row:last-child{border-bottom:0}.row:hover{text-decoration:none;background:var(--paper)}.row .l{flex:none;color:var(--ink-3)}.row .w{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.row .r{flex:none;margin-left:auto}.empty{color:var(--ink-3);font-size:13px;padding:6px 0}@media(max-width:700px){.cols,.trust{grid-template-columns:minmax(0,1fr)}}@media(max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}}@media(max-width:420px){.tiles{grid-template-columns:1fr}}</style></head>
+<body><header class="top"><a class="brand" href="/" aria-current="page">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html">Console</a><a href="/inbox.html">Approvals</a><a href="/audit.html">Audit</a><a href="/admin.html">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
+<main>
+<h1>Trusted purchasing gateway</h1>
+<p class="lead">External buying agents search, quote and order from Valio Aimo through one signed, mandate-checked interface, with human approval and a full audit trail.</p>
+<div class="tiles">
+<a class="panel tile" href="/console.html"><span class="t"><svg class="i" viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>Console</span><span class="n" id="n-ord">-</span><span class="d" id="d-ord">Run a request end to end</span></a>
+<a class="panel tile" href="/inbox.html"><span class="t"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg>Approvals</span><span class="n" id="n-appr">-</span><span class="d">pending decisions</span></a>
+<a class="panel tile" href="/audit.html"><span class="t"><svg class="i" viewBox="0 0 24 24"><path d="M9 5h10M9 12h10M9 19h10M4 5h.01M4 12h.01M4 19h.01"/></svg>Audit</span><span class="n" id="n-audit">-</span><span class="d" id="d-audit">last event</span></a>
+<a class="panel tile" href="/admin.html"><span class="t"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Mandates</span><span class="n" id="n-man">-</span><span class="d" id="d-man">per order limit, EUR</span></a>
+</div>
+<div class="cols sec">
+<section class="panel"><div class="panel-head"><h3>Waiting for approval</h3><a class="small" href="/inbox.html">All</a></div><div id="pend"></div></section>
+<section class="panel"><div class="panel-head"><h3>Recent activity</h3><div class="ph-r"><span class="tag ok" id="act-v" hidden></span><a class="small" href="/audit.html">Audit</a></div></div><div id="act"></div></section>
+</div>
+<section class="panel sec" id="connect"><div class="panel-head"><h3>Connect an agent</h3><span class="tag neutral" id="c-tools" hidden></span></div><div class="cx">
+<div class="cl"><span class="k">MCP (HTTP)</span><code id="c-mcp"></code><button class="btn" data-copy="c-mcp" type="button">Copy</button></div>
+<div class="cl"><span class="k">MCP (stdio)</span><code id="c-stdio">.venv/bin/python -m aimo.mcp_server</code><button class="btn" data-copy="c-stdio" type="button">Copy</button></div>
+<div class="cl"><span class="k">REST base</span><code id="c-rest"></code><button class="btn" data-copy="c-rest" type="button">Copy</button></div>
+<div class="cl"><span class="k">Agent card</span><a class="mono" id="c-card" href="/.well-known/agent-card.json">/.well-known/agent-card.json</a></div>
+<div class="cl"><span class="k">Milk request</span><code id="c-curl"></code><button class="btn" data-copy="c-curl" type="button">Copy</button></div>
+</div></section>
+<section class="panel sec" id="discovery"><div class="panel-head"><h3>Trust &amp; discovery</h3></div><div class="trust" id="trust-strip"><div class="ti"><span class="k">Signing key</span><span class="v"><span class="mono" id="t-alg">-</span><code id="t-kid">-</code></span></div><div class="ti"><span class="k">MCP + REST</span><span class="v mono" id="t-tools">-</span></div><div class="ti"><span class="k">Audit checkpoint</span><span class="v"><code id="t-cp">-</code><span class="tag neutral" id="t-ver" hidden></span></span></div></div><div class="links mono"><a href="/.well-known/agent-card.json">/.well-known/agent-card.json</a><a href="/openapi.json">/openapi.json</a><a href="/.well-known/jwks.json">/.well-known/jwks.json</a></div></section>
+</main>
+<script src="/shell.js"></script>
+<script>
+var O=location.origin,seq=0;
+var MM={
+  "hotel-aurora":{per_order_eur:2500,per_week_eur:15000},
+  "hospital-tays":{per_order_eur:1500,per_week_eur:8000},
+  "school-hervanta":{per_order_eur:600,per_week_eur:3000}
+};
+var MK_CARD={tools:[
+  "search_products","get_product","parse_request","get_offers",
+  "request_quote","place_order","get_order","list_orders",
+  "list_approvals","decide_approval","get_audit_trail","get_mandate"
+]};
+var MK_JWKS={keys:[{kty:"OKP",crv:"Ed25519",alg:"EdDSA",kid:"aimo-ed25519-mock"}]};
+var M={
+  orders:[
+    {order_id:"ord_8b21",customer:"hotel-aurora",status:"confirmed",total_net:310},
+    {order_id:"ord_7f3a91",customer:"hotel-aurora",status:"pending_approval",total_net:2650.04},
+    {order_id:"ord_4c19",customer:"hospital-tays",status:"confirmed",total_net:520},
+    {order_id:"ord_91d4e7",customer:"hospital-tays",status:"pending_approval",total_net:830},
+    {order_id:"ord_2b8c10",customer:"school-hervanta",status:"pending_approval",total_net:469.5}
+  ],
+  appr:[
+    {order_id:"ord_7f3a91",customer:"hotel-aurora",total_net:2650.04,decision:{reasons:[{text:"Order total 2,650.04 EUR is over the 2,500.00 EUR per-order limit"}]}},
+    {order_id:"ord_91d4e7",customer:"hospital-tays",total_net:830,decision:{reasons:[{text:"Could not check allergens for P-410902: product data missing"}]}},
+    {order_id:"ord_2b8c10",customer:"school-hervanta",total_net:469.5,decision:{reasons:[{text:"Substituting P-300077 with P-300118 needs human approval"}]}}
+  ],
+  audit:[
+    {seq:42,ts:"2026-11-14T08:14:00Z",customer:"hotel-aurora",action:"order.pending_approval",subject:"ord_7f3a91",why:"Order total 2,650.04 EUR is over the 2,500.00 EUR per-order limit",detail:{order_id:"ord_7f3a91",total_net:2650.04}},
+    {seq:41,ts:"2026-11-14T08:12:00Z",customer:"hotel-aurora",action:"order.confirmed",subject:"ord_8b21",why:"Placed automatically within mandate",detail:{order_id:"ord_8b21",total_net:310}},
+    {seq:40,ts:"2026-11-14T08:10:00Z",customer:"hotel-aurora",action:"quote.issued",subject:"q_20261114_0042",why:"Signed quote valid until order cutoff",detail:{order_id:"ord_7f3a91",quote_id:"q_20261114_0042"}},
+    {seq:39,ts:"2026-11-14T07:55:00Z",customer:"hospital-tays",action:"order.pending_approval",subject:"ord_91d4e7",why:"Could not check allergens for P-410902: product data missing",detail:{order_id:"ord_91d4e7",total_net:830}},
+    {seq:38,ts:"2026-11-14T07:40:00Z",customer:"hospital-tays",action:"order.confirmed",subject:"ord_4c19",why:"Within 1,500.00 EUR mandate and allergen rules",detail:{order_id:"ord_4c19",total_net:520}},
+    {seq:37,ts:"2026-11-14T07:18:00Z",customer:"school-hervanta",action:"order.pending_approval",subject:"ord_2b8c10",why:"Substituting P-300077 with P-300118 needs human approval",detail:{order_id:"ord_2b8c10",total_net:469.5}},
+    {seq:36,ts:"2026-11-14T07:15:00Z",customer:"school-hervanta",action:"quote.issued",subject:"q_20261114_0043",why:"Signed quote within peanut and nut-free mandate",detail:{order_id:"ord_2b8c10",quote_id:"q_20261114_0043"}}
+  ]
+};
+function $c(i,t){document.getElementById(i).textContent=t}
+function esc(t){return String(t==null?"":t).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+function eur(n){var x=Number(n);return n==null||!Number.isFinite(x)?"0.00":x.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function lim(n){var x=Number(n);return n==null||!Number.isFinite(x)?"-":(x%1===0?x.toLocaleString("en-US",{maximumFractionDigits:0}):eur(x))}
+var HF=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Helsinki",hour:"2-digit",minute:"2-digit",hour12:false});
+function hm(ts){if(!ts)return "";var d=new Date(ts);if(!isNaN(d))return HF.format(d);var m=/T(\d{2}:\d{2})/.exec(String(ts));return m?m[1]:""}
+function evs(x){return Array.isArray(x)?x:(x&&Array.isArray(x.events)?x.events:[])}
+function rows(el,h,empty){document.getElementById(el).innerHTML=h||'<p class="empty">'+empty+'</p>'}
+function setCurl(c){
+  var sc=c||"hotel-aurora";
+  $c("c-curl","curl -s "+O+"/v1/needs/parse -H 'X-Agent-Key: demo-"+sc+"' -H 'Content-Type: application/json' -d '{\"text\":\"I need 1000 litres of lactose-free milk by Monday\",\"customer\":\""+sc+"\"}'");
+}
+function orderId(e,q2o){
+  if(!e)return null;
+  if(e.detail && e.detail.order_id)return String(e.detail.order_id);
+  var s=e.subject!=null?String(e.subject):"";
+  if(/^ord_/.test(s))return s;
+  var m=/^order:(.+)$/.exec(s);
+  if(m)return m[1];
+  var q=(e.detail&&e.detail.quote_id)||s;
+  return (q&&q2o[q])||null;
+}
+async function load(){
+  var c=aimo.customer(),mock=aimo.mockMode(),my=++seq,ap,ev,mn,or,u,cd,jw;
+  aimo.mock(mock);
+  setCurl(c);
+  ["n-ord","n-appr","n-audit","n-man","t-alg","t-kid","t-tools","t-cp"].forEach(function(i){$c(i,"-")});
+  document.getElementById("t-kid").title="";
+  $c("d-ord","Run a request end to end");
+  $c("d-audit","last event");
+  $c("d-man","per order limit, EUR");
+  var av=document.getElementById("act-v");av.hidden=true;
+  var tv=document.getElementById("t-ver");tv.hidden=true;
+  var ct=document.getElementById("c-tools");ct.hidden=true;
+  if(mock){
+    ap=M.appr.filter(function(x){return x.customer===c});
+    ev=M.audit.filter(function(x){return x.customer===c});
+    u={events:ev,verified:{ok:true,bad_seq:null},checkpoint:{seq:42}};
+    mn=MM[c];
+    or=M.orders.filter(function(x){return x.customer===c});
+    cd=MK_CARD;
+    jw=MK_JWKS;
+  }else{
+    var q=encodeURIComponent(c);
+    var res=await Promise.all([
+      aimo.api("/v1/approvals?customer="+q,{admin:true}),
+      aimo.api("/v1/audit?customer="+q,{admin:true}),
+      aimo.api("/v1/mandate?customer="+q,{admin:true}),
+      aimo.api("/v1/orders?customer="+q,{admin:true}),
+      aimo.api("/.well-known/agent-card.json"),
+      aimo.api("/.well-known/jwks.json")
+    ]);
+    if(my!==seq)return;
+    var a=res[0],m=res[2],o=res[3];u=res[1];cd=res[4];jw=res[5];
+    if(a===null)aimo.offline(document.getElementById("pend"));else if(Array.isArray(a))ap=a;
+    if(u===null){aimo.offline(document.getElementById("act"));$c("d-audit",aimo.lastError&&aimo.lastError.status?"unavailable":"gateway offline");tv.className="tag neutral";tv.textContent=aimo.lastError&&aimo.lastError.status?"unavailable":"offline";tv.hidden=false}else ev=evs(u);
+    if(m===null){if(aimo.lastError&&aimo.lastError.status)$c("n-man","n/a")}else mn=m;
+    if(Array.isArray(o))or=o;
+  }
+  var jk=jw&&Array.isArray(jw.keys)&&jw.keys[0];
+  if(jk){
+    var alg=(jk.alg||(jk.crv==="Ed25519"?"EdDSA":""))||"EdDSA";
+    var crv=jk.crv||"Ed25519";
+    var kid=jk.kid!=null&&String(jk.kid)!==""?String(jk.kid):"n/a";
+    $c("t-alg",alg+" / "+crv);
+    $c("t-kid",kid);
+    document.getElementById("t-kid").title=kid;
+  }
+  if(cd&&Array.isArray(cd.tools)){
+    var tc=cd.tools.length;
+    var tlbl=tc+(tc===1?" tool":" tools");
+    $c("t-tools",tlbl);
+    ct.textContent="MCP + REST \u00b7 "+tlbl;
+    ct.hidden=false;
+  }
+  if(or){
+    var act=or.filter(function(x){return !/^(rejected|blocked|expired)$/.test((x&&x.status)||"")}).length;
+    $c("n-ord",String(or.length));
+    $c("d-ord",or.length?act+" active \u00b7 "+or.length+(or.length===1?" order":" orders"):"0 orders \u00b7 run a request");
+  }
+  if(ap){
+    $c("n-appr",String(ap.length));
+    rows("pend",ap.slice(0,5).map(function(o){
+      var oid=o&&o.order_id!=null?String(o.order_id):"";
+      var r=o&&o.decision&&Array.isArray(o.decision.reasons)&&o.decision.reasons[0];
+      var why=(r&&r.text)||(o&&o.customer)||"Pending approval";
+      var href=oid?"/inbox.html#"+encodeURIComponent(oid):"/inbox.html";
+      return '<a class="row" href="'+esc(href)+'" title="'+esc(why)+'"><span class="l mono">'+esc(oid||"-")+'</span><span class="w">'+esc(why)+'</span><span class="r mono">'+esc(eur(o&&o.total_net))+' EUR</span></a>';
+    }).join(""),'No pending approvals. <a href="/console.html">Run a request in Console</a>.');
+  }
+  if(ev){
+    var last=ev.length?ev.reduce(function(a,b){return (b.seq||0)>(a.seq||0)?b:a}):null;
+    var hasV=Boolean(u&&!Array.isArray(u)&&u.verified!=null);
+    var okV=Boolean(u && u.verified && u.verified.ok);
+    var vlbl=hasV?(okV?"verified":"chain broken"):"";
+    if(hasV){
+      av.className="tag "+(okV?"ok":"stop");
+      av.textContent=okV?"chain verified":"chain broken";
+      av.hidden=false;
+      tv.className="tag "+(okV?"ok":"stop");
+      tv.textContent=okV?"verified":(u.verified&&u.verified.bad_seq!=null?"chain broken #"+u.verified.bad_seq:"chain broken");
+      tv.hidden=false;
+    }
+    var cpSeq=(u&&u.checkpoint&&u.checkpoint.seq!=null)?u.checkpoint.seq:(last&&last.seq!=null?last.seq:0);
+    $c("t-cp","#"+cpSeq);
+    $c("n-audit",last&&last.seq!=null?"#"+last.seq:"0");
+    var lt=last?hm(last.ts):"";
+    $c("d-audit",(vlbl?vlbl+" \u00b7 ":"")+(last?(last.action||"event")+(lt?" "+lt:""):"no events"));
+    var q2o={};
+    ev.forEach(function(e){var d=(e&&e.detail)||{};if(d.order_id&&d.quote_id)q2o[d.quote_id]=d.order_id});
+    rows("act",ev.slice().sort(function(a,b){return (b.seq||0)-(a.seq||0)}).slice(0,8).map(function(e){
+      var oid=orderId(e,q2o);
+      var href=oid?"/audit.html?order_id="+encodeURIComponent(oid):"/audit.html";
+      var why=(e&&(e.why||e.action))||"event";
+      var seqLbl=e&&e.seq!=null?"#"+esc(e.seq):"-";
+      return '<a class="row" href="'+esc(href)+'" title="'+esc(why)+'"><span class="l mono">'+seqLbl+'</span><span class="l mono">'+esc(hm(e&&e.ts))+'</span><span class="w">'+esc(why)+'</span></a>';
+    }).join(""),'No audit events yet. <a href="/console.html">Run a request in Console</a>.');
+  }
+  if(mn&&mn.per_order_eur!=null&&Number.isFinite(Number(mn.per_order_eur))){
+    $c("n-man",lim(mn.per_order_eur));
+    $c("d-man",mn.per_week_eur!=null&&Number.isFinite(Number(mn.per_week_eur))?"per order ("+lim(mn.per_week_eur)+"/wk) EUR":"per order limit, EUR");
+  }
+}
+$c("c-mcp",O+"/mcp");$c("c-rest",O+"/v1");setCurl(aimo.customer());
+document.addEventListener("click",function(e){var b=e.target&&e.target.closest&&e.target.closest("[data-copy]");if(!b)return;var el=document.getElementById(b.dataset.copy);if(!el)return;var t=el.textContent;var d=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1200)};if(navigator.clipboard)navigator.clipboard.writeText(t).then(d,d);else d()});
+load();window.addEventListener("customer",load);
+</script></body></html>

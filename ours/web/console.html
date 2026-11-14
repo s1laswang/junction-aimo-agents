@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Console - Aimo Trade Gateway</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%231F4E8C%27/%3E%3Cpath d=%27M4 11l4-6 4 6%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%271.5%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/console.css">
+</head>
+<body>
+<header class="top"><a class="brand" href="/">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html" aria-current="page">Console</a><a href="/inbox.html">Approvals</a><a href="/audit.html">Audit</a><a href="/admin.html">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
+<main class="grid">
+  <section class="left">
+    <form id="req" class="panel">
+      <label class="lbl" for="text">Request</label>
+      <textarea id="text" rows="3">I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.</textarea>
+      <div class="row">
+        <div class="chips" id="scenarios">
+          <button type="button" class="chip" data-s="milk">Lactose-free milk</button>
+          <button type="button" class="chip" data-s="lasagne">Menu: lasagne (40)</button>
+          <button type="button" class="chip" data-s="school">Over limit, school</button>
+          <button type="button" class="chip" data-s="hospital">Allergen-safe hospital</button>
+          <button type="button" class="chip" data-s="event">Last-minute event</button>
+        </div>
+        <span class="grow"></span>
+        <label class="ask-h"><input type="checkbox" id="ask-human"> Ask human approver</label>
+        <button id="run" class="primary" type="submit">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+          <span>Run</span>
+        </button>
+      </div>
+    </form>
+    <div id="result" aria-live="polite">
+      <div class="empty panel">Run a request to see the parsed need, offers, signed quote and decision.</div>
+    </div>
+  </section>
+  <aside class="side">
+    <div class="panel trace-panel">
+      <div class="ph"><h2>Agent trace</h2><span id="live" class="live">idle</span></div>
+      <ol id="trace" class="trace"></ol>
+      <div id="trace-empty" class="muted pad">No calls yet. External agents appear here too.</div>
+    </div>
+  </aside>
+</main>
+<script src="/shell.js"></script>
+<script src="/console.js"></script>
+</body>
+</html>
