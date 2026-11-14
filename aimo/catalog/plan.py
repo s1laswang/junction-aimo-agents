@@ -18,6 +18,7 @@ from aimo.catalog.allergens import (
     normalize_allergens,
     policy_allergen_block,
 )
+from aimo.catalog.screening_bridge import screen_reason
 from aimo.catalog.textsearch import clean_query, fts_search, get_rows, parse_query, _con
 from aimo.catalog.substitution import TIER_ORDER, rank_substitutes
 from aimo.models import Candidate, Need, Offer, Plan, PlanLine
@@ -174,6 +175,17 @@ def _only_orderability(c: Candidate) -> bool:
     return bool(parts) and all(any(x.startswith(o) for o in _ORDERABILITY) for x in parts)
 
 
+def _candidate_injection_reasons(c: Candidate, existing: list[str]) -> list[str]:
+    found = [r for r in c.reasons if "prompt-injection screen" in r and r not in existing]
+    if found:
+        return found
+    if (c.injection_screen or {}).get("suspicious") or "supplier_text_injection_suspected" in c.flags:
+        sr = screen_reason(c.injection_screen or {"suspicious": True, "reasons": []})
+        if sr and sr not in existing:
+            return [sr]
+    return []
+
+
 def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, rel: dict,
                 hints: dict) -> tuple[Plan, list[str]]:
     """Cover a shortfall with products that are only blocked by date (cut-off / late availability).
@@ -205,7 +217,10 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     ranked.sort(key=lambda c: (late[c.product.id][1], TIER_ORDER[c.tier], -c.rank_score))
     remaining = plan.shortfall
     from aimo.catalog.textsearch import get_rows as _gr
-    lots = {pid: d.get("allowed_lot_size") for pid, d in _gr([c.product.id for c in ranked]).items()}
+    try:
+        lots = {pid: d.get("allowed_lot_size") for pid, d in _gr([c.product.id for c in ranked]).items()}
+    except FileNotFoundError:
+        lots = {pid: (shortlist.get(pid) or {}).get("allowed_lot_size") for pid in (c.product.id for c in ranked)}
     new_lines: list[PlanLine] = []
     for c in ranked:
         if remaining <= 1e-9:
@@ -226,12 +241,14 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
         reasons = [c.reasons[0] if c.reasons else "",
                    f"Delivered {fmt(d)}, after the requested {fmt(need.delivery_by)}"
                    + (" (estimated date)" if est else "") + ("; split delivery allowed by the customer"
-                                                              if allow else "; needs a human decision"),
+                                                             if allow else "; needs a human decision"),
                    f"{units:g} x {c.product.sales_unit} x {content:g} {need.unit} = {covered:g} {need.unit}; "
                    f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}"]
+        reasons.extend(_candidate_injection_reasons(c, reasons))
         new_lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
                                   qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
-                                  unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=flags))
+                                  unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=flags,
+                                  injection_screen=c.injection_screen))
         remaining -= covered
     if not new_lines:
         return plan, []
@@ -250,8 +267,9 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     shortfall = round(max(0.0, need.quantity - covered_total), 4)
     note = (f"Split delivery: {late_cov:g} {need.unit} arrive {fmt(d_all)} (late_option lines, flagged for review).")
     _ = first
+    explanation = explain(need, lines, plan.candidates, covered_total, shortfall, total_net)
     return plan.model_copy(update={"lines": lines, "covered_amount": covered_total, "total_net": total_net,
-                                   "shortfall": shortfall}), [note]
+                                   "shortfall": shortfall, "explanation": explanation}), [note]
 
 
 def _line_date(need: Need, l: PlanLine) -> date:
@@ -424,9 +442,11 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
         reasons = [c.reasons[0]] if c.reasons else []
         reasons.append(f"{units:g} x {c.product.sales_unit} x {content:g} {need.unit} = {covered:g} {need.unit}; "
                        f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}")
+        reasons.extend(_candidate_injection_reasons(c, reasons))
         lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
                               qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
-                              unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=sorted(set(flags))))
+                              unit_price=c.offer.unit_price, line_total=total, reasons=reasons,
+                              flags=sorted(set(flags)), injection_screen=c.injection_screen))
         remaining -= covered
     covered_total = round(sum(l.covered_amount for l in lines), 4)
     total_net = round(sum(l.line_total for l in lines), 2)
@@ -455,4 +475,14 @@ def explain(need: Need, lines: list[PlanLine], cands: list[Candidate], covered: 
     n_rej = sum(1 for c in cands if c.tier == "rejected")
     if n_rej:
         parts.append(f"{n_rej} candidate(s) rejected; see candidates[].reasons.")
+    flagged = list(dict.fromkeys(
+        f"{l.product_name} ({l.product_id})"
+        for l in lines
+        if (l.injection_screen or {}).get("suspicious") or "supplier_text_injection_suspected" in l.flags
+    ))
+    if flagged:
+        parts.append(
+            f"Prompt-injection screen: untrusted supplier text on {', '.join(flagged)} was flagged "
+            f"and will require human approval."
+        )
     return " ".join(parts)
