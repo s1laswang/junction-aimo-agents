@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Optional
 
 from aimo.catalog import units as U
@@ -30,6 +31,31 @@ from aimo.catalog.textsearch import summary_from_row
 from aimo.models import Candidate, Need, Offer
 
 TIER_ORDER = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
+MAX_NEED_QUANTITY = 1_000_000.0
+VALID_UNITS = ("L", "KG", "PCS")
+
+
+def validate_need(need: Need) -> None:
+    if need is None:
+        raise ValueError("need is required")
+    qty = getattr(need, "quantity", None)
+    if isinstance(qty, bool) or not isinstance(qty, (int, float)):
+        raise ValueError("need.quantity must be a finite number greater than 0")
+    if isinstance(qty, float) and not math.isfinite(qty):
+        raise ValueError("need.quantity must be a finite number greater than 0")
+    if qty <= 0:
+        raise ValueError("need.quantity must be greater than 0")
+    if qty > MAX_NEED_QUANTITY:
+        raise ValueError("need.quantity must be at most 1000000")
+    query = getattr(need, "product_query", None)
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("need.product_query must be a non-empty string")
+    unit = getattr(need, "unit", None)
+    if not isinstance(unit, str) or unit not in VALID_UNITS:
+        raise ValueError("need.unit must be one of L, KG, PCS")
+    delivery_by = getattr(need, "delivery_by", None)
+    if not isinstance(delivery_by, date) or isinstance(delivery_by, datetime):
+        raise ValueError("need.delivery_by must be a date")
 
 # product-type markers: candidates must carry the same set as the reference product
 TYPE_MARKERS: dict[str, list[str]] = {
@@ -236,6 +262,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                      rows: dict[str, dict[str, Any]] | None = None, relevance: dict[str, float] | None = None,
                      inferred_allergens: dict[str, dict[str, str]] | None = None) -> list[Candidate]:
     """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates()."""
+    validate_need(need)
     caller_excl = normalize_allergens(need.excluded_allergens)
     excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
     if rows is not None and rows and caller_excl and all("allergen_source" not in d for d in rows.values()):
