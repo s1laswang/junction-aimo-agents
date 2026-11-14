@@ -38,13 +38,27 @@ Demo: *"We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Mo
 - **Delivery time and sustainability.** Each product shows the delivery reliability and category CO2 (kg CO2e/kg) from the challenge CSVs; cut-off times and requested dates come from the live API. Organic and origin labels (e.g. Finnish Blue Swan) are parsed from the data.
 - **Substitution and exceptions.** Good-better-best ranking with reasons; cut-off passed, partial stock, stock-out, sales block, price shock, upstream 429/503 (retry, then a clear 503 with `Retry-After`). Fault injection per request (`X-Aimo-Faults`) makes every exception demonstrable.
 - **Traceability and explainability.** Hash-chained, Ed25519-signed audit events with a readable report per order, `GET /v1/audit/verify`, and an evidence pack (events, signed quote, decision, JWKS, verification steps) for offline checking.
-- **Scenarios covered:** last-minute event, supplier stock-out with a compatible substitute (Gemini recipe check), allergen-safe substitution for a school (milk and nuts) and a hospital (gluten), prompt injection in supplier text, standing-order drift (3× usual volume). Menu-to-order and the proactive selling agent are covered as wind-tunnel scenario families. **TODO:** confirm against the final wind tunnel run.
+- **Scenarios covered:** last-minute event, supplier stock-out with a compatible substitute (Gemini recipe check), allergen-safe substitution for a school (milk and nuts) and a hospital (gluten), prompt injection in supplier text, standing-order drift (3× usual volume). Six of these run live end to end with the Gemini agent and all six pass (see Robustness). Menu-to-order and the proactive selling agent are wind-tunnel scenario families (**TODO:** confirm against the wind tunnel report).
 
 ## Robustness (measured)
-**TODO** from the wind tunnel: N scenarios, escalation precision/recall, policy violations (target 0), allergen violations (target 0), injection block rate, plan coverage, € error vs the cheapest compliant plan, and the same metrics for a naive agent with direct API access. Already measured: the regex injection screen flags 0 of 34,159 real supplier marketing texts; the catalog unit parser agrees with live comparison prices for 93% of a 752-product sample; 63 offline tests pass.
+**Live montage, 6 of 6 scenarios PASS** (`uv run aimo demo --montage`, Gemini agent over MCP against the live mock API, Sat 14 Nov 18:21; [demo-montage.md](demo-montage.md)):
+| Scenario | What happens |
+|---|---|
+| happy | Usual product past its cut-off, same-brand substitute, EUR 1,010, needs approval (spend, substitution, 3.3× volume), approved, placed |
+| stockout | Injected partial stock: the order is split into 4 lines, shortfall 0, approved, placed |
+| school-allergen | Milk products rejected for a school with milk and nut allergies; Oatly oat drink approved by the kitchen manager |
+| injection | Planted instructions in supplier text: 4 texts flagged and redacted before the model saw them, the policy cites injection, the quantity stays at 300 |
+| drift | 4,000 L standing order (13× usual): quote prepared, order held for human confirmation |
+| event | Multi-item request (cream and butter, lactose-free): one quote with 2 lines, placed |
+
+Each scenario takes 22–37 s end to end. The agent escalated to gemini-4-hydrogen with high thinking on every run, but only for the quote-decision turn (6 of 31 agent steps, 19%). Cost per placed order: **$0.0339** in Gemini calls (down from $0.0822 before a token trim, −59%).
+
+Wind tunnel (**TODO** from the wind tunnel report): N synthetic scenarios, escalation precision/recall, policy violations (target 0), allergen violations (target 0), injection block rate, plan coverage, € error vs the cheapest compliant plan, and the same metrics for a naive agent with direct API access.
+
+Also measured: the regex injection screen flags 0 of 34,159 real supplier marketing texts; the catalog unit parser agrees with live comparison prices for 93% of a 752-product sample; 138 offline tests pass.
 
 ## Tech
-Python 3.11, FastAPI, Pydantic v2, SQLite (FTS5 trigram), official `mcp` SDK (streamable HTTP and stdio), `google-genai`, `cryptography` (Ed25519), PyYAML; no-build HTML/JS approval UI. Gemini: `gemini-3.8-flash` (buyer agent, need parsing, scenario generation), `gemini-4-hydrogen` with high thinking (substitution decisions), `gemini-3.1-flash-lite` (allergen inference over 4,076 products, recipe check, injection screen), `gemini-embedding-2` (17,546-product hybrid search). One command: `uv run aimo serve`.
+Python 3.11, FastAPI, Pydantic v2, SQLite (FTS5 trigram), official `mcp` SDK (streamable HTTP and stdio), `google-genai`, `cryptography` (Ed25519), PyYAML; no-build HTML/JS approval UI. Gemini: `gemini-3.8-flash` (buyer agent, need parsing, scenario generation), `gemini-4-hydrogen` with high thinking (substitution decisions), `gemini-3.1-flash-lite` (allergen inference over 4,076 products, recipe check, injection screen), `gemini-embedding-2` (17,546-product hybrid search). About 31% of the agent's input tokens are served from Gemini's implicit cache. One command: `uv run aimo serve`.
 
 ## Openness and production path
 Open standards throughout: MCP, OpenAPI 3.1, JWS/EdDSA (RFC 7515, 8037) with a JWKS, RFC 7638 key ids, canonical JSON close to RFC 8785, GS1 GTINs, Peppol BIS order-response codes (AP/CA/RE), EU14 allergens (EU FIC 1169/2011). Production path: a SAP/webshop adapter behind the existing `BackendClient` interface; OAuth 2.1 per the MCP authorization spec with RFC 9396 authorization details; mandates as W3C Verifiable Credentials; signing keys in a KMS; Peppol BIS Ordering over the Peppol network; audit events in an append-only WORM store with anchored chain heads; policies portable to OPA or Cedar. Details: [ARCHITECTURE.md](ARCHITECTURE.md), [TRUST.md](TRUST.md).
