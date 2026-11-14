@@ -43,8 +43,34 @@ def next_delivery(weekday, today=None):
     return today + timedelta(days=(weekday - today.weekday()) % 7 or 7)
 
 
+ALLERGEN_ALIASES = {
+    "nuts": {"nuts", "nut", "peanuts", "peanut", "tree nuts"},
+    "nut": {"nuts", "nut", "peanuts", "peanut", "tree nuts"},
+    "peanut": {"peanut", "peanuts"},
+    "peanuts": {"peanut", "peanuts"},
+    "milk": {"milk", "lactose"},
+    "dairy": {"dairy", "milk", "lactose"},
+    "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
+    "egg": {"egg", "eggs"},
+    "eggs": {"egg", "eggs"},
+}
+
+
+def _norm_allergens(items, expand=False):
+    out = set()
+    for a in items or []:
+        s = str(a).strip().lower()
+        for prefix in ("may_contain:", "may:"):
+            if s.startswith(prefix):
+                s = s[len(prefix):].strip()
+                break
+        if s:
+            out |= ALLERGEN_ALIASES.get(s, {s}) if expand else {s}
+    return out
+
+
 def _safe(alt, excluded):
-    return not ({a.lower() for a in alt.get("allergens", [])} & excluded)
+    return not (_norm_allergens(alt.get("allergens", [])) & _norm_allergens(excluded, expand=True))
 
 
 def best_alt(after, qty, excluded):
@@ -61,7 +87,7 @@ def _sub_fix(alt, qty):
 
 def drift_rules(line, before, after, mandate, delivery):
     pid, name, qty = line["product_id"], line["name"], line["weeks"][-1]
-    excluded = {a.lower() for a in mandate.get("exclude_allergens", [])}
+    excluded = _norm_allergens(mandate.get("exclude_allergens", []), expand=True)
     alt = best_alt(after, qty, excluded)
     subst = mandate.get("substitutions", "never")
     sub_route = "auto" if alt and subst == "within_prefs" else "approval"
@@ -75,7 +101,7 @@ def drift_rules(line, before, after, mandate, delivery):
              _sub_fix(alt, qty) if alt else {"action": "none"}, sub_route if alt else "approval")
         return flags
 
-    bad = sorted({a.lower() for a in after.get("allergens", [])} & excluded)
+    bad = sorted(_norm_allergens(after.get("allergens", [])) & excluded)
     if bad:
         flag("mandate", "allowed", ", ".join(bad),
              f"{name} now lists excluded allergen {', '.join(bad)}; this customer's mandate forbids it.",
@@ -206,8 +232,11 @@ def apply(result, key, url, ask_human=True):
     lines = []
     for l in o["lines"]:
         fx = fixes.get(l["product_id"], {})
-        pid = fx["product_id"] if fx.get("action") == "substitute" else l["product_id"]
-        lines.append({"product_id": pid, "quantity": fx.get("quantity", l["quantity"])})
+        line = {"product_id": l["product_id"], "quantity": fx.get("quantity", l["quantity"])}
+        if fx.get("action") == "substitute":
+            line["product_id"] = fx["product_id"]
+            line["substitute_for"] = l["product_id"]
+        lines.append(line)
     c = httpx.Client(base_url=url, headers={"X-Agent-Key": key}, timeout=30)
     q = c.post("/v1/quotes", json={"offers": lines, "delivery_date": o["delivery_date"]}).raise_for_status().json()
     body = {"quote_id": q["quote_id"], "jws": q["jws"]}

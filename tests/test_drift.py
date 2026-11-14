@@ -79,6 +79,22 @@ def test_mandate_allergen_blocks_and_skips_unsafe_alt():
     assert f["fix"]["product_id"] == "2" and f["route"] == "approval"
 
 
+def test_trace_and_alias_allergens_under_nuts_mandate():
+    nuts_mandate = {**MANDATE, "exclude_allergens": ["nuts"]}
+    unsafe_tree = {**ALT, "product_id": "3", "price": 5.0, "allergens": ["tree nuts"]}
+    unsafe_trace = {**ALT, "product_id": "4", "price": 4.0, "allergens": ["may_contain:peanuts"]}
+    f = kinds(run(after(allergens=["may_contain:peanuts"], alternatives=[unsafe_tree, unsafe_trace]), mandate=nuts_mandate))["mandate"]
+    assert f["route"] == "approval" and f["after"] == "peanuts" and f["fix"]["action"] == "remove_line"
+    f = kinds(run(after(allergens=["tree nuts"], alternatives=[unsafe_trace, ALT]), mandate=nuts_mandate))["mandate"]
+    assert f["route"] == "approval" and f["after"] == "tree nuts" and f["fix"]["action"] == "substitute" and f["fix"]["product_id"] == "2"
+    f = kinds(run(after(allergens=["may:wheat"], alternatives=[ALT]), mandate={**MANDATE, "exclude_allergens": ["gluten"]}))["mandate"]
+    assert f["route"] == "approval" and f["after"] == "wheat"
+    f = kinds(run(after(allergens=["lactose"], alternatives=[ALT]), mandate={**MANDATE, "exclude_allergens": ["dairy"]}))["mandate"]
+    assert f["route"] == "approval" and f["after"] == "lactose"
+    f = kinds(run(after(allergens=["egg"], alternatives=[ALT]), mandate={**MANDATE, "exclude_allergens": ["eggs"]}))["mandate"]
+    assert f["route"] == "approval" and f["after"] == "egg"
+
+
 def test_qty_creep():
     line = {**LINE, "weeks": [8, 8, 9, 10, 12]}
     f = kinds(run(after(), line=line))["qty_creep"]
@@ -148,6 +164,31 @@ def test_apply_ask_human_sends_note():
     finally:
         drift.httpx.Client = real
     assert sent["ask_human"] is True and sent["note"] == "creep"
+
+
+def test_apply_passes_substitute_for():
+    sent = {}
+
+    def handler(req):
+        body = __import__("json").loads(req.content)
+        if req.url.path == "/v1/quotes":
+            sent["quote"] = body
+            return httpx.Response(200, json={"quote_id": "q", "jws": "j"})
+        sent["order"] = body
+        return httpx.Response(200, json={"status": "placed", "substitutions": [{"original_id": "1", "substitute_id": "2"}]})
+
+    real = httpx.Client
+    drift.httpx.Client = lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+    try:
+        r = {
+            "standing_order": {"delivery_date": "2026-11-17", "lines": [{"product_id": "1", "quantity": 5}, {"product_id": "9", "quantity": 3}]},
+            "flags": [{"route": "auto", "product_id": "1", "why": "unavailable", "fix": {"action": "substitute", "product_id": "2", "quantity": 5}}],
+        }
+        out = drift.apply(r, "k", "http://t", ask_human=True)
+    finally:
+        drift.httpx.Client = real
+    assert sent["quote"]["offers"] == [{"product_id": "2", "quantity": 5, "substitute_for": "1"}, {"product_id": "9", "quantity": 3}]
+    assert out["substitutions"] == [{"original_id": "1", "substitute_id": "2"}]
 
 
 ORDER = {"order_id": "ord_1", "status": "confirmed", "delivery_date": "2026-11-17",
