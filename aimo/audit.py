@@ -26,6 +26,7 @@ VERBS = {
     "order.confirmed": "had an order confirmed by the supplier",
     "order.rejected": "had an order rejected",
     "order.blocked": "had an order blocked",
+    "order.stockout": "had an order reopened after a supplier stock-out",
     "order_rejected": "had an order refused at the door",
     "parse.request": "asked for products",
     "offers.compared": "compared offers",
@@ -168,6 +169,7 @@ SYSTEM = {
     "order.confirmed": "Order confirmed by Valio (mock).",
     "order.expired": "Order expired:",
     "order.rejected": "Order rejected:",
+    "order.stockout": "Supplier stock-out:",
     "order_rejected": "Refused:",
 }
 
@@ -227,14 +229,16 @@ def verify_checkpoint(token, jwks=None):
     from joserfc.errors import JoseError
     from joserfc.jwk import KeySet
 
-    key = KeySet.import_key_set(jwks) if jwks else keys.signing_key()
     try:
+        key = KeySet.import_key_set(keys.jwks() if jwks is None else jwks)
         obj = jws.deserialize_compact(token, key, algorithms=["EdDSA"])
         head = json.loads(obj.payload)
         head["seq"], head["hash"]
     except (JoseError, ValueError, KeyError, TypeError):
         raise ValueError("BAD_SIGNATURE")
-    if obj.headers().get("alg") != "EdDSA" or (not jwks and obj.headers().get("kid") != keys.kid()):
+    if obj.headers().get("alg") != "EdDSA" or (
+        jwks is None and obj.headers().get("kid") not in {k["kid"] for k in keys.jwks()["keys"]}
+    ):
         raise ValueError("BAD_SIGNATURE")
     return head
 
