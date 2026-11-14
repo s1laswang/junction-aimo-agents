@@ -49,6 +49,7 @@ Footnote facts already measured: 0 false positives on 34,159 real supplier texts
 
 ## Slide 6: Openness and production path
 **On slide:** left column "Open today": MCP · OpenAPI 3.1 · otap.json discovery · JWS/JWKS · GS1 GTIN · Peppol AP/CA/RE · EU14 allergens. Right column "Production next": SAP adapter behind one interface · OAuth 2.1 (MCP auth spec) · mandates as W3C Verifiable Credentials · KMS keys · Peppol BIS Ordering · WORM audit store.
+**Also on slide (small):** "Every assumption, decision and number is written down": docs/ASSUMPTIONS.md · docs/DECISIONS.md · docs/NUMBERS.md.
 **Speaker notes (20 s):** "Nothing here is proprietary. Any agent connects with a three-line MCP config. To go live, Valio swaps the mock for SAP behind one interface we already have, puts OAuth in front, and moves the key into a KMS." [docs/ARCHITECTURE.md §4]
 
 ## Slide 7: Gemini
