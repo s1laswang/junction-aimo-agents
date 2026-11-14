@@ -140,7 +140,11 @@ def product_db():
 
 
 def allergens_of(pid):
-    p = product_db().get(str(pid))
+    try:
+        db = product_db()
+    except FileNotFoundError:
+        return None
+    p = db.get(str(pid))
     if not p:
         return None
     out = set()

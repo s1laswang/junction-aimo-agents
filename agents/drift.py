@@ -153,23 +153,32 @@ def save_state(path, state):
 
 
 def snapshot(offers_items, lines):
-    every = [o for g in offers_items for o in g.get("offers", [])]
+    every = [o for g in offers_items for o in (*g.get("offers", []), *g.get("alternatives", []))]
     out = {}
     for line, res in zip(lines, offers_items):
         pid = line["product_id"]
-        mine = next((o for o in every if o["product_id"] == pid), None)
-        alts = [
-            {"product_id": o["product_id"], "name": o["product"]["name"], "price": o["unit_price_net"],
-             "allergens": o["product"].get("allergens", []), "available_amount": o.get("available_amount"),
-             "sales_block": o.get("sales_block")}
-            for o in res.get("offers", []) if o["product_id"] != pid
-        ]
-        out[pid] = {"found": mine is not None, "alternatives": alts}
+        pool = (*res.get("offers", []), *res.get("alternatives", []), *every)
+        mine = next((o for o in pool if o["product_id"] == pid), None)
+        seen = {pid}
+        alts = []
+        for o in (*res.get("offers", []), *res.get("alternatives", [])):
+            oid = o["product_id"]
+            if oid in seen:
+                continue
+            seen.add(oid)
+            prod = o.get("product") or {}
+            alts.append({
+                "product_id": oid, "name": prod.get("name"), "price": o["unit_price_net"],
+                "allergens": prod.get("allergens", []), "available_amount": o.get("available_amount"),
+                "sales_block": o.get("sales_block"),
+            })
+        out[pid] = {"found": mine is not None, "offered": mine is not None, "alternatives": alts}
         if mine:
+            prod = mine.get("product") or {}
             out[pid].update(
                 price=mine["unit_price_net"], available_amount=mine.get("available_amount"),
                 available_date=mine.get("available_date"), sales_block=mine.get("sales_block"),
-                allergens=mine["product"].get("allergens", []))
+                allergens=prod.get("allergens", []))
     return out
 
 
@@ -204,19 +213,29 @@ def check(customer, key, url, today=None, state_path=None, rebaseline=False, cli
     }
     items = c.post("/v1/offers", json=need).raise_for_status().json()["items"]
     now = snapshot(items, seed["lines"])
-    for l in seed["lines"]:
-        pid = l["product_id"]
-        if not now[pid]["found"]:
-            q = exact_quote(c, l, prods[pid], delivery)
-            if q:
-                now[pid].update(q)
     state = load_state(state_path)
     base = state.get(customer, {}).get("baseline", {})
+    excluded = _norm_allergens(mandate.get("exclude_allergens", []), expand=True)
+    for l, grp in zip(seed["lines"], items):
+        pid = l["product_id"]
+        if not now[pid]["found"]:
+            offers = grp.get("offers", [])
+            stockout_signal = (
+                bool(base.get(pid, {}).get("offered"))
+                or (grp.get("shortfall") or 0) > 0
+                or any(o.get("substitute_for") == pid for o in offers)
+                or any(f"({pid})" in n for o in offers for n in (o.get("notes") or []))
+                or bool(grp.get("options"))
+            )
+            if not stockout_signal or not _safe(prods[pid], excluded):
+                q = exact_quote(c, l, prods[pid], delivery)
+                if q:
+                    now[pid].update(q)
     flags = []
     for line in seed["lines"]:
         flags += drift_rules(line, base.get(line["product_id"], {}), now[line["product_id"]], mandate, delivery)
     if rebaseline or customer not in state:
-        state[customer] = {"baseline": {p: {"price": s.get("price")} for p, s in now.items()}, "week": delivery}
+        state[customer] = {"baseline": {p: {"price": s.get("price"), "offered": bool(s.get("offered"))} for p, s in now.items()}, "week": delivery}
         save_state(state_path, state)
     order = {"customer": customer, "delivery_date": delivery,
              "lines": [{"product_id": l["product_id"], "name": l["name"], "unit": l["unit"], "quantity": l["weeks"][-1], "history": l["weeks"]} for l in seed["lines"]]}
