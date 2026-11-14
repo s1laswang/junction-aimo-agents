@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+data
+var
+var-*.log
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+pitch
+tests
