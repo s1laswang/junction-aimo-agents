@@ -6,6 +6,9 @@ Reuses the wind tunnel snapshot layout (windtunnel/snapshot.py on team/windtunne
   <dir>/meta.json                       {"time_now": <server timeNow at recording>, "dates": [...], ...}
 
   AIMO_REPLAY=<dir>            replay only (no network): the full demo runs without Wi-Fi
+  AIMO_REPLAY=1                replay from the bundled snapshot (tests/fixtures/snapshot/replay, committed)
+  no AIMO_API_KEY              replay from the bundled snapshot automatically (keyless clone = working demo);
+                               AIMO_REPLAY=0 or AIMO_OFFLINE=1 (tests) turn the automatic replay off
   (unset)                      live; if the upstream is unreachable (after retries / circuit open) the gateway
                                falls back to the snapshot at data/windtunnel/snapshot (or AIMO_REPLAY_FALLBACK=<dir>;
                                AIMO_REPLAY_FALLBACK=0 disables). Provenance says served_from: "replay".
@@ -13,6 +16,7 @@ Snapshot data is real recorded mock-API output; dates that were not recorded are
 """
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import threading
@@ -25,10 +29,33 @@ from typing import Any
 from aimo import config
 
 
+BUNDLED_DIR = config.ROOT / "tests" / "fixtures" / "snapshot" / "replay"
+_ON = ("1", "true", "yes", "on", "auto", "bundled")
+
+
+def _keyless() -> bool:
+    return not (os.environ.get("AIMO_API_KEY", "").strip() or config.AIMO_API_KEY)
+
+
+def mode() -> str:
+    """'forced' (AIMO_REPLAY set), 'auto' (no AIMO_API_KEY, bundled snapshot) or 'off'."""
+    v = os.environ.get("AIMO_REPLAY", "").strip()
+    if v == "0":
+        return "off"
+    if v:
+        return "forced"
+    if _keyless() and not config.OFFLINE and os.environ.get("AIMO_OFFLINE", "0") != "1":
+        return "auto"
+    return "off"
+
+
 def replay_dir() -> Path | None:
     v = os.environ.get("AIMO_REPLAY", "").strip()
-    if not v or v == "0":
+    m = mode()
+    if m == "off":
         return None
+    if m == "auto" or v.lower() in _ON:
+        return BUNDLED_DIR if (BUNDLED_DIR / "meta.json").exists() else None
     p = Path(v).expanduser()
     return p if p.is_dir() else None
 
@@ -37,7 +64,8 @@ def fallback_dir() -> Path | None:
     v = os.environ.get("AIMO_REPLAY_FALLBACK", "").strip()
     if v == "0":
         return None
-    for p in (replay_dir(), Path(v).expanduser() if v else None, config.DATA_DIR / "windtunnel" / "snapshot"):
+    for p in (replay_dir(), Path(v).expanduser() if v else None, config.DATA_DIR / "windtunnel" / "snapshot",
+              BUNDLED_DIR):
         if p is not None and p.is_dir() and (p / "meta.json").exists():
             return p
     return None
@@ -75,19 +103,21 @@ class ReplayClient:
         self._lock = threading.Lock()
 
     def dates(self) -> list[str]:
-        return sorted({p.stem.split("_", 1)[1] for p in self.dir.glob("availability_*.json")})
+        return sorted({p.name.split("_", 1)[1].split(".", 1)[0] for p in self.dir.glob("availability_*.json*")})
 
     def _load(self, endpoint: str, d: str) -> tuple[dict, dict[str, dict]]:
         key = (endpoint, d)
         with self._lock:
             if key not in self._files:
                 p = self.dir / f"{endpoint}_{d}.json"
+                if not p.exists() and p.with_suffix(".json.gz").exists():
+                    p = p.with_suffix(".json.gz")
                 if not p.exists():
                     from aimo.backend.client import UpstreamError
 
                     raise UpstreamError(f"replay snapshot has no {endpoint} data for {d} (recorded dates: "
                                         f"{', '.join(self.dates()) or 'none'})", 503)
-                raw = json.loads(p.read_text())
+                raw = json.loads(gzip.decompress(p.read_bytes()) if p.suffix == ".gz" else p.read_text())
                 head = {k: v for k, v in raw.items() if k != "products"}
                 self._files[key] = (head, {str(x.get("productId")): x for x in raw.get("products", []) or []})
             return self._files[key]
@@ -127,4 +157,4 @@ def info(d: Path | None = None) -> dict[str, Any]:
         return {"available": False}
     m = meta(d)
     return {"available": True, "dir": str(d), "time_now": m.get("time_now"), "dates": ReplayClient(d).dates(),
-            "n_ids": m.get("n_ids"), "forced": replay_dir() is not None}
+            "n_ids": m.get("n_ids"), "forced": replay_dir() is not None, "mode": mode() if replay_dir() else "fallback"}
