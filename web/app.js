@@ -453,8 +453,8 @@ function voiceCard(o, q) {
       oninput: (e) => { V.typed = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter" && inp.value.trim()) understand(o, inp.value.trim(), "typed"); } });
     body.push(V.note ? h("div", { class: "faint small" }, V.note) : null,
       h("div", { class: "row" }, inp, h("button", { type: "button", class: "btn btn-sm", onclick: () => inp.value.trim() && understand(o, inp.value.trim(), "typed") }, "Send"), again));
-    if (!V.focused) { V.focused = true; setTimeout(() => inp.focus(), 30); }
-    else if (document.activeElement?.id === "voice-typed") setTimeout(() => { const n = $("voice-typed"); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 0);
+    if (!V.focused) { V.focused = true; setTimeout(() => inp.focus({ preventScroll: true }), 30); }
+    else if (document.activeElement?.id === "voice-typed") setTimeout(() => { const n = $("voice-typed"); if (n) { n.focus({ preventScroll: true }); n.setSelectionRange(n.value.length, n.value.length); } }, 0);
   }
   if (V.phase === "thinking") body.push(V.transcript ? h("div", { class: "voice-heard" }, "Heard: ", h("q", null, V.transcript)) : null,
     h("div", { class: "row" }, h("span", { class: "spinner" }), h("span", { class: "muted small" }, "Understanding the answer")));
@@ -1303,8 +1303,11 @@ function decisionForm(o, q) {
         h("span", { class: "binding-note" }, "Your decision is bound to quote hash ", h("span", { class: "mono" }, shortHash(q.quote_hash)), ". If the price or lines change, it no longer applies."),
         h("button", { class: "btn btn-voice", disabled: busy || expired || voiceBusy(), title: "Hear the order read out, answer approve or reject, then confirm on screen", onclick: () => startVoice(o, q) }, micIcon(), "Decide by voice"),
         h("button", { class: "btn btn-bad", disabled: busy, onclick: () => decide(o, q, "reject") }, "Reject"),
-        h("button", { class: "btn btn-ok btn-lg", disabled: busy || expired, title: expired ? "The price lock has expired: the agent must request a new quote" : "",
-          onclick: () => decide(o, q, "approve") }, busy ? [h("span", { class: "spinner" }), "Placing order"] : `Approve ${eur(q.total_net)}`))));
+        // An expired price lock is not a dead end: approving asks the gateway to re-price the same lines
+        // (409 requote_needed with a new signed quote), shown as an old-vs-new diff before anything is ordered.
+        h("button", { class: `btn btn-lg ${expired ? "btn-primary" : "btn-ok"}`, disabled: busy,
+          title: expired ? "The price lock has expired. The gateway re-prices the same lines; you review the difference before ordering." : "",
+          onclick: () => decide(o, q, "approve") }, busy ? [h("span", { class: "spinner" }), expired ? "Re-pricing" : "Placing order"] : expired ? "Price lock expired: re-price and review" : `Approve ${eur(q.total_net)}`))));
 }
 
 async function decide(o, q, decision, voiceNote) {
@@ -1335,7 +1338,7 @@ async function decide(o, q, decision, voiceNote) {
     if (e.code === "requote_needed" || fresh) {
       // Prices moved since the quote was signed: show old vs new and let the approver approve the fresh quote in one click.
       S.requote = { order_id: o.order_id, old: q, fresh: fresh || null, new_order_id: det.new_order?.order_id || det.new_order_id || det.order_id || o.order_id,
-        changes: det.changes || null, reason: e.body?.message || e.message };
+        changes: det.changes || null, why: det.reason || null, reason: e.body?.message || e.message };
       S.voice = null;
       if (!fresh && (det.new_quote_id || det.quote_id)) { try { S.requote.fresh = await api.getQuote(det.new_quote_id || det.quote_id); } catch { /* shown as missing */ } }
       renderApprovals();
@@ -1358,7 +1361,10 @@ function requoteCard(it) {
   const delta = fresh ? fresh.total_net - old.total_net : null;
   const diffCell = (a, b, fmt) => a === b || b == null ? h("span", null, a == null ? "–" : fmt(a)) : h("span", null, h("s", { class: "faint" }, a == null ? "–" : fmt(a)), " ", h("b", { class: b > a ? "up" : "down" }, fmt(b)));
   return h("div", { class: "card requote decide-sticky" },
-    h("div", { class: "card-head" }, h("h3", { class: "grow" }, "Prices changed: re-quote needed"),
+    h("div", { class: "card-head" }, h("h3", { class: "grow" },
+      R.why === "cutoff_passed" ? "Cut-off passed while waiting: re-planned"
+        : R.why === "line_unavailable" ? "A line became unavailable: re-planned"
+        : delta ? "Prices changed: re-quote needed" : R.why === "quote_expired" ? "Price lock expired: fresh quote, same price" : "Re-quote needed"),
       delta != null ? h("span", { class: `delta ${delta > 0 ? "up" : "down"}` }, `${delta > 0 ? "+" : ""}${eur(delta)} (${num((delta / old.total_net) * 100, 1)}%)`) : null),
     h("div", { class: "card-body sm muted" }, R.reason, " Your approval was bound to the old quote hash, so it did not apply. Nothing was ordered."),
     h("table", { class: "t" },
