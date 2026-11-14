@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, Body, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -25,7 +25,7 @@ try:  # MCP SDK present in this project; annotations below are evaluated by the 
 except ImportError:  # pragma: no cover
     Context = Any  # type: ignore[misc,assignment]
 
-from aimo.gateway import service
+from aimo.gateway import auth, service
 
 TAG_RECIPES = "recipes"
 TAG_DRIFT = "drift"
@@ -80,9 +80,15 @@ def do_plan_recipe(body: RecipePlanRequest, ident: service.Identity) -> dict[str
     from aimo.backend.client import UpstreamError
     from aimo.recipes import RecipeError, plan_recipe
 
-    who = service.claim_identity(ident, body.customer_id, None) if body.customer_id else ident
+    if getattr(ident, "authenticated", {}).get("customer") and body.customer_id:
+        who = service.claim_identity(ident, body.customer_id, None)
+    elif body.customer_id and body.customer_id.strip():
+        who = service.Identity(agent_id=ident.agent_id, customer_id=body.customer_id.strip())
+    else:
+        who = ident
+    cid = auth.require_known_customer(who.customer_id)
     try:
-        return plan_recipe(body.recipe_id, body.portions, body.delivery_by, who.customer_id, text=body.text,
+        return plan_recipe(body.recipe_id, body.portions, body.delivery_by, cid, text=body.text,
                            excluded_allergens=body.excluded_allergens, lactose_free=body.lactose_free,
                            gluten_free=body.gluten_free, include_candidates=body.include_candidates)
     except RecipeError as e:
@@ -108,8 +114,9 @@ def do_propose(body: ProposalRequest, agent_id: Optional[str]) -> dict[str, Any]
     from aimo.agents.seller import ProposalError, propose_offer
     from aimo.backend.client import UpstreamError
 
+    cid = auth.require_known_customer(body.customer_id)
     try:
-        return propose_offer(body.customer_id, product_id=body.product_id, qty_sales_units=body.qty_sales_units,
+        return propose_offer(cid, product_id=body.product_id, qty_sales_units=body.qty_sales_units,
                              replaces_product_id=body.replaces_product_id, delivery_date=body.delivery_date,
                              note=body.note, agent_id=agent_id)
     except ProposalError as e:
@@ -141,30 +148,67 @@ def list_recipes() -> list[dict[str, Any]]:
 
 
 @router.post("/v1/recipes/plan", tags=[TAG_RECIPES], summary="Plan a recipe: scale, map to products, quote lines")
-def plan_recipe(body: RecipePlanRequest, x_agent_id: Optional[str] = Header(None),
-                x_customer_id: Optional[str] = Header(None)) -> dict[str, Any]:
+def plan_recipe(
+    body: RecipePlanRequest,
+    x_agent_id: Optional[str] = Header(None),
+    x_customer_id: Optional[str] = Header(None),
+    x_agent_key: Optional[str] = Header(None),
+) -> dict[str, Any]:
     """Scales the dish to the portions, applies allergen swaps from the customer's policy (a milk-allergy
     kitchen gets the dairy-free option), plans every ingredient with live offers (one batched mock-API call)
     and returns per-ingredient plans plus `quote_request` for POST /v1/quotes."""
-    return do_plan_recipe(body, _ident(x_agent_id, x_customer_id))
+    who = auth.resolve_customer_identity(
+        x_customer_id=x_customer_id,
+        body_customer_id=body.customer_id,
+        x_agent_id=x_agent_id,
+        x_agent_key=x_agent_key,
+    )
+    return do_plan_recipe(body, who)
 
 
 @router.get("/v1/drift/{customer_id}", tags=[TAG_DRIFT], summary="Standing-order drift (price / volume creep)")
-def drift(customer_id: str, rebaseline: bool = Query(False, description="Reset the price baseline to today's prices")
-          ) -> dict[str, Any]:
+def drift(
+    customer_id: str,
+    rebaseline: bool = Query(False, description="Reset the price baseline to today's prices"),
+    x_customer_id: Optional[str] = Header(None),
+    x_agent_key: Optional[str] = Header(None),
+) -> dict[str, Any]:
     """Checks the customer's standing order (seeded 8-week history) against live offers for the next delivery:
     `flags[] {product_id, kind: price|volume|availability|allergen, change_pct, message, route}` in plain
     language. Price baseline = first live price this gateway observed. Honours `X-Aimo-Faults`."""
-    return do_drift(customer_id, rebaseline)
+    if rebaseline:
+        if not x_customer_id or not x_customer_id.strip():
+            raise service.ServiceError(401, "identity_required", "Rebaselining standing-order drift requires X-Customer-Id.")
+        xcid = auth.require_known_customer(x_customer_id)
+        cid = auth.require_known_customer(customer_id)
+        if xcid != cid:
+            raise service.ServiceError(
+                403,
+                "customer_mismatch",
+                f"request names customer {customer_id!r} but the caller is authenticated as {xcid!r}",
+            )
+        auth.check_agent_key(cid, x_agent_key)
+        return do_drift(cid, rebaseline=True)
+    return do_drift(customer_id, False)
 
 
 @router.post("/v1/proposals", tags=[TAG_PROPOSALS], summary="Seller agent proposes an offer (cannot order)")
-def create_proposal(body: ProposalRequest, x_agent_id: Optional[str] = Header(None, description="valio-aimo/<agent>")
-                    ) -> dict[str, Any]:
+def create_proposal(
+    body: ProposalRequest,
+    x_agent_id: Optional[str] = Header(None, description="valio-aimo/<agent>"),
+) -> dict[str, Any]:
     """A Valio Aimo seller agent proposes an offer to a customer. Returns the proposal with a non-binding
     preview of the customer's policy verdict. The seller can never place the order: only the customer's own
     agent can accept (POST /v1/proposals/{id}/accept), and then the normal signed quote + policy path decides."""
-    return do_propose(body, x_agent_id)
+    from aimo.agents.seller import is_seller
+
+    aid = (x_agent_id or "").strip()
+    if not aid:
+        raise service.ServiceError(401, "identity_required", "POST /v1/proposals requires X-Agent-Id (valio-aimo/<agent>).")
+    if not is_seller(aid):
+        raise service.ServiceError(403, "seller_required", "Only a seller agent (valio-aimo/*) may create proposals.")
+    auth.require_known_customer(body.customer_id)
+    return do_propose(body, aid)
 
 
 @router.get("/v1/proposals", tags=[TAG_PROPOSALS], summary="List proposals")
@@ -183,21 +227,42 @@ def proposal(proposal_id: str) -> dict[str, Any]:
 
 
 @router.post("/v1/proposals/{proposal_id}/accept", tags=[TAG_PROPOSALS], summary="Customer's agent accepts")
-def accept(proposal_id: str, x_agent_id: Optional[str] = Header(None), x_customer_id: Optional[str] = Header(None)
-           ) -> dict[str, Any]:
+def accept(
+    proposal_id: str,
+    x_agent_id: Optional[str] = Header(None),
+    x_customer_id: Optional[str] = Header(None),
+    x_agent_key: Optional[str] = Header(None),
+) -> dict[str, Any]:
     """Customer side only (403 `seller_cannot_order` for valio-aimo/* agents). Creates a signed quote under the
     buyer's identity and places the order: the customer's policy decides (placed / pending_approval / rejected)."""
-    from aimo.agents.seller import accept_proposal
+    from aimo.agents.seller import accept_proposal, is_seller
 
+    if not (x_agent_id and x_agent_id.strip()) or not (x_customer_id and x_customer_id.strip()):
+        raise service.ServiceError(401, "identity_required", "Accepting a proposal requires X-Customer-Id and X-Agent-Id.")
+    if not is_seller(x_agent_id):
+        cid = auth.require_known_customer(x_customer_id)
+        auth.check_agent_key(cid, x_agent_key)
     return _svc(accept_proposal, proposal_id, _ident(x_agent_id, x_customer_id))
 
 
 @router.post("/v1/proposals/{proposal_id}/decline", tags=[TAG_PROPOSALS], summary="Customer's agent declines")
-def decline(proposal_id: str, body: ProposalDecision, x_agent_id: Optional[str] = Header(None),
-            x_customer_id: Optional[str] = Header(None)) -> dict[str, Any]:
-    from aimo.agents.seller import decline_proposal
+def decline(
+    proposal_id: str,
+    body: ProposalDecision = Body(default_factory=ProposalDecision),
+    x_agent_id: Optional[str] = Header(None),
+    x_customer_id: Optional[str] = Header(None),
+    x_agent_key: Optional[str] = Header(None),
+) -> dict[str, Any]:
+    from aimo.agents.seller import decline_proposal, is_seller
 
-    return _svc(decline_proposal, proposal_id, _ident(x_agent_id, x_customer_id), body.reason)
+    if not (x_agent_id and x_agent_id.strip()) or not (x_customer_id and x_customer_id.strip()):
+        raise service.ServiceError(401, "identity_required", "Declining a proposal requires X-Customer-Id and X-Agent-Id.")
+    if is_seller(x_agent_id):
+        raise service.ServiceError(403, "seller_cannot_order",
+                                   "a seller agent can only propose; the customer's own agent must decide")
+    cid = auth.require_known_customer(x_customer_id)
+    auth.check_agent_key(cid, x_agent_key)
+    return _svc(decline_proposal, proposal_id, _ident(x_agent_id, cid), body.reason)
 
 
 # ------------------------------------------------------------------ MCP
@@ -238,7 +303,8 @@ def register_mcp_tools(mcp: Any) -> Any:
         """Check the customer's standing order for drift before the next delivery: price creep (vs the first
         price we observed), volume creep over the 8-week history, items that cannot be delivered, allergen
         conflicts. Returns flags with plain-language messages and route auto|approval."""
-        return _call(ctx, do_drift, customer_id or _identity(ctx).customer_id)
+        ident = _identity(ctx)
+        return _call(ctx, lambda: do_drift(auth.require_known_customer(customer_id) if customer_id else ident.customer_id))
 
     def propose_offer(customer_id: str, product_id: Optional[str] = None, qty_sales_units: Optional[float] = None,
                       replaces_product_id: Optional[str] = None, delivery_date: Optional[str] = None, note: str = "",
