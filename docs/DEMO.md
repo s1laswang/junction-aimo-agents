@@ -80,7 +80,7 @@ curl -s -X POST http://localhost:8000/v1/approvals/<NEW_ORDER_ID>/decision \
   -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<NEW_QUOTE_HASH>"}'
 ```
 
-In `/ui`, the Approvals tab renders the old-vs-new line diff card automatically and lets Anna approve the replacement `quote_hash` in one click, while `GET /v1/audit/verify` confirms `order.requoted` in the intact chain.
+In `/ui`, the Approvals tab renders the old-vs-new line diff card automatically and lets Anna approve the replacement `quote_hash` in one click, while `GET /v1/audit/verify` confirms `order.requoted` in the intact chain. Runnable one-command script for the same beat: `uv run python docs/pitch/requote_beat.py --base http://localhost:8000`.
 
 ## Robustness montage (`uv run aimo demo --montage`)
 
@@ -130,8 +130,8 @@ Without a credential both routes return 401. Verified Sat 14 Nov 23:13 with an a
 | Gateway won't start / laptop problem | Mock UI without the gateway: `cd web && python -m http.server 8765`, open `http://127.0.0.1:8765/index.html?mock=1`. | 30 s |
 | Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (uses Gemini in about 30–40 s when keyed, or finishes end-to-end via the deterministic scripted buyer fallback when keyless), or `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
 | Delivery cut-off passed (live demo after Sun 15 Nov 17:00 Helsinki: product 464306 is no longer orderable for Monday; 463038's cut-off already passed Thu 12 Nov 15:00) | Prevent it: start the gateway with `AIMO_NOW=2026-11-15T10:00:00+02:00` (checklist step 5) or in replay mode. If you only notice on stage, run the story in mock mode: `http://localhost:8000/ui/?mock=1` (or, with no gateway, `cd web && python -m http.server 8765` → `http://127.0.0.1:8765/index.html?mock=1`). Say: "The real delivery cut-off for Monday has passed, so this is the identical flow on recorded data." That is itself the cut-off handling story. | 5 s |
-| Everything down | Play the pre-recorded video: the unlisted URL in the "Demo video" row of [SUBMISSION.md](SUBMISSION.md) (filled at the freeze), plus a local copy on the presenter laptop's desktop as `aimo-demo.mp4`. | 0 s |
+| Everything down | Play the committed headless Playwright backup video [docs/demo-backup.mp4](demo-backup.mp4) (reproducible via `uv run python scripts/record_demo_video.py`, also linked in the "Demo video" row of [SUBMISSION.md](SUBMISSION.md)). | 0 s |
 
 ## Recording the video (2–3 minutes)
 
-Use the same script, including the permissions attack and the sign-in, and do the approval click by hand (don't use `&autoapprove=1` for the video: the human click is the point). Useful URL helpers: `?customer=hotel-aurora`, `&autorun=1` (starts the run on load), `&tab=plan|approvals|audit`. Record at 1280×800, add captions for the three NEEDS APPROVAL reasons and the verify-chain result, and end on the openness slide. Upload as unlisted and paste the link into `docs/SUBMISSION.md`.
+Committed backup video: [docs/demo-backup.mp4](demo-backup.mp4) (headless Playwright walkthrough of the request, signed quote, 403 permissions attack, 409 price-change requote, human approval, Peppol AP order, and verified audit chain; reproducible via `uv run python scripts/record_demo_video.py`). For a live narrated stage capture, use the same script, including the permissions attack and the sign-in, and do the approval click by hand (don't use `&autoapprove=1` for the video: the human click is the point). Useful URL helpers: `?customer=hotel-aurora`, `&autorun=1` (starts the run on load), `&tab=plan|approvals|audit`. Record at 1280x800, add captions for the three NEEDS APPROVAL reasons and the verify-chain result, and end on the openness slide (linked in `docs/SUBMISSION.md`).
