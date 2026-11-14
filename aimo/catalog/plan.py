@@ -19,7 +19,7 @@ from aimo.catalog.allergens import (
     policy_allergen_block,
 )
 from aimo.catalog.textsearch import clean_query, fts_search, get_rows, parse_query, _con
-from aimo.catalog.substitution import TIER_ORDER, rank_substitutes
+from aimo.catalog.substitution import TIER_ORDER, rank_substitutes, validate_need
 from aimo.models import Candidate, Need, Offer, Plan, PlanLine
 
 MAX_OFFER_IDS = 30
@@ -103,16 +103,29 @@ def _static_priority(need: Need, d: dict[str, Any], rel: float, excl: Optional[l
 
 def _round_lot(units: float, lot: Optional[float], up: bool = True) -> float:
     """Whole sales units, multiple of allowedLotSize (lot sizes like 0.01 mean 'any whole unit')."""
+    if isinstance(units, bool) or not isinstance(units, (int, float)):
+        raise ValueError("units must be a finite number")
+    try:
+        u = float(units)
+    except OverflowError as e:
+        raise ValueError("units must be a finite number") from e
+    if not math.isfinite(u):
+        raise ValueError("units must be a finite number")
+    if u <= 0:
+        return 0.0
     step = 1.0
-    if lot and lot >= 1:
-        step = float(lot)
-    q = units / step
+    if lot is not None and not isinstance(lot, bool) and isinstance(lot, (int, float)):
+        lf = float(lot)
+        if math.isfinite(lf) and lf >= 1:
+            step = lf
+    q = u / step
     q = math.ceil(q - 1e-9) if up else math.floor(q + 1e-9)
     return q * step
 
 
 def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[str, Offer]]] = None,
               limit: int = 12) -> Plan:
+    validate_need(need)
     if offers_fn is None:
         from aimo.catalog.offers import get_offers
         offers_fn = get_offers
@@ -386,6 +399,7 @@ def _call_offers(fn, ids: list[str], need: Need) -> dict[str, Offer]:
 
 
 def fill(need: Need, cands: list[Candidate]) -> Plan:
+    validate_need(need)
     remaining = float(need.quantity)
     lines: list[PlanLine] = []
     excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)

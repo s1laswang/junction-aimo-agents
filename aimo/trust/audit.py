@@ -66,8 +66,17 @@ def _local(ts: datetime, fmt: str = "%H:%M:%S") -> str:
     try:
         from zoneinfo import ZoneInfo
         return ts.astimezone(ZoneInfo("Europe/Helsinki")).strftime(fmt)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return ts.strftime(fmt)
+
+
+def _local_date(ts: datetime) -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        dt = ts.astimezone(ZoneInfo("Europe/Helsinki"))
+    except Exception:
+        dt = ts
+    return f"{dt.strftime('%a')} {dt.day} {dt.strftime('%b %Y')}"
 
 
 def actor_text(actor: str) -> str:
@@ -224,7 +233,7 @@ class AuditLog:
         if not evs:
             lines.append("_No events recorded for this subject._")
         else:
-            lines.append(f"_{_local(evs[0].ts, '%a %-d %b %Y')}, times in Helsinki (EET)._")
+            lines.append(f"_{_local_date(evs[0].ts)}, times in Helsinki (EET)._")
             lines.append("")
             for e in evs:
                 lines.append(f"- **{_local(e.ts)}**, {e.summary}  `#{e.seq} {e.action}`")
