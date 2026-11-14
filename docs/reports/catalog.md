@@ -107,6 +107,22 @@ Coverage: 9,978 products have some structured allergen data. 7,568 have none, so
 - `plan_need(need, offers_fn=None)` takes an optional injected offers function `(ids, date, customer_id=...) -> dict[str, Offer]`.
 - An `UpstreamError` from `aimo.backend.get_offers` propagates out of `plan_need`, so the gateway can return a 503. The catalog does not swallow it.
 
+## Round 3 (must-fix): preferences no longer disable the product-type check
+- **Bug:** a non-empty `need.preferences` (for example `{"parsed_by": "gemini"}`) with no usual product made `reference_spec` drop the type reference.
+  - School "oat drink" 120 L then planned 21 × 477410 Pepsi Max for €249.69.
+  - "cream" returned no candidates.
+- **Fixes in `aimo/catalog/substitution.py`:**
+  1. `SPEC_PREF_KEYS` = brand, fat_pct, organic, pack, use. All other preference keys are ignored (parsed_by, delivery_date_assumed, standing_order_*, injection_flags). Only brand, fat_pct and organic shape the tiers.
+  2. When there is no usual product, the closest-match type reference is always set, whatever the preferences say. The closest match is now picked as the most relevant candidate that passes the claim, allergen, unit and query-concept checks, preferring one whose product type matches what the query names: plain milk for "lactose-free milk", not "Cafè milk".
+  3. New query-concept guard for needs with no usual product. The candidate's name, in any language, must contain every distinguishing query concept, or its claims must cover claim words such as "lactose free". Generic words like "drink" do not count, so a soft drink can never pass for "oat drink".
+  4. Brand preference with no usual product: same brand and spec gives best, other brand gives better. `_same_fat` now treats "no fat requirement" as a match.
+- **Live results:**
+  - oat drink, `parsed_by` set: 120 × Oatly 470863, €168.
+  - cream 40 L lactose-free: 40 × Valio 464221.
+  - brand Arla: 100 × Arla 469363, tier best.
+  - The hotel demo is unchanged: €1,010, 464306 best.
+- **New tests:** `test_oat_drink_non_spec_preferences_do_not_drop_type_check` (3 preference variants), `test_cream_40l_lactose_free_with_parser_preferences`, `test_brand_preference_without_usual_product`, `test_spec_preferences_ignore_non_spec_keys`. The catalog has 37 tests; the full suite passes 137.
+
 ## Round 2 (Sat evening): allergen text and query robustness
 - **Buyer bug fixed: the school allergen scenario returned an empty plan.** The cause was the planner's product-type guess, not raw_text itself.
   - The catalog never reads raw_text for types. But when a query carried allergy words ("milk-free oat drink", "oat drink, pupils have milk and nut allergies"), or the buyer's regex fallback produced a junk phrase ("by Wednesday"), the "milk" mention became the reference product type. Every oat drink was then rejected as "different product type".
