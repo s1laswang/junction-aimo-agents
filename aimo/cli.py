@@ -121,12 +121,12 @@ def cmd_serve(a: argparse.Namespace) -> None:
 
 def cmd_demo(a: argparse.Namespace, rest: list[str]) -> None:
     try:
-        from aimo.buyer.run_demo import main as demo_main  # type: ignore
+        from aimo.buyer.run_demo import main as demo_main
     except ImportError:
         raise SystemExit("aimo.buyer.run_demo is not available yet (buyer engineer). "
                          "Meanwhile: `aimo serve` and follow docs/reports/gateway.md curl walkthrough.")
-    sys.argv = ["aimo demo", *rest]
-    demo_main()
+    rc = demo_main(rest)
+    raise SystemExit(rc if isinstance(rc, int) else 0)
 
 
 def cmd_mcp(_: argparse.Namespace) -> None:

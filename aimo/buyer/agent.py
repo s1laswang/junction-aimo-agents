@@ -516,7 +516,7 @@ class BuyerAgent:
             if isinstance(args.get("need"), dict):
                 args["need"] = {**args["need"], **{k: v for k, v in quote_need.items()
                                                    if k in ("customer_id", "required_claims", "excluded_allergens", "raw_text")}}
-            args.setdefault("delivery_date", n.delivery_by.isoformat())
+            args.setdefault("delivery_date", min(x.delivery_by for x in self.needs).isoformat() if self.needs else n.delivery_by.isoformat())
             if self.injections and isinstance(args.get("need"), dict):
                 # trust convention (docs/interfaces.md): screen results go to need.preferences
                 prefs = dict(args["need"].get("preferences") or {})
@@ -534,8 +534,19 @@ class BuyerAgent:
         unplanned = [x.product_query for i, x in enumerate(self.needs) if i not in self.plans]
         if unplanned:
             return {"__blocked__": f"Call plan_need for every item first (not planned yet: {unplanned})."}
-        plan_lines = [{"product_id": l["product_id"], "qty_sales_units": l["qty_sales_units"],
-                       **({"tier": l["tier"]} if l.get("tier") else {})} for l in self.plan.get("lines", [])]
+        plan_lines: list[dict] = []
+        by_pid: dict[str, dict] = {}
+        for i in sorted(self.plans):
+            for l in (self.plans[i] or {}).get("lines", []):
+                pid = str(l["product_id"])
+                if pid in by_pid:
+                    total = by_pid[pid]["qty_sales_units"] + l["qty_sales_units"]
+                    by_pid[pid]["qty_sales_units"] = round(total, 6) if isinstance(total, float) else total
+                else:
+                    entry = {"product_id": l["product_id"], "qty_sales_units": l["qty_sales_units"],
+                             **({"tier": l["tier"]} if l.get("tier") else {})}
+                    by_pid[pid] = entry
+                    plan_lines.append(entry)
         if not plan_lines:
             return {"__blocked__": "The plan has no orderable lines (full shortfall), so there is nothing to quote. "
                                    "Report the shortfall and its reasons to the buyer."}
@@ -557,10 +568,14 @@ class BuyerAgent:
             return 0
         q = str(given.get("product_query") or "").lower().strip()
         for i, x in enumerate(self.needs):
+            if i not in self.plans and q and q == x.product_query.lower():
+                return i
+        for i, x in enumerate(self.needs):
             if q and q == x.product_query.lower():
                 return i
         qw = set(re.findall(r"\w+", q))
-        best = max(range(len(self.needs)), key=lambda i: len(qw & set(re.findall(r"\w+", self.needs[i].product_query.lower()))))
+        pool = [i for i in range(len(self.needs)) if i not in self.plans] or list(range(len(self.needs)))
+        best = max(pool, key=lambda i: len(qw & set(re.findall(r"\w+", self.needs[i].product_query.lower()))))
         if qw & set(re.findall(r"\w+", self.needs[best].product_query.lower())):
             return best
         return next((i for i in range(len(self.needs)) if i not in self.plans), 0)
