@@ -69,3 +69,10 @@ Table `audit_events` in `data/state.sqlite`. SQLite triggers refuse UPDATE and D
 - **Policies:** the YAML maps one to one onto a policy-as-code engine (OPA/Rego or Cedar) if a customer wants to bring their own. Versions and `policy_version` are recorded in every decision.
 
 Standards cited: RFC 7515 (JWS), RFC 7517 (JWK), RFC 7638 (JWK thumbprint), RFC 8037 (EdDSA in JOSE), RFC 8785 (JCS), RFC 9396 (RAR), RFC 9728, MCP Authorization spec, OAuth 2.1 draft, W3C VC Data Model 2.0, AP2 v0.2 (pattern only, not implemented), Peppol BIS Billing/Ordering 3, GS1 GTIN, EU FIC 1169/2011 Annex II (the EU14 allergens).
+
+## Human-only approvals (Sat 23:00)
+- `POST /v1/approvals/{id}/decision` requires the human approver credential `X-Approver-Pin` (env `AIMO_APPROVER_PIN`, or generated once into `data/keys/approver_pin`). No API route or MCP tool returns it. Production: the customer's SSO (OIDC) for humans, OAuth client credentials for agents.
+- Any decision request carrying agent identity (`X-Agent-Id`) gets **403 agent_cannot_approve**, even if it names a real approver. Missing or wrong credential gets **401**. Both are audited as `approval.refused`.
+- On top of that, `check_approval` still requires a human in the order customer's directory with an allowed role, bound to the quote hash.
+- Quotes and orders require explicit `X-Customer-Id` and `X-Agent-Id` (401 otherwise, no default identity). `GET /v1/approvals` is scoped to the caller's customer unless the approver credential is present. The demo tamper routes need the approver credential and are disabled when `AIMO_ENV=production`.
+- Regression tests: `tests/test_human_auth.py`, scenario s0 check "an agent naming a real human approver still cannot approve (403)", conformance A2, A3 and A6.

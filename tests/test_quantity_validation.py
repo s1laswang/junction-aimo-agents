@@ -33,7 +33,7 @@ def isolated(tmp_path, monkeypatch):
 def api():
     from aimo.gateway.app import create_app
     # Uncaught catalog errors (missing product JSON) propagate so tests/conftest.py can skip them.
-    return TestClient(create_app(with_mcp=False), raise_server_exceptions=True)
+    return TestClient(create_app(with_mcp=False), headers={"X-Approver-Pin": "test-pin"}, raise_server_exceptions=True)
 
 
 @pytest.mark.parametrize("qty", [0, -5])

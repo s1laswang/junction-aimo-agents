@@ -46,7 +46,7 @@ def client(tmp_path_factory, fixture_snapshot):
     import aimo.backend as B
     B.set_client(rc)                       # gateway path (get_offers_with_meta -> get_client())
     R.install_replay()                     # catalog path
-    yield TestClient(app)
+    yield TestClient(app, headers={"X-Approver-Pin": "test-pin"})
     B.set_client(None)
 
 

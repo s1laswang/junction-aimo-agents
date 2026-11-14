@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -255,10 +256,19 @@ def check_trade(s: Suite, query: str, day: date, product: Optional[str], approve
     if not who:
         s.row("A4", "approval bound to the quote hash (wrong hash -> 409)", None, "no approver known (--approver)")
         return
-    wrongh = s.post(dec, json={"decision": "approve", "approver": who, "approver_role": wrole, "quote_hash": "f" * 64})
+    # human requests: no agent identity, plus the operator's approver credential
+    human = {"X-Agent-Id": "", "X-Customer-Id": "", "X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "")}
+    nopin = s.post(dec, headers={**human, "X-Approver-Pin": ""},
+                   json={"decision": "approve", "approver": who, "approver_role": wrole, "quote_hash": pq["quote_hash"]})
+    s.row("A6", "a human without the approver credential cannot approve (401)", nopin.status_code == 401, nopin.status_code)
+    if not human["X-Approver-Pin"]:
+        s.row("A4", "approval bound to the quote hash (wrong hash -> 409)", None, "set AIMO_APPROVER_PIN to run A4/A5")
+        return
+    wrongh = s.post(dec, headers=human, json={"decision": "approve", "approver": who, "approver_role": wrole,
+                                              "quote_hash": "f" * 64})
     s.row("A4", "approval bound to the quote hash (wrong hash -> 409)", wrongh.status_code == 409, wrongh.status_code)
-    ok = s.post(dec, json={"decision": "approve", "approver": who, "approver_role": wrole, "quote_hash": pq["quote_hash"],
-                           "note": "conformance suite approval"})
+    ok = s.post(dec, headers=human, json={"decision": "approve", "approver": who, "approver_role": wrole,
+                                          "quote_hash": pq["quote_hash"], "note": "conformance suite approval"})
     placed = ok.json() if ok.status_code == 200 else {}
     s.row("A5", "a named human approver with the right role -> placed", placed.get("status") == "placed", ok.text[:200])
     peppol_check(s, placed, "P2")

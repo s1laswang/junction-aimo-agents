@@ -92,6 +92,16 @@ else
   fi
 
   say "-- aimo serve --"
+  # one human-approver credential shared by the gateway and the acceptance scripts (never given to agents)
+  if [ -z "${AIMO_APPROVER_PIN:-}" ]; then
+    AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(f"{secrets.randbelow(10**6):06d}")')"
+  fi
+  export AIMO_APPROVER_PIN
+  # keyless: serve recorded mock-API responses instead of the live API
+  if ! has_env AIMO_API_KEY && [ -z "${AIMO_REPLAY:-}" ] && [ -d tests/fixtures/snapshot ]; then
+    export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot"
+    say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot"
+  fi
   # pick a free port
   PORT=$(python3 - <<'PY'
 import socket

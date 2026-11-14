@@ -25,6 +25,10 @@ def run(r: Run) -> None:
     agent_try = c.call("POST", f"/v1/approvals/{o['order_id']}/decision",
                        json={"decision": "approve", "approver": "agent:hotel-aurora/buyer-1", "quote_hash": q["quote_hash"]})
     r.check("an agent cannot approve (403)", agent_try.status_code == 403, agent_try.status_code)
+    posing = c.call("POST", f"/v1/approvals/{o['order_id']}/decision",
+                    json={"decision": "approve", "approver": "anna@hotel-aurora.example", "quote_hash": q["quote_hash"]})
+    r.check("an agent naming a real human approver still cannot approve (403)", posing.status_code == 403,
+            posing.status_code)
     d = c.approve(o, q["quote_hash"], True, "s0 ok")
     r.check("human approval -> placed", d["status"] == "placed" and d["response_code"] in ("AP", "CA"), d["status"])
     mallory = Client(r.base, "hotel-aurora", agent="mallory")
