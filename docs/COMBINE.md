@@ -7,7 +7,7 @@ Sat 14 Nov 2026. Branch `combined` in `s1laswang/junction-aimo-agents` = Silas's
 | | Silas's build (`aimo/`) | Ours (`ours/`) |
 |---|---|---|
 | Size | 14.8k Python lines in `aimo/` (27.7k across 136 `.py` files, 241 tracked files; 157 commits on `main`, 834 on `fr8/valio/main`) | 6.5k app/scenario Python lines (51.1k incl. tests across 133 `.py` files, 176 tracked files; 349 pre-merge commits) |
-| Tests | 752 collected in `tests/` at `2468bdd` (`pytest -q` at `cfd6c6b`: 739 passed, 7 skipped, 2 xfailed across 748 collected; standalone `main` before fleet suites: 285 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
+| Tests | 752 collected in `tests/` (`pytest -q` at `2468bdd`: 743 passed, 7 skipped, 2 xfailed; standalone `main` before fleet suites: 285 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
 | Run | `uv run aimo serve` (one command, downloads data when `AIMO_API_KEY` is set); `make accept` for keyless judge check | `make demo` (boots, runs 8 scenarios, keeps a stage server) |
 | Agent interface | MCP (13 tools in both `build_mcp().list_tools()` and README), OpenAPI 3.1, OTAP discovery manifest, JWKS | MCP (12 tools) + REST, agent card, JWKS |
 | Buyer | Gemini buyer agent (escalates to gemini-4-hydrogen) + scripted/mock offline fallback when `GEMINI_API_KEY` is absent (`0f86383`, `a5e3881`) | Rule-based parser (en/fi, works offline) + scripted buyer, seller and drift agents |
@@ -45,7 +45,7 @@ Ours: everything that works with no key, strict input models, per-customer auth 
 8. **[DONE: `0a792f0`]** Catalog search works without a customer header: catalog search, `/v1` routes, MCP and buyer runs now enforce a known customer while discovery (`/.well-known/*`, `/healthz`) stays open.
 9. **[DONE on `main`, active sync on `fr8/valio/*`]** `team/*` branches hold unmerged commits: 12 of 13 `origin/team/*` branches (plus `origin/justSilas-aimo-integration`) have `0` unmerged commits relative to `origin/main` (`89bc3db`), with only `origin/team/replay` (`f59603a`, 2 commits) ahead of `origin/main`; 9 `team/*` branches + `justSilas-aimo-integration` are already 100% in `combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged here on `fr8/valio/docs` (`2468bdd`), and `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), `team/need` (`89bc3db`), and `team/replay` (`f59603a`) are syncing into `fr8/valio/*` (see disposition table below).
 10. **[DONE: `4ae14c6`, `74b5e79`]** README screenshot: updated to live S5 capture `docs/reports/frontend/s5-approval-signed-in.png` (refresh again at freeze if UI changes).
-11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest --collect-only -q` collects 752 tests at `2468bdd` (`cfd6c6b` full run: 739 passed, 7 skipped, 2 xfailed across 748 collected); `ours/` remains intact with nothing deleted yet.
+11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest -q` runs 743 passed, 7 skipped, 2 xfailed across 752 collected tests (`2468bdd`); `ours/` remains intact with nothing deleted yet.
 
 ## Disposition of stale team/* branches
 
