@@ -108,29 +108,35 @@ TAMPER_STATUS = (409,)
 def picks_from(offers_resp, per_item=None):
     picks = []
     for it in offers_resp["items"]:
-        for o in it["offers"][: per_item or 1]:
-            picks.append(pick_of(o, o["units_needed"]))
+        for o in it["offers"][:per_item]:
+            if o["units_needed"] > 0:
+                picks.append(pick_of(o, o["units_needed"]))
     return picks
 
 
 def best_picks_covering(item, need_units=None):
+    if need_units is None:
+        return [pick_of(o, min(o["units_needed"], o["available_amount"])) for o in item["offers"] if min(o["units_needed"], o["available_amount"]) > 0]
     out, got = [], 0.0
-    need = need_units if need_units is not None else item["need_item"]["quantity"]
     for o in item["offers"]:
-        take = min(o["units_needed"], o["available_amount"])
+        if got >= need_units:
+            break
+        take = min(o["units_needed"], o["available_amount"], need_units - got)
         if take <= 0:
             continue
         out.append(pick_of(o, take))
         got += take
-        if got >= o["units_needed"]:
-            break
     return out
 
 
-@lru_cache(maxsize=1)
-def product_db():
-    with open(DATA) as f:
+@lru_cache(maxsize=8)
+def _product_db(path):
+    with open(path, encoding="utf-8") as f:
         return {p["id"]: p for p in json.load(f)}
+
+
+def product_db():
+    return _product_db(os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json"))
 
 
 def allergens_of(pid):
@@ -138,9 +144,9 @@ def allergens_of(pid):
     if not p:
         return None
     out = set()
-    for c in p["synkkaData"].get("classifications", []):
-        if c["name"] == "allergen":
-            out |= {v["id"] for v in c["values"] if v.get("unit") == "CONTAINS"}
+    for c in p.get("synkkaData", {}).get("classifications") or []:
+        if c.get("name") == "allergen":
+            out |= {v["id"] for v in c.get("values") or [] if v.get("unit") in ("CONTAINS", "MAY_CONTAIN")}
     return out
 
 
