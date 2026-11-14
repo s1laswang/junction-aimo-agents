@@ -181,6 +181,17 @@ def _upstream_state() -> dict[str, Any]:
             "retry_in_s": max(0, round(down - _t.time())), "last_error": getattr(c, "last_error", None)}
 
 
+def _require_catalog() -> None:
+    """503 catalog_missing (not a 500) when the product data is absent and no replay subset applies."""
+    try:
+        import aimo.catalog as _cat
+    except Exception:  # noqa: BLE001  catalog package broken: the service fallbacks decide
+        return
+    if not _cat.catalog_available():
+        raise service.ServiceError(503, "catalog_missing", _cat.CATALOG_MISSING_MESSAGE,
+                                   {"fix": "uv run aimo fetch-data", "needs": "AIMO_API_KEY"})
+
+
 def _prov_headers(meta: dict[str, Any]) -> dict[str, str]:
     h = {"X-Aimo-Source": str(meta.get("source")), "X-Aimo-Served-From": str(meta.get("served_from")),
          "X-Aimo-Fetched-At": str(meta.get("fetched_at")), "X-Aimo-Valid-For": str(meta.get("valid_for_s"))}
@@ -217,6 +228,7 @@ def build_router() -> APIRouter:
         content_unit: Optional[str] = Query(None, description="L | KG | PCS"),
         limit: int = Query(20, ge=1, le=100),
     ):
+        _require_catalog()
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
         # dump each item as its own type: injected-text faults return Product (with marketing_text)
@@ -239,6 +251,7 @@ def build_router() -> APIRouter:
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
     def plan(need: Need):
+        _require_catalog()
         return service.plan_need(need)
 
     # ---------------------------------------------------------- quotes

@@ -322,9 +322,20 @@ def check_audit(s: Suite) -> None:
     s.row("U5", "the full chain links from genesis (prev_hash) and verifies (independent)", vf["ok"], vf["problems"])
 
 
-def default_day() -> date:
-    d = date.today() + timedelta(days=2)
-    while d.weekday() > 4:
+def default_day(base: Optional[str] = None) -> date:
+    """Next feasible weekday delivery >= 2 days out on the TARGET's clock (GET /healthz clock.now: AIMO_NOW or
+    the replay snapshot's time), else on this machine's clock. Never a hard-coded date."""
+    now = None
+    if base:
+        try:
+            v = httpx.get(base.rstrip("/") + "/healthz", timeout=10).json().get("clock", {}).get("now")
+            now = datetime.fromisoformat(v) if v else None
+        except Exception:  # noqa: BLE001
+            now = None
+    hel = timezone(timedelta(hours=2))
+    now = (now or datetime.now(timezone.utc)).astimezone(hel)
+    d = now.date() + timedelta(days=2)
+    while d.weekday() > 4 or now >= datetime.combine(d - timedelta(days=1), datetime.min.time(), hel) + timedelta(hours=17):
         d += timedelta(days=1)
     return d
 
@@ -335,7 +346,7 @@ def run(base: str, customer: str = "hotel-aurora", agent: str = "buyer-1", query
     s = Suite(base, customer, agent, quiet)
     t0 = time.time()
     for name, fn in (("discovery", lambda: check_discovery(s)), ("mcp", lambda: check_mcp(s)),
-                     ("trade", lambda: check_trade(s, query, day or default_day(), product, approver, approver_role)),
+                     ("trade", lambda: check_trade(s, query, day or default_day(base), product, approver, approver_role)),
                      ("audit", lambda: check_audit(s))):
         if not quiet:
             print(f"== {name}")

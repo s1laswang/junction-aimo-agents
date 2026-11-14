@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import httpx
@@ -39,6 +39,8 @@ class Run:
     def __init__(self, name: str, base: str, quiet: bool = False):
         self.name, self.base, self.quiet, self.results = name, base, quiet, []
         self.notes: list[str] = []
+        if base:
+            _BASES.append(base)
 
     def say(self, text: str) -> None:
         self.notes.append(text)
@@ -145,20 +147,57 @@ def approver_for(c: Client, role: Optional[str]) -> tuple[str, str]:
     return a["id"], a["role"]
 
 
+# ---------------------------------------------------------------- dates from the (simulated) clock (S1 replay)
+# Never a hard-coded date: "today" is the gateway's clock (GET /healthz -> clock.now: AIMO_NOW, or the replay
+# snapshot's recorded time, else real time), so the scenarios pass in replay on any real day and live after
+# the Sun 17:00 cut-off. Fallbacks: AIMO_NOW, then the wall clock.
+_BASES: list[str] = []
+
+
+def sim_now(base: Optional[str] = None) -> datetime:
+    from aimo.backend import clock
+
+    b = base or (_BASES[-1] if _BASES else None)
+    if b:
+        try:
+            v = httpx.get(b.rstrip("/") + "/healthz", timeout=10).json().get("clock", {}).get("now")
+            dt = clock.parse(v)
+            if dt is not None:
+                return dt
+        except Exception:  # noqa: BLE001
+            pass
+    return clock.parse(os.environ.get("AIMO_NOW")) or datetime.now(timezone.utc)
+
+
+def sim_today(base: Optional[str] = None) -> date:
+    from aimo.backend import clock
+
+    return clock.today_local(sim_now(base))
+
+
 def next_monday(today: Optional[date] = None) -> date:
-    d = today or date.today()
-    return d + timedelta(days=(7 - d.weekday()) % 7 or 7)
+    """The next feasible delivery day (Monday 16 Nov on the demo clock; the next weekday whose Stock cut-off
+    is still ahead once Sunday 17:00 has passed). Kept under its old name for the scenarios."""
+    from aimo.backend import clock
+
+    if today is not None:
+        return today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    return clock.next_delivery_day(sim_now())
 
 
 def next_delivery_day(min_days: int = 2, today: Optional[date] = None) -> date:
-    d = (today or date.today()) + timedelta(days=min_days)
-    while d.weekday() > 4:
-        d += timedelta(days=1)
-    return d
+    from aimo.backend import clock
+
+    if today is not None:
+        d = today + timedelta(days=min_days)
+        while d.weekday() > 4:
+            d += timedelta(days=1)
+        return d
+    return clock.next_delivery_day(sim_now(), min_days=min_days)
 
 
 def next_weekday(wd: int, today: Optional[date] = None) -> date:
-    d = today or date.today()
+    d = today or sim_today()
     return d + timedelta(days=(wd - d.weekday()) % 7 or 7)
 
 

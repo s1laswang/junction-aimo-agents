@@ -42,7 +42,13 @@ MONTHS["sept"] = 9
 
 
 def now_helsinki() -> datetime:
-    return datetime.now(HELSINKI)
+    # the gateway's (simulated) clock: AIMO_NOW / replay snapshot time, else real time (S1 replay: "by Monday"
+    # must resolve to the date the replay snapshot recorded, on any real day)
+    try:
+        from aimo.backend import clock
+        return clock.now().astimezone(HELSINKI)
+    except Exception:  # noqa: BLE001
+        return datetime.now(HELSINKI)
 
 
 # ---------------------------------------------------------------- Gemini output schema

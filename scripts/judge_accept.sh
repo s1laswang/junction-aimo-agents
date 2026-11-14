@@ -65,12 +65,12 @@ fi
 if has_env AIMO_API_KEY; then
   record PASS "AIMO_API_KEY" "set (value not printed)"
 else
-  record SKIP "AIMO_API_KEY" "unset — challenge data cannot be downloaded; catalog-backed tests and live milk flow are blocked"
+  record SKIP "AIMO_API_KEY" "unset — keyless: replay snapshot + committed catalog subset (tests/fixtures/snapshot/replay)"
 fi
 if has_env GEMINI_API_KEY; then
   record PASS "GEMINI_API_KEY" "set (value not printed)"
 else
-  record SKIP "GEMINI_API_KEY" "unset — uv run aimo demo is blocked; use qa_milk_flow.py when the catalog data is present"
+  record SKIP "GEMINI_API_KEY" "unset — buyer agent runs the labelled mock model; deterministic planner unchanged"
 fi
 
 if [ "$fail" -gt 0 ]; then
@@ -97,10 +97,26 @@ else
     AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(9))')"
   fi
   export AIMO_APPROVER_PIN
-  # keyless: serve recorded mock-API responses instead of the live API
-  if ! has_env AIMO_API_KEY && [ -z "${AIMO_REPLAY:-}" ] && [ -d tests/fixtures/snapshot ]; then
-    export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot"
-    say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot"
+  # keyless: serve the committed replay snapshot (recorded once from the live mock API by
+  # scripts/record_replay.py) plus the committed catalog subset instead of the live API and the 87 MB file
+  if ! has_env AIMO_API_KEY && [ -z "${AIMO_REPLAY:-}" ] && [ -f tests/fixtures/snapshot/replay/meta.json ]; then
+    export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot/replay"
+    say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot/replay (served_from: replay)"
+  fi
+  replay_on=0
+  if [ -n "${AIMO_REPLAY:-}" ] && [ "${AIMO_REPLAY}" != "0" ]; then replay_on=1; fi
+  mode_label=$([ "$replay_on" -eq 1 ] && echo replay || echo live)
+
+  say "-- scenarios s0..s7 ($mode_label) --"
+  set +e
+  uv run python -m scenarios.run_all > /tmp/aimo-accept-scenarios.txt 2>&1
+  sec=$?
+  set -e
+  ssum=$(grep -E "^[0-9]+/[0-9]+ passed" /tmp/aimo-accept-scenarios.txt | tail -1 || true)
+  if [ "$sec" -eq 0 ] && [ -n "$ssum" ]; then
+    record PASS "scenarios.run_all" "$ssum ($mode_label)"
+  else
+    record FAIL "scenarios.run_all" "exit $sec — ${ssum:-no table} ($mode_label; see /tmp/aimo-accept-scenarios.txt)"
   fi
   # pick a free port
   PORT=$(python3 - <<'PY'
@@ -142,7 +158,7 @@ PY
       record FAIL "otap.json profile fields" "missing required keys"
     fi
 
-    if has_env AIMO_API_KEY && [ -f data/valio_aimo_junction26_product_data.json ]; then
+    if { has_env AIMO_API_KEY && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
       set +e
       uv run python -m conformance --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-conf.txt 2>&1
       cec=$?
@@ -156,14 +172,22 @@ PY
       uv run python docs/pitch/qa_milk_flow.py --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-milk.txt 2>&1
       mec=$?
       set -e
-      if [ "$mec" -eq 0 ]; then
-        record PASS "qa_milk_flow.py" "MILK FLOW OK"
+      order_line=$(grep -E "^ORDER " /tmp/aimo-accept-milk.txt | tail -1 || true)
+      if [ "$mec" -eq 0 ] && [ -n "$order_line" ]; then
+        record PASS "qa_milk_flow.py" "MILK FLOW OK ($mode_label)"
+        oid=$(sed -E 's/^ORDER ([^ ]+).*/\1/' <<<"$order_line")
+        pcode=$(sed -nE 's/.*Peppol OrderResponseCode ([A-Z]+).*/\1/p' <<<"$order_line")
+        aver=$(sed -nE 's/.*audit verify (ok=[A-Za-z]+[^;]*);.*/\1/p' <<<"$order_line")
+        record PASS "order placed" "$oid"
+        record PASS "Peppol Order Response" "OrderResponseCode ${pcode:-?} (UBL 2.3, T116)"
+        record PASS "audit verify" "${aver:-ok}"
+        say "  $order_line"
       else
-        record FAIL "qa_milk_flow.py" "exit $mec"
+        record FAIL "qa_milk_flow.py" "exit $mec (see /tmp/aimo-accept-milk.txt)"
       fi
     else
-      record SKIP "conformance suite" "needs downloaded catalog data (AIMO_API_KEY)"
-      record SKIP "qa_milk_flow.py" "needs downloaded catalog data (AIMO_API_KEY)"
+      record SKIP "conformance suite" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
+      record SKIP "qa_milk_flow.py" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
     fi
 
     if has_env GEMINI_API_KEY; then
