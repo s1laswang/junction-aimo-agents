@@ -78,6 +78,7 @@ class Offer(BaseModel):
     price_valid_to: Optional[datetime] = None
     fetched_at: datetime
     issues: list[str] = []                    # e.g. "cutoff_passed", "partial_stock", "price_error"
+    provenance: Optional[dict[str, Any]] = None  # [gateway, appended] {source, endpoints, fetched_at, valid_for_s, faults}
 
 
 # ---------------------------------------------------------------- need and plan
@@ -157,6 +158,8 @@ class Quote(BaseModel):
     quote_hash: Optional[str] = None          # sha256 of canonical JSON (without hash/signature)
     signature: Optional[str] = None           # compact JWS (EdDSA) over quote_hash
     kid: Optional[str] = None
+    provenance: Optional[dict[str, Any]] = None  # [gateway, appended] price/availability snapshot source + times (signed with the quote)
+    availability_snapshot: list[dict[str, Any]] = []  # [gateway, appended] per line: product_id, available_amount, closing_time, logistic_model, issues
 
 
 class RuleHit(BaseModel):
@@ -197,6 +200,7 @@ class Order(BaseModel):
     response_lines: list[OrderResponseLine] = []
     created_at: datetime
     updated_at: datetime
+    provenance: Optional[dict[str, Any]] = None  # [gateway, appended] availability re-check at placement
 
 
 class Mandate(BaseModel):
