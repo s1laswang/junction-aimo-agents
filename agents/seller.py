@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 from datetime import date, datetime, timedelta, timezone
 
@@ -24,20 +25,44 @@ def _call(method, path, key, url, **kw):
     return r.json()
 
 
+def _qty(val):
+    if isinstance(val, bool) or val is None:
+        return 1.0
+    try:
+        q = float(val)
+    except (TypeError, ValueError):
+        return 1.0
+    return q if math.isfinite(q) and q > 0 else 1.0
+
+
 def usual_items(events, name_of=None):
+    if not events or isinstance(events, (str, bytes, dict)):
+        return []
+    try:
+        it = iter(events)
+    except TypeError:
+        return []
     seen = {}
-    for e in events:
-        d = e.get("detail") or e
+    for e in it:
+        if not isinstance(e, dict):
+            continue
+        raw_detail = e.get("detail")
+        d = raw_detail if isinstance(raw_detail, dict) and raw_detail else e
         lines = d.get("lines") or d.get("items") or []
         for ln in lines if isinstance(lines, list) else []:
             if not isinstance(ln, dict):
                 continue
-            pid = str(ln.get("product_id", ""))
-            q = ln.get("name") or ln.get("query") or ln.get("product_name")
+            raw_pid = ln.get("product_id")
+            pid = "" if raw_pid is None or isinstance(raw_pid, bool) else str(raw_pid).strip()
+            raw_q = ln.get("name") or ln.get("query") or ln.get("product_name")
+            q = raw_q.strip() if isinstance(raw_q, str) else None
             if not q and pid and name_of:
-                q = name_of(pid)
+                looked = name_of(pid)
+                q = looked.strip() if isinstance(looked, str) else None
+            raw_u = ln.get("sales_unit") or ln.get("unit")
+            unit = raw_u.strip() if isinstance(raw_u, str) and raw_u.strip() else "kg"
             if pid and q and pid not in seen:
-                seen[pid] = {"product_id": pid, "query": q, "quantity": float(ln.get("quantity") or 1), "unit": ln.get("sales_unit") or ln.get("unit") or "kg"}
+                seen[pid] = {"product_id": pid, "query": q, "quantity": _qty(ln.get("quantity")), "unit": unit}
     return list(seen.values())
 
 
@@ -78,8 +103,21 @@ def _day(s):
     return str(s)[:10] if s else None
 
 
+def delivery_day(today=None, min_days=3):
+    if isinstance(today, datetime):
+        today = today.date()
+    elif isinstance(today, str):
+        today = date.fromisoformat(today[:10])
+    d = (today or date.today()) + timedelta(days=min_days)
+    while d.weekday() > 4:
+        d += timedelta(days=1)
+    return d
+
+
 def usable(offer, deliver_by=None, now=None):
-    if offer.get("sales_block"):
+    if not isinstance(offer, dict) or offer.get("sales_block"):
+        return False
+    if offer.get("unit_price_net") is None or offer.get("total_net") is None:
         return False
     amt = offer.get("available_amount", 1)
     if amt is None or amt <= 0:
@@ -106,39 +144,40 @@ def usable(offer, deliver_by=None, now=None):
 def allowed(offer, mandate, deliver_by=None):
     if not usable(offer, deliver_by):
         return False
-    p = offer["product"]
+    p = offer.get("product") or {}
     have = {_norm_allergen(a) for a in p.get("allergens") or [] if _norm_allergen(a)}
     if have & _expand_allergens(mandate.get("exclude_allergens")):
         return False
     cats = mandate.get("allowed_categories")
     if cats and p.get("category") not in cats:
         return False
-    return offer["total_net"] <= mandate.get("per_order_eur", float("inf"))
+    cap = mandate.get("per_order_eur")
+    return offer["total_net"] <= (float("inf") if cap is None else cap)
 
 
 def rank(usual_id, offers, mandate, limit=1, deliver_by=None):
     ok = [o for o in offers if allowed(o, mandate, deliver_by) and (o.get("available_amount") or 0) > 0 and o["available_amount"] >= o["units_needed"]]
-    base = next((o for o in offers if str(o["product_id"]) == str(usual_id)), None)
+    base = next((o for o in offers if isinstance(o, dict) and str(o.get("product_id")) == str(usual_id)), None)
     prefix = ""
-    if base is None:
+    if base is None or base.get("total_net") is None or base.get("unit_price_net") is None:
         if not ok:
             return []
         base = min(ok, key=lambda o: o["total_net"])
         if len(ok) == 1 or not usual_id:
-            return [{"need_item": {"product_id": usual_id, "name": base["product"]["name"], "quantity": base["units_needed"]}, "offer": base, "score": 0.0, "why": f"{base['product']['name']}: cheapest available option, total net {base['total_net']:.2f} EUR for {base['units_needed']} units, {base['available_amount']} in stock, reliability {base.get('reliability')}, CO2 {base.get('co2_per_kg')} kg CO2e/kg"}]
+            return [{"need_item": {"product_id": usual_id, "name": base["product"]["name"], "quantity": base["units_needed"]}, "offer": base, "score": 0.0, "why": f"{base['product']['name']}: cheapest available option, total net {base['total_net']:.2f} EUR for {base['units_needed']} units, {base['available_amount']} in stock, reliability {base.get('reliability')}, CO2 {base.get('co2_per_kg')} kg CO2e/kg"}][:limit]
         prefix = "your usual item was not in the offers, so the cheapest available option is the baseline; "
     out = []
     for o in ok:
         if o["product_id"] == base["product_id"]:
             continue
         reasons, score = [], 0.0
-        if base["available_amount"] < base["units_needed"]:
+        if (base.get("available_amount") or 0) < base["units_needed"]:
             reasons.append(f"your usual item has only {base['available_amount']} available for {base['units_needed']} needed, this one has {o['available_amount']}")
             score += 3
         if o["total_net"] < base["total_net"]:
             save = base["total_net"] - o["total_net"]
             reasons.append(f"total net {o['total_net']:.2f} vs {base['total_net']:.2f} EUR for the same quantity (unit price {o['unit_price_net']:.2f} vs {base['unit_price_net']:.2f}), saves {save:.2f}")
-            score += save / base["total_net"]
+            score += save / base["total_net"] if base["total_net"] > 0 else 1.0
         br, orr = base.get("reliability"), o.get("reliability")
         if br is not None and orr is not None and orr > br:
             reasons.append(f"delivery reliability {orr:.2f} vs {br:.2f}")
@@ -159,7 +198,8 @@ def explain(customer, key, url=URL, max_offers=3):
     mandate = _call("GET", "/mandate", key, url)
     def name_of(pid):
         try:
-            return _call("GET", f"/products/{pid}", key, url).get("name")
+            res = _call("GET", f"/products/{pid}", key, url)
+            return res.get("name") if isinstance(res, dict) else None
         except httpx.HTTPError:
             return None
 
@@ -168,9 +208,9 @@ def explain(customer, key, url=URL, max_offers=3):
     items = usual_items(events, name_of)
     if not items:
         audit = _call("GET", "/audit", key, url, params={"customer": customer})
-        items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit)
+        items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit, name_of)
     seeds = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
-    deliver_by = (date.today() + timedelta(days=3)).isoformat()
+    deliver_by = delivery_day().isoformat()
     excl = mandate.get("exclude_allergens") or []
     def run(items, origin):
         props, notes = [], []
@@ -187,7 +227,7 @@ def explain(customer, key, url=URL, max_offers=3):
                     g["origin"] = origin
                 props += got
                 base = next((o for o in group["offers"] if str(o["product_id"]) == str(it["product_id"])), None)
-                if not got and base:
+                if not got and base and base.get("total_net") is not None:
                     notes.append(f"your {it['query']} is already the best offer: {base['product']['name']} at {base['total_net']:.2f} EUR total net, no better option found")
         return props, notes
 
@@ -204,7 +244,7 @@ def propose(customer, key, url=URL, max_offers=3):
 
 def accept(proposal, key, url=URL):
     o = proposal["offer"]
-    delivery = str(o.get("available_date") or (date.today() + timedelta(days=3)).isoformat())[:10]
+    delivery = str(o.get("available_date") or delivery_day().isoformat())[:10]
     q = _call("POST", "/quotes", key, url, json={"offers": [{"product_id": o["product_id"], "quantity": o["units_needed"]}], "delivery_date": delivery})
     return _call("POST", "/orders", key, url, json={"quote_id": q["quote_id"], "jws": q["jws"]})
 
