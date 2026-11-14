@@ -8,10 +8,15 @@
 .how summary{cursor:pointer;color:var(--valio);width:fit-content;max-width:100%}
 .how p{margin:4px 0 0;max-width:640px}
 .how code,.how .mono,.how pre{font-family:var(--mono);max-width:100%;overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
+#cp-box{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+#cp-box:not([hidden]){display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;margin-top:6px}
+#cp-jws{padding:2px 6px;background:var(--well);border:1px solid var(--rule);border-radius:4px;max-width:100%;overflow-wrap:anywhere;word-break:break-all;white-space:normal}
+#cp-copy{height:24px;padding:0 8px;font-size:12px;flex:none}
 .filters{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .filters label{display:flex;flex-direction:column;gap:2px}
 .filters input{width:180px}
 .filters .spacer{flex:1}
+#f-reset{align-self:flex-end;height:32px;margin:0;flex:none;white-space:nowrap}
 .seg{display:inline-flex}
 .seg .btn{border-radius:0}
 .seg .btn:first-child{border-radius:4px 0 0 4px}
@@ -74,8 +79,12 @@
 .line .chev{grid-area:chev}
 .grp-h{padding:8px 12px;flex-wrap:wrap}
 .detail{padding:4px 12px 12px}
+.filters{gap:8px;align-items:flex-end}
+.filters label{min-width:0;max-width:100%}
+.filters select{max-width:100%}
 .filters input{width:120px}
 .filters .spacer{display:none}
+#f-reset{align-self:flex-end;height:32px;padding:0 10px}
 .rc{grid-template-columns:minmax(0,1fr);gap:2px}
 .rc-k{margin-top:8px}
 .rc-k:first-child{margin-top:0}
@@ -87,7 +96,7 @@
 @page{size:A4;margin:14mm}
 @media print{
 body{background:#fff;color:#000}
-.top,.filters,.legend,.how,.titlebar .btn,.titlebar button,#jump,.chev{display:none!important}
+.top,.filters,#f-reset,.legend,.how,.titlebar .btn,.titlebar button,#jump,.chev{display:none!important}
 main{max-width:none;padding:0}
 .panel,.grp-h,.plain{border-color:#999;background:#fff;color:#000}
 .tag,.badge{background:none!important;border:1px solid #666!important;color:#000!important;white-space:normal}
