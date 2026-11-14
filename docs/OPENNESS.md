@@ -15,7 +15,7 @@ The normative list is in [`conformance/profile.py`](../conformance/profile.py). 
 | Discovery | Serve `/.well-known/otap.json` with `name, version, protocol: "otap/0.1", openapi_url, mcp{url, transport: streamable-http}, jwks_url, identity, endpoints, supported_standards, policies`. |
 | Keys | Serve `/.well-known/jwks.json` with Ed25519 OKP keys only. Each `kid` is the RFC 7638 thumbprint, and the set holds no private material. |
 | OpenAPI | Serve an OpenAPI 3.x document with `/v1/products/search`, `/v1/products/{id}`, `/v1/offers`, `/v1/quotes(/{id})`, `/v1/orders(/{id})`, `/v1/approvals`, `/v1/approvals/{order_id}/decision`, `/v1/audit`, `/v1/audit/verify`. |
-| MCP | Spec revision **2026-07-28** (python-sdk `mcp` 2.3.0 from `uv.lock`; `initialize`-handshake clients negotiate up to 2025-11-25). The manifest states it in `mcp.protocol_version`. Offer streamable HTTP with tools `search_products, get_product, get_offers, plan_need, create_quote, place_order, get_order_status, get_audit_trail, list_policies`. Each tool needs a description and an input schema that requires its arguments. There must be **no approval tool**. |
+| MCP | Spec revision **2026-07-28** (python-sdk `mcp` 2.3.0 from `uv.lock`; `initialize`-handshake clients negotiate up to 2025-11-25). The manifest states it in `mcp.protocol_version`. Offer streamable HTTP with the 9 core profile tools `search_products, get_product, get_offers, plan_need, create_quote, place_order, get_order_status, get_audit_trail, list_policies`. Each tool needs a description and an input schema that requires its arguments. There must be **no approval tool**. |
 | Identity | Demo: `X-Customer-Id` / `X-Agent-Id` headers. Production: OAuth 2.1 bearer tokens with scopes `catalog:read quote:create order:submit` (MCP authorization spec). |
 | Quotes | Each quote is signed. `quote_hash = sha256(canonical_json(quote − {quote_hash, signature, kid}))`. `signature` is a compact JWS (EdDSA) whose payload binds `quote_id` and `quote_hash`. `expires_at` is the price lock. Canonical JSON means sorted keys, no whitespace, UTF-8, and integral numbers without `.0`. |
 | Orders | `POST /v1/orders {quote_id, quote_hash}`. A wrong hash gets **409**. Only the agent that requested the quote may submit it (**403** for any other agent or customer). Placement is idempotent per quote. The customer's policy decides `placed`, `pending_approval` or `rejected`, with plain-language `decision.hits`. |
@@ -23,10 +23,11 @@ The normative list is in [`conformance/profile.py`](../conformance/profile.py). 
 | Order responses | Peppol BIS Order Response semantics: `response_code` and every `response_lines[].code` is one of `AP`, `CA`, `RE`. |
 | Audit | `GET /v1/audit/verify` returns `{ok: true}`. Each event has `hash = sha256(prev_hash + canonical_json(event core))`, chained from 64 zeros, and is signed (JWS payload `{typ, seq, hash}`). |
 
-Optional extensions that our gateway also serves: `/v1/plan`, `/v1/recipes(/plan)`, `/v1/drift/{customer}`, `/v1/proposals`, and the 4 additional MCP tools `list_recipes`, `plan_recipe`, `check_standing_order_drift`, `propose_offer` (13 MCP tools in total).
+Optional extensions that our gateway also serves: `/v1/plan`, `/v1/recipes(/plan)`, `/v1/drift/{customer}`, `/v1/proposals`, and the 4 additional MCP tools `list_recipes`, `plan_recipe`, `check_standing_order_drift`, `propose_offer` (13 MCP tools in total from `build_mcp().list_tools()`, 9 core + 4 extensions, with no approval tool).
 
 ## 2. Run the conformance suite
 ```bash
+AIMO_APPROVER_PIN=<12-char-pin> make conformance                                                                # shorthand for http://127.0.0.1:8000 (PORT=8000)
 AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8000                       # our Valio Aimo gateway (aimo serve)
 AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"   # Nordic Bakery Supply
 #   --customer hotel-aurora --agent buyer-1 --product <id> --date YYYY-MM-DD --approver <id> --json report.json
