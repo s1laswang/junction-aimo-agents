@@ -2,7 +2,7 @@
 # Evaluated by aimo.trust.policy.evaluate() on every quote before an order is placed.
 # Outcome = strictest rule: reject > needs_approval > auto_approve.
 policy_id: hotel-aurora
-version: "1.0.0"
+version: "1.1.0"
 effective_from: "2026-11-01"
 customer:
   id: hotel-aurora
@@ -24,6 +24,14 @@ agents:
   - agent_id: hotel-aurora/planner-1
     label: Menu planning assistant (may quote, may not order)
     scopes: [catalog:read, quote:create]
+
+# Customer profile: the usual products. A line is "preferred" ONLY if its product_id is listed here;
+# the caller's tier is never trusted (see substitution rule). Source: buyer profile / PLAN demo script.
+preferred_products:
+  - {product_id: "463038", label: Valio Eila semi-skimmed lactose-free milk drink 10 L Novobox (dispenser)}
+# Swaps the customer has approved in advance, with their verified tier.
+approved_alternatives:
+  - {product_id: "464306", tier: best, for: "463038", label: Valio Eila semi-skimmed lactose-free milk drink 1 L (same product, smaller pack)}
 
 # Standing-order baselines used by quantity_drift (typical weekly volume).
 standing_orders:
@@ -76,6 +84,7 @@ rules:
     require_claims: true          # a substitute must keep every required claim (e.g. FREE_FROM_LACTOSE)
     tiers: {preferred: allow, best: allow, better: needs_approval, good: needs_approval, rejected: reject}
     outside_preference: needs_approval
+    unverified: needs_approval    # missing tier, or a tier the profile/catalog cannot back
     approver_role: procurement_manager
 
   - id: allergens

@@ -2,7 +2,7 @@
 # Coeliac patients: gluten is excluded. A dietitian signs off on every substitution and on any
 # product whose allergen data is missing or only AI-inferred.
 policy_id: hospital-meilahti
-version: "1.0.0"
+version: "1.1.0"
 effective_from: "2026-10-01"
 customer:
   id: hospital-meilahti
@@ -22,6 +22,11 @@ agents:
   - agent_id: hospital-meilahti/buyer-1
     label: Gemini purchasing agent
     scopes: [catalog:read, quote:create, order:submit]
+
+# Customer profile: the usual products (demo assumption). A line is "preferred" ONLY if listed here.
+preferred_products:
+  - {product_id: "473328", label: Schär Vital dark sliced bread 350 g gluten-free}
+approved_alternatives: []
 
 standing_orders:
   - id: milk
@@ -49,6 +54,7 @@ rules:
     require_claims: true
     tiers: {preferred: allow, best: needs_approval, better: needs_approval, good: needs_approval, rejected: reject}
     outside_preference: needs_approval
+    unverified: needs_approval    # missing tier, or a tier the profile/catalog cannot back
     approver_role: dietitian
 
   - id: allergens

@@ -14,7 +14,7 @@ Every `Quote` from `POST /v1/quotes` carries `quote_hash`, `signature` and `kid`
 Python: `verify_quote(q)` checks the hash and the signature. `verify_quote_detailed(q)` adds `expired` and `reasons`.
 
 ## 2. Guardrails model
-The mandate (`Mandate`: customer, agent, scopes, policy_id) states *who* may act. The policy (versioned YAML in `aimo/trust/policies/<customer>.yaml`) states *what* the agent may do on its own. `evaluate(quote, mandate)` runs every rule on every quote. Each rule returns a `RuleHit` with a plain-language message, including the rules that pass, so the UI and the audit trail show every check that ran. **The final outcome is the strictest hit: reject > needs_approval > auto_approve.** Line-level hits use `rule_id = "<rule>:<product_id>"`, so an agent can drop or replace just that line.
+The mandate (`Mandate`: customer, agent, scopes, policy_id) states *who* may act. The policy (versioned YAML in `aimo/trust/policies/<customer>.yaml`) states *what* the agent may do on its own. `evaluate(quote, mandate)` runs every rule on every quote. Each rule returns a `RuleHit` with a plain-language message, including the rules that pass, so the UI and the audit trail show every check that ran. **The final outcome is the strictest hit: reject > needs_approval > auto_approve.** Line-level hits use `rule_id = "<rule>:<product_id>"`, so an agent can drop or replace just that line. Each rule_id appears exactly once, with its final outcome. Defense in depth: the gateway computes tier and flags when it issues the quote, and the policy engine re-derives them as a second lock.
 
 | Rule type | What it checks | Typical outcome |
 |---|---|---|
@@ -24,7 +24,7 @@ The mandate (`Mandate`: customer, agent, scopes, policy_id) states *who* may act
 | `spend_threshold` | Auto ≤ X; needs approval up to Y; above Y reject | needs_approval / reject |
 | `period_spend` | Rolling 7-day spend from `order.placed` audit events | needs_approval |
 | `category_scope` | Product category code within the allowed prefixes; unknown category → configurable | needs_approval |
-| `substitution` | Outcome per tier (preferred, best, better, good, rejected); `outside_preference` flag; substitute must keep required claims (e.g. lactose free) | allow / needs_approval / reject |
+| `substitution` | **The tier is verified server-side; the agent's own label is never trusted.** A line is `preferred` only if its product is in the policy's `preferred_products`. Tiers best, better and good come from the customer-approved `approved_alternatives`, or for best from catalog evidence (same brand, category and unit as a usual product, keeping all its claims). Anything else, including a missing tier, gets "Agent-supplied tier could not be verified; treating as substitution" → `unverified` outcome. A claimed tier worse than the verified one is honoured. Also checks the `outside_preference` flag and that required claims are kept. | allow / needs_approval / reject |
 | `allergen_block` | Excluded allergens from the policy plus those in the Need. contains or may_contain → reject. Unknown → reject or needs_approval per policy. **`inferred:*` (Gemini-extracted) counts as unknown.** | reject / needs_approval |
 | `delivery` | Delivery not in the past and not after `need.delivery_by`; no line flagged `cutoff_passed`, `unavailable` or `sales_block` | reject |
 | `quantity_drift` | Volume against the customer's standing-order baseline ("This is 3.3× your usual weekly volume of milk") | needs_approval |
@@ -37,11 +37,19 @@ Fail-closed design: if the catalog is missing a product, its allergens, claims a
 ## 3. Approval matrix (demo customers)
 | Customer | Auto-approve | Needs approval (role) | Reject |
 |---|---|---|---|
-| `hotel-aurora` | ≤ €500, preferred or best-tier substitute, within dairy/bakery/chilled categories, ≤ 3× baseline | €500–5,000; better or good tier; outside preference; unknown category; > 3× baseline (300 L milk/week); 7-day spend > €8,000; injection → `procurement_manager` (override: `general_manager`) | > €5,000; missing required claim; expired; cut-off passed; no `order:submit` |
-| `school-tampere` | ≤ €300, usual products confirmed free of milk and nuts | €300–3,000; **any** substitution; > 3× baseline → `kitchen_manager` (override: `catering_director`) | contains or may contain milk or nuts; **allergen unknown**; > €3,000 |
+| `hotel-aurora` | ≤ €500, usual product 463038 or a verified best-tier substitute (e.g. the pre-approved 464306), within dairy/bakery/chilled categories, ≤ 3× baseline | €500–5,000; better or good tier; outside preference; unknown category; > 3× baseline (300 L milk/week); 7-day spend > €8,000; injection → `procurement_manager` (override: `general_manager`) | > €5,000; missing required claim; expired; cut-off passed; no `order:submit` |
+| `school-tampere` | ≤ €300, usual product (472833, a demo assumption) confirmed free of milk and nuts | €300–3,000; **any** substitution; > 3× baseline → `kitchen_manager` (override: `catering_director`) | contains or may contain milk or nuts; **allergen unknown**; > €3,000 |
 | `hospital-meilahti` | ≤ €1,000, usual products confirmed gluten-free | any substitution, **gluten status unknown or only AI-inferred** → `dietitian`; €1,000–10,000 → `procurement_manager` (override: `head_of_nutrition`) | contains or may contain gluten; > €10,000 |
 
-When several roles are needed, the decision names the first one in the policy's `approver_roles` order: a clinical sign-off outranks a budget sign-off. **`check_approval(quote, decision, approver, approver_role, quote_hash)`** accepts an approval only if all of these hold: the decision was `needs_approval` (a hard reject cannot be overridden); `quote_hash` equals the signed quote's hash and the signature verifies; the quote has not expired; the role is the named role or an override role; and an approver listed in the policy directory acts in their registered role. Every attempt, accepted or refused, is audited.
+When several roles are needed, the decision names the first one in the policy's `approver_roles` order: a clinical sign-off outranks a budget sign-off. **`check_approval(quote, decision, approver, approver_role, quote_hash)`** accepts an approval only if all of these hold:
+- The approver is a person in the customer's approver directory (`approvers` in the YAML). Unknown identities are refused.
+- **The approver is never an AI agent.** Any `agent:` actor, the quote's own agent, and any agent id registered in any policy (bare or `customer/agent`) are refused.
+- The approver's *directory* role is the role the decision names or an override role. A role claimed in the request never overrides the directory.
+- The decision was `needs_approval`, so a hard reject cannot be overridden.
+- `quote_hash` equals the signed quote's hash, and the signature verifies.
+- The quote has not expired.
+
+Every attempt, accepted or refused (`approval.refused`), is audited.
 
 ## 4. Audit format
 Table `audit_events` in `data/state.sqlite`. SQLite triggers refuse UPDATE and DELETE, so the table is append-only. Each event has these fields: `seq, ts, actor ("agent:hotel-aurora/buyer-1" | "human:anna@…" | "system:gateway"), action (request.received, quote.created, policy.evaluated, order.pending_approval, approval.verified, approval.refused, order.placed…), subject_id, summary (one human sentence), data, prev_hash, hash, signature, kid`.

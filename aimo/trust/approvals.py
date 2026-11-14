@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from aimo.models import Need, Order, PolicyDecision, Quote
 from aimo.trust.audit import AuditLog, audit
-from aimo.trust.policy import day_text, eur, load_policy, qty_text, role_text
+from aimo.trust.policy import day_text, eur, load_policy, policy_ids, qty_text, role_text
 from aimo.trust.signing import verify_quote_detailed
 
 
@@ -22,30 +22,57 @@ def _approver_role_in_directory(policy: dict, approver: str) -> Optional[str]:
     return None
 
 
+def _is_agent_identity(approver: str, quote: Quote) -> bool:
+    """True if `approver` names an AI agent: an "agent:" actor, the quote's own agent, or any agent id
+    registered in any policy (full "customer/agent" or bare "agent")."""
+    a = approver.strip().lower()
+    if a.startswith("agent:"):
+        return True
+    ids = {quote.agent_id.lower(), quote.agent_id.split("/")[-1].lower()}
+    for pid in policy_ids():
+        try:
+            for ag in load_policy(pid).get("agents", []):
+                ids |= {ag["agent_id"].lower(), ag["agent_id"].split("/")[-1].lower()}
+        except Exception:  # noqa: BLE001
+            continue
+    return a in ids or a.split("/")[-1] in ids
+
+
 def check_approval(quote: Quote, decision: PolicyDecision, approver: str, approver_role: str, quote_hash: str, *,
                    decision_kind: str = "approve", note: str = "", order_id: Optional[str] = None,
                    now: Optional[datetime] = None, audit_log: Optional[AuditLog] = None) -> dict:
     """Validate a human approval (or rejection) of an order.
-    Approve requires: the policy said needs_approval; quote_hash equals the signed quote's hash and the
-    signature verifies; the quote has not expired; approver_role is the role the decision names (or an
-    override role); a known approver's directory role matches. Reject only needs a valid role and hash.
-    Returns {"ok": bool, "reason": str}. Every call is audited."""
+    Approve requires: the approver is a person in the customer's approver directory (never an AI agent)
+    whose registered role is the role the decision names or an override role (a role claimed in the
+    request never overrides the directory); the policy said needs_approval; quote_hash equals the signed
+    quote's hash and the signature verifies; the quote has not expired. Reject needs a directory person
+    with any approver role and the right hash. Returns {"ok": bool, "reason": str}. Every call is audited."""
     reasons: list[str] = []
+    approver = (approver or "").strip()
+    if approver.lower().startswith("human:"):
+        approver = approver[6:]
     try:
         pol = load_policy(decision.policy_id)
     except KeyError:
-        pol = {"approver_roles": [], "override_roles": []}
+        pol = {"approver_roles": [], "override_roles": [], "approvers": []}
     allowed = {r for r in [decision.approver_role, *pol.get("override_roles", [])] if r}
     if decision_kind == "reject":
         allowed |= set(pol.get("approver_roles", []))
+    need_text = " or ".join(role_text(r) for r in sorted(allowed)) or "nobody"
+    dir_role = _approver_role_in_directory(pol, approver) if approver else None
     if not approver:
         reasons.append("no approver identity given")
-    dir_role = _approver_role_in_directory(pol, approver) if approver else None
-    if dir_role and dir_role != approver_role:
-        reasons.append(f"{approver} is registered as {role_text(dir_role)}, not {role_text(approver_role)}")
-    if approver_role not in allowed:
-        reasons.append(f"a {role_text(approver_role)} cannot decide this order (needs: "
-                       f"{' or '.join(role_text(r) for r in sorted(allowed)) or 'nobody'})")
+    elif _is_agent_identity(approver, quote):
+        reasons.append(f"{approver} is an AI agent identity; agents can never approve orders, only a named person "
+                       f"in the customer's approver directory can")
+    elif dir_role is None:
+        reasons.append(f"{approver} is not in {quote.customer_id}'s approver directory (needs a registered {need_text})")
+    else:
+        if approver_role and dir_role != approver_role:
+            reasons.append(f"{approver} is registered as {role_text(dir_role)}, not {role_text(approver_role)}")
+        if dir_role not in allowed:
+            reasons.append(f"{approver} is a {role_text(dir_role)}, who cannot decide this order (needs: {need_text})")
+        approver_role = dir_role  # the directory is authoritative
     v = verify_quote_detailed(quote, now=now)
     if quote_hash != quote.quote_hash or quote_hash != v["quote_hash"]:
         reasons.append("the approval is for a different version of the quote (hash mismatch); re-review the current quote")
