@@ -22,7 +22,7 @@ from typing import Any
 SCENARIOS: dict[str, dict[str, str]] = {
     "happy": {"customer": "hotel-aurora", "fake": "happy",
               "text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."},
-    "stockout": {"customer": "hotel-aurora", "fake": "stockout",
+    "stockout": {"customer": "hotel-aurora", "fake": "stockout", "faults": "partial:*:400",
                  "text": "We need 1,500 litres of lactose-free milk at Hotel Aurora Helsinki by Monday for a conference."},
     "school-allergen": {"customer": "school-tampere", "fake": "happy",
                         "text": "We need 120 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies."},
@@ -149,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-escalate", action="store_true", help="never switch to the reasoning model")
     ap.add_argument("--max-steps", type=int, default=14)
     ap.add_argument("--json", metavar="PATH", help="write the full run result as JSON")
+    ap.add_argument("--faults", help="X-Aimo-Faults spec for the gateway (default: per scenario)")
     a = ap.parse_args(argv)
 
     sc = SCENARIOS[a.scenario]
@@ -174,7 +175,8 @@ def main(argv: list[str] | None = None) -> int:
         transport = FakeTransport(gw)
     else:
         transport = connect(a.transport, agent_id=prof["agent_id"], customer_id=customer,
-                            mcp_url=f"{base}/mcp", mandate=mandate_for(customer))
+                            mcp_url=f"{base}/mcp", mandate=mandate_for(customer),
+                            faults=a.faults if a.faults is not None else sc.get("faults"))
         if isinstance(transport, FakeTransport):
             from aimo.buyer.fakes import FakeGateway
             gw = FakeGateway(customer, prof["agent_id"], scenario=sc["fake"])

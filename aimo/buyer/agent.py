@@ -266,6 +266,11 @@ class BuyerAgent:
             except Exception as e:  # noqa: BLE001
                 err = e
                 self.tool_failures[name] = self.tool_failures.get(name, 0) + 1
+                status = getattr(e, "status", None)
+                if isinstance(status, int) and status < 500:  # a business error, not infrastructure
+                    body = e.to_dict() if hasattr(e, "to_dict") else {"error": str(e)[:300]}
+                    self.emit("tool_result", f"{name}: refused ({body.get('error')})", name=name, result=body)
+                    return body
                 if attempt == 0:
                     self.emit("error", f"{name} failed ({type(e).__name__}); retrying once", name=name,
                               error=str(e)[:300])
@@ -307,6 +312,11 @@ class BuyerAgent:
                 args["need"] = {**args["need"], **{k: v for k, v in n.model_dump(mode="json").items()
                                                    if k in ("customer_id", "required_claims", "excluded_allergens", "raw_text")}}
             args.setdefault("delivery_date", n.delivery_by.isoformat())
+            if self.injections and isinstance(args.get("need"), dict):
+                # trust convention (docs/interfaces.md): screen results go to need.preferences
+                prefs = dict(args["need"].get("preferences") or {})
+                prefs["injection_flags"] = self.injections
+                args["need"] = {**args["need"], "preferences": prefs}
             if self.plan:  # never quote a candidate the planner rejected
                 rejected = {c.get("product", {}).get("id") for c in self.plan.get("candidates", [])
                             if c.get("tier") == "rejected"}
@@ -472,6 +482,10 @@ class BuyerAgent:
     def _result_title(name: str, r: Any) -> str:
         if isinstance(r, list):
             return f"{name}: {len(r)} result(s)"
+        if isinstance(r, dict) and len(r) <= 3:
+            for k in ("products", "offers", "events", "policies"):
+                if isinstance(r.get(k), list):
+                    return f"{name}: {len(r[k])} {k}"
         if isinstance(r, dict):
             if "error" in r:
                 return f"{name}: error {r['error']}"

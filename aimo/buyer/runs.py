@@ -39,6 +39,7 @@ class RunRequest(BaseModel):
     thinking: Optional[str] = None          # MINIMAL | LOW | MEDIUM | HIGH
     transport: Optional[str] = None         # auto | mcp | inproc | fake
     escalate: bool = True
+    faults: Optional[str] = None            # X-Aimo-Faults spec (demo fault injection)
 
 
 class Run:
@@ -104,7 +105,7 @@ class RunRegistry:
                     transport = connect(req.transport or os.environ.get("AIMO_BUYER_TRANSPORT", "auto"),
                                         agent_id=prof["agent_id"], customer_id=req.customer_id,
                                         mcp_url=os.environ.get("AIMO_MCP_URL", "http://localhost:8000/mcp"),
-                                        mandate=mandate_for(req.customer_id))
+                                        mandate=mandate_for(req.customer_id), faults=req.faults)
                 kw = dict(agent_kwargs)
                 if req.model:
                     kw["model"] = req.model

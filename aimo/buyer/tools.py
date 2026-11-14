@@ -77,9 +77,10 @@ class InProcessTransport:
     named agent_id / customer_id / mandate / identity that the function declares."""
     kind = "inproc"
 
-    def __init__(self, agent_id: str, customer_id: str, mandate=None):
+    def __init__(self, agent_id: str, customer_id: str, mandate=None, faults: str | None = None):
         import aimo.gateway.service as service  # raises ImportError if gateway not landed yet
         self.service = service
+        self.faults = faults
         self.agent_id, self.customer_id, self.mandate = agent_id, customer_id, mandate
         missing = [n for n in TOOL_NAMES if not hasattr(service, n)]
         if len(missing) == len(TOOL_NAMES):
@@ -106,7 +107,19 @@ class InProcessTransport:
             ann = p.annotation
             if k in kw and isinstance(kw[k], dict) and inspect.isclass(ann) and hasattr(ann, "model_validate"):
                 kw[k] = ann.model_validate(kw[k])
-        res = fn(**kw)
+        token = None
+        if self.faults:
+            try:
+                from aimo.backend.client import set_request_faults
+                token = set_request_faults(self.faults)
+            except ImportError:
+                pass
+        try:
+            res = fn(**kw)
+        finally:
+            if token is not None:
+                from aimo.backend.client import reset_request_faults
+                reset_request_faults(token)
         if inspect.isawaitable(res):
             res = asyncio.run(res)
         return jsonable(res)
@@ -205,10 +218,20 @@ def _parse_tool_result(r) -> Any:
 
 
 # ---------------------------------------------------------------- factory
+def gateway_agent_id(agent_id: str, customer_id: str) -> str:
+    """The gateway composes actors as agent:<customer>/<agent>, so it wants the bare agent name."""
+    prefix = customer_id + "/"
+    return agent_id[len(prefix):] if agent_id.startswith(prefix) else agent_id
+
+
 def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http://localhost:8000/mcp",
-            gateway=None, mandate=None) -> ToolTransport:
-    """kind: mcp | inproc | fake | auto (mcp, then inproc, then fake)."""
+            gateway=None, mandate=None, faults: str | None = None) -> ToolTransport:
+    """kind: mcp | inproc | fake | auto (mcp, then inproc, then fake).
+    faults: optional X-Aimo-Faults spec for the gateway's fault injection (demo scenarios)."""
+    agent_id = gateway_agent_id(agent_id, customer_id)
     headers = {"X-Agent-Id": agent_id, "X-Customer-Id": customer_id}
+    if faults:
+        headers["X-Aimo-Faults"] = faults
     errors = []
     order = [kind] if kind != "auto" else ["mcp", "inproc", "fake"]
     for k in order:
@@ -219,7 +242,7 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
                     httpx.get(mcp_url, timeout=1.5)  # any HTTP status means something listens
                 return MCPTransport(mcp_url, headers=headers, timeout=20)
             if k == "inproc":
-                return InProcessTransport(agent_id, customer_id, mandate)
+                return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":
                 from aimo.buyer.fakes import FakeGateway
                 return FakeTransport(gateway or FakeGateway(customer_id, agent_id))
