@@ -734,7 +734,11 @@ function decisionForm(o, q) {
   const cust = S.customers.find((c) => c.id === o.customer_id);
   const dir = cust?.approvers || [];
   const needRole = (o.decision || {}).approver_role;
-  if (!S.approver) S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || "";
+  // The approver must come from THIS order's customer directory: reset when switching orders or customers.
+  if (S.approverFor !== o.order_id || (dir.length && !dir.some((a) => a.id === S.approver))) {
+    S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || (dir.length ? "" : S.approver);
+    S.approverFor = o.order_id;
+  }
   const approver = dir.length
     ? h("select", { class: "input", id: "approver", disabled: busy, onchange: (e) => (S.approver = e.target.value) },
         dir.map((a) => h("option", { value: a.id, selected: a.id === S.approver }, `${a.name || a.id} · ${roleLabel(a.role)}`)))
