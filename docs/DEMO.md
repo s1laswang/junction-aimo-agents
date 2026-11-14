@@ -83,6 +83,30 @@ curl -s -X POST http://localhost:8000/v1/approvals/<NEW_ORDER_ID>/decision \
 
 In `/ui`, the Approvals tab renders the old-vs-new line diff card automatically and lets Anna approve the replacement `quote_hash` in one click, while `GET /v1/audit/verify` confirms `order.requoted` in the intact chain.
 
+### Price-change-during-approval beat (optional live Q&A beat)
+
+Demonstrates how the 15-minute signed quote lock and automatic re-quoting work when supplier prices move while an order waits in the human inbox:
+
+1. **Inside the 15-minute price lock:** even if upstream price moves (e.g. `X-Aimo-Faults: price_shock:464306:1.25`), approving `<ORDER_ID>` with its signed `quote_hash` before `expires_at` honours the locked quote price (€1,010.00 net) and places the order (`AP`).
+2. **After the 15-minute lock expires (+20 min via `X-Aimo-Now`) with a price move (`X-Aimo-Faults: price_shock:464306:1.25`):**
+   ```bash
+   # 1. Approval after lock expiry + +25% price move -> 409 requote_needed
+   curl -i -X POST http://localhost:8000/v1/approvals/<ORDER_ID>/decision \
+     -H "Content-Type: application/json" -H "X-Approver-Pin: $AIMO_APPROVER_PIN" \
+     -H "X-Aimo-Now: <CREATED_AT_PLUS_20M_ISO>" \
+     -H "X-Aimo-Faults: price_shock:464306:1.25" \
+     -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<OLD_QUOTE_HASH>"}'
+   ```
+   The gateway refuses the stale hash with **`409 requote_needed`**, returning `detail.changes` (`old_total_net` €1,010.00 vs `new_total_net` €1,262.50), a freshly signed replacement quote (`detail.new_quote`), a new pending order (`detail.new_order`), and a one-step `detail.approve_with` payload.
+3. **One-step human approval of the replacement quote:**
+   ```bash
+   # 2. Approve the replacement order's new quote_hash -> placed (AP)
+   curl -s -X POST http://localhost:8000/v1/approvals/<NEW_ORDER_ID>/decision \
+     -H "Content-Type: application/json" -H "X-Approver-Pin: $AIMO_APPROVER_PIN" \
+     -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<NEW_QUOTE_HASH>"}'
+   ```
+   The replacement order transitions to `placed` (`AP`), and **`order.requoted`** links old and new quotes/orders inside the verified signed audit chain (`GET /v1/audit/verify` -> `ok: true`).
+
 ## Robustness montage (`uv run aimo demo --montage`)
 
 `uv run aimo demo --montage` runs the six live scenarios in sequence with the Gemini agent over MCP against the live mock API and approves as each policy's named approver (drift is left held for confirmation by design). It prints one verdict per scenario plus Gemini calls and tokens, and writes a results table.
