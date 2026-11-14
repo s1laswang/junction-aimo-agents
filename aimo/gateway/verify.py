@@ -107,10 +107,12 @@ def verify_lines(
         reasons: list[str] = []
         tier = "preferred" if pid in usual else None
         method = "usual_products" if tier else "fallback"
+        reference: str | None = None
         row = rows.get(pid)
         if rank is not None and row is not None:
             # usual products of the same kind are the reference (a milk standing order says nothing about butter)
             same_kind = [u for u in usual if u in rows and u != pid and _same_kind(rows[u], row, product_types)]
+            reference = same_kind[0] if same_kind else None
             if need is not None:
                 ln_need = need.model_copy(update={
                     "customer_id": customer_id, "preferred_product_ids": same_kind, "preferences": {},
@@ -163,5 +165,6 @@ def verify_lines(
                 flags.append("supplier_text_injection_suspected")
                 if "injected:inject_text" in (p.labels or []):
                     flags.append("injected:inject_text")
-        out[pid] = {"tier": tier, "flags": list(dict.fromkeys(flags)), "reasons": reasons, "method": method}
+        out[pid] = {"tier": tier, "flags": list(dict.fromkeys(flags)), "reasons": reasons, "method": method,
+                    "reference": reference}
     return out
