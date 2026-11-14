@@ -4,7 +4,7 @@ Every number we say in the README, demo, deck, submission or Gemini write-up, wi
 
 Setup for all commands: a clone with `.env` (never committed), `uv sync --extra dev`, and `uv run aimo serve` run once (builds `data/catalog.sqlite`, embeddings and allergen hints). Commands marked **live** call the Valio Aimo mock API or Gemini and need the keys; **replay** commands run with no keys against `AIMO_REPLAY=tests/fixtures/snapshot uv run aimo serve`; everything else is offline. Where `sqlite3` CLI is not installed, run the same SQL via `uv run python -c "import sqlite3; print(sqlite3.connect('data/catalog.sqlite').execute('<SQL>').fetchall())"`.
 
-Status: **R** = re-run by the person or session named, with the date; **S** = single source (a report or a one-off run), not re-run. Latest re-runs: Sat 14 Nov 23:05 to Sun 15 Nov 00:35 Helsinki.
+Status: **R** = re-run by the person or session named, with the date; **S** = single source (a report or a one-off run), not re-run. Latest re-runs: Sat 14 Nov 23:05–23:45 Helsinki.
 
 ## Catalog and data
 | Number | Claimed in | Command | Value | Status |
@@ -40,7 +40,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 |---|---|---|---|---|
 | Agent approving as a real approver with the right hash → 403 `agent_cannot_approve`, audited as `approval.refused`; MCP has 0 approval tools | DEMO, SUBMISSION, README, QA | `uv run python docs/pitch/permissions_attack.py --base http://localhost:8000` with a pending order (**replay** or **live**, no credential needed, about 3 s) | 403, refusal in the audit report, exit 0 | R submit, Sat 23:14 |
 | No credential → 401 `approver_auth_required`; session deciding as someone else → 403 `approver_mismatch`; session approval → `placed`; tamper → verify red at #3, untamper → green | README, DEMO, QA | the curl steps in README "REST with curl" and DEMO "Tamper demo" (**replay**) | as stated | R submit, Sat 23:10–23:13 |
-| Regression tests: per-approver 12-char passphrases (`0600`), 8-hour `X-Approver-Session`, brute-force lockout per `(approver_id, client)` (`5` wrong guesses -> 429 `approver_locked` for 5 min, `30` per 10 min per-approver backstop), known-customer `/v1` enforcement, expired lock / price move -> `409 requote_needed` | README, TRUST, SUBMISSION, DEMO, QA | `uv run --extra dev pytest -q tests/test_human_auth.py tests/test_per_approver_auth.py tests/test_auth_known_customer.py tests/test_gateway.py` | pass (included in the full run below) | R docs (`97be499`) |
+| Regression tests for the above | TRUST, QA | `uv run --extra dev pytest -q tests/test_human_auth.py` | pass (included in the full run below) | R submit, Sat 23:05 |
 
 ## MCP and openness
 | Number | Claimed in | Command | Value | Status |
@@ -63,14 +63,8 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | s0–s7: 8/8 PASS (88 checks) | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 (88 checks) | R lead (`2468bdd`), Sun 00:18 |
-| Test count | README, SUBMISSION, deck, COMBINE | `uv run --extra dev pytest -q` (with the catalog JSON, or keyless without it) | **743 passed, 7 skipped, 2 xfailed** with the catalog JSON (and **645 passed, 105 skipped, 2 xfailed** in a keyless clone without the catalog JSON, 752 tests in `tests/`; standalone `main` `81e730d` runs 344 passed, 7 skipped, 1 xfailed, 1 xpassed) | R lead (`2468bdd`, 94.7 s) with catalog JSON; R docs (`97be499`, 42.9 s) keyless; R submit (`81e730d`, 34 s) standalone `main`. Re-run at the freeze. |
-| `make accept` | README, SUBMISSION | `make accept` | RESULT: PASS (table in docs/reports/submit.md "Gate runs") | R submit |
-
-## Input hardening
-| Number | Claimed in | Command | Value | Status |
-|---|---|---|---|---|
-| About 2,600 fuzzed requests over every `/v1` route, 0 server errors | README, SUBMISSION, QA | `uv run --extra dev pytest -q tests/test_fuzz.py` (offline, about 45 s; `main` `81e730d`) | 0 x 5xx | S harden, Sat night (`main` `81e730d`, `docs/reports/harden.md`) |
-| `quantity <= 0` -> 4xx before planning; `2.5 ST` -> 422 `fractional_quantity`; `> 1e6` -> 422; `unknown_stock_large_qty` (or > 50x standing baseline) -> `needs_approval` | README, SUBMISSION | `uv run --extra dev pytest -q tests/test_quantity_validation.py tests/test_plan_input_validation.py` (plus `tests/test_harden.py` on `main` `81e730d`) | as stated | R docs (`97be499`) for pre-planning validation; S harden (`main` `81e730d`, `docs/reports/harden.md`) |
+| Test count | README, SUBMISSION, deck, COMBINE | `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (with the catalog file present) | **743 passed, 7 skipped, 2 xfailed** in 94.7 s (752 collected in `tests/` on `fr8/valio/main` `2468bdd`; standalone `main` before the fleet unit suites ran 285 passed, 7 skipped, 2 xfailed; standalone `ours/tests` adds 525 passed) | R lead (`2468bdd`), Sun 00:18. Re-run at the freeze. |
+| `make accept` | README | `make accept` | RESULT: PASS (table in docs/reports/submit.md "Gate runs") | R submit |
 
 ## Trust
 | Number | Claimed in | Command | Value | Status |
@@ -84,9 +78,8 @@ All wind-tunnel commands are in [docs/reports/windtunnel.md](reports/windtunnel.
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | 640 Gemini-written scenarios, 16 families × 40, 3 policy archetypes | GEMINI, SUBMISSION, deck | `uv run python -m windtunnel.generate --n 640 --gemini --out data/windtunnel/scenarios/wt640_gem.jsonl` (**live**) | 640 | S windtunnel, Sat 18:24 (git dfecb2a) |
-| Gateway after S3 policy changes (`wt640`): 0 policy / 0 allergen violations, recall 99.7%, precision 68.2%, outcome accuracy 73.4%, plan coverage 91.4% (before Sun 00:30 policy changes: 1 policy / 0 allergen, recall 98.8%, precision 54.0%, outcome accuracy 55.0%, plan coverage 92.4%, median EUR over optimum 0.0%, latency p50/p95 46.4 / 135.3 ms) | SUBMISSION, DEMO, GEMINI, deck, QA, DECISIONS | `AIMO_SEMANTIC=0 uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team`, then `uv run python -m windtunnel.score --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --runs data/windtunnel/runs/wt640_gem__pipeline__team__0of1.jsonl --labels after --name need_after --no-md` (offline, about 3 min) | as stated | S need, Sun 15 Nov 00:30 (`main` `81e730d`, `docs/reports/need.md`) |
-| Naive agent (`wt640`): 372 policy / 193 allergen violations, recall 17.8%, precision 90.8%, plan coverage 98.2%, median EUR over optimum 0.0%; injection block gateway 56.2% vs naive 0% | SUBMISSION, DEMO, GEMINI, deck | `uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team` (and `--sut baseline`), then `windtunnel.score` and `uv run python -m windtunnel.report --main wt640 --scale wt2560` | as stated | S windtunnel, Sat 18:24 ([windtunnel-results.md](windtunnel-results.md)), against the earlier policy version (not re-run after S3) |
-| 2,560 template scenarios (`wt2560`): 11 vs 1,452 policy violations, 0 vs 728 allergen, recall 98.7% vs 21.4%, precision 56.6% vs 94.3% | SUBMISSION, GEMINI, deck | same, `--scale wt2560` | as stated | S windtunnel, Sat 18:24 (not re-run after S3) |
+| Gateway vs naive (`wt640`): policy violations 1 vs 372, allergen 0 vs 193, recall 98.8% vs 17.8%, precision 54.0% vs 90.8%, injection block 56.2% vs 0%, plan coverage 92.4% vs 98.2%, median EUR over optimum 0.0%, latency p50/p95 46.4 / 135.3 ms | SUBMISSION, DEMO, GEMINI, deck | `uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team` (and `--sut baseline`), then `windtunnel.score` and `uv run python -m windtunnel.report --main wt640 --scale wt2560` | as stated | S windtunnel, Sat 18:24 ([windtunnel-results.md](windtunnel-results.md)) |
+| 2,560 template scenarios (`wt2560`): 11 vs 1,452 policy violations, 0 vs 728 allergen, recall 98.7% vs 21.4%, precision 56.6% vs 94.3% | SUBMISSION, GEMINI, deck | same, `--scale wt2560` | as stated | S windtunnel, Sat 18:24 |
 | Injection screen: regex 44.4% recall, regex + Gemini 94.4%; Gemini false positives 42/60 buyer requests, 0/60 supplier texts | SUBMISSION, GEMINI, deck | `uv run python -m windtunnel.screen_eval --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --neg 120` (**live**) | as stated | S windtunnel |
 | Thinking level: parse flash LOW 85.4% (93.2% of answered), hydrogen HIGH 100%; substitute flash LOW 93.8% (100% of answered), hydrogen HIGH 100% at p50 3.5 s / p95 6.2 s; flash HIGH p95 69.5 s on parse | GEMINI, DECISIONS | `uv run python -m windtunnel.thinking --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --n 48` (**live**, 384 calls) | as stated | S windtunnel |
 | Agent mode, 48 scenarios: 0 policy / 0 allergen violations, recall 100%; Gemini judge (41/48 judged): mandate 0.95, truthful substitutions 0.94, no invented data 1.00, injection resisted 1.00, need met 0.80 | SUBMISSION, GEMINI | `uv run python -m windtunnel.run agent --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --base-url http://localhost:8000 --limit 48` (**live**; 3 scenarios per family) | as stated | S windtunnel, Sat 15:16 (git c3ee30d) |
@@ -102,4 +95,4 @@ All wind-tunnel commands are in [docs/reports/windtunnel.md](reports/windtunnel.
 |---|---|---|
 | Gold set: zero-correction rate on fi/sv/en requests | Only a 20-request set exists (`tests/fixtures/gold_smoke.jsonl` / `tests/fixtures/gold/gold-buyer-20.jsonl`) and no committed live run | `uv run python -m aimo.buyer.eval_gold tests/fixtures/gold/gold-buyer-20.jsonl` (**live**) |
 | Photo intake accuracy | 4 development calls only (`buyer.vision` in the ledger; deterministic keyless fallback tested in `tests/`) | a labelled photo set; none exists |
-| Escalation precision >= 90% at recall >= 99% | Target not met: 68.2% precision at 99.7% recall after the Sun 00:30 S3 policy changes (up from 54.0% at 98.8% recall; remaining causes in `docs/reports/need.md`) | `windtunnel.run pipeline` + `windtunnel.score`, as above |
+| Escalation precision ≥90% at recall ≥99% | Current measured value is 54.0% (above) | `windtunnel.run pipeline` + `windtunnel.score`, as above |
