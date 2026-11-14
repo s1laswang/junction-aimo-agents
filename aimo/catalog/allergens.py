@@ -312,9 +312,43 @@ def policy_excluded_allergens(customer_id: Optional[str]) -> list[str]:
     return list(policy_allergen_block(customer_id).excluded)
 
 
+def policy_allergens(customer_id: Optional[str]) -> tuple[list[str], Optional[str], Optional[str]]:
+    pb = policy_allergen_block(customer_id)
+    if pb.policy_id is not None or pb.excluded:
+        return list(pb.excluded), pb.reason, pb.policy_id
+    cid = (customer_id or "").strip()
+    if not cid:
+        return [], None, None
+    try:
+        from aimo.trust import policy as trust_policy
+
+        if hasattr(trust_policy, "planning_profile"):
+            prof = trust_policy.planning_profile(cid) or {}
+            if prof:
+                return (
+                    normalize_allergens(prof.get("excluded_allergens") or []),
+                    prof.get("allergen_reason"),
+                    prof.get("policy_id") or cid,
+                )
+    except Exception:
+        pass
+    return [], None, None
+
+
+def with_policy_allergens(need: Any) -> tuple[Any, list[str]]:
+    own = normalize_allergens(need.excluded_allergens)
+    pol, _why, _pid = policy_allergens(need.customer_id)
+    merged = list(dict.fromkeys([*own, *pol]))
+    added = [a for a in merged if a not in own]
+    if merged != list(need.excluded_allergens):
+        need = need.model_copy(update={"excluded_allergens": merged})
+    return need, added
+
+
 def effective_excluded_allergens(customer_id: Optional[str], excluded: Iterable[str] = ()) -> list[str]:
     extra = [excluded] if isinstance(excluded, str) else (excluded or ())
-    return normalize_allergens([*extra, *policy_allergen_block(customer_id).excluded])
+    pol_excl, _why, _pid = policy_allergens(customer_id)
+    return normalize_allergens([*extra, *pol_excl])
 
 
 def blocking(
