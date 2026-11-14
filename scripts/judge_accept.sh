@@ -177,7 +177,7 @@ main() {
 
     say "-- aimo serve --"
     if [ -z "${AIMO_APPROVER_PIN:-}" ]; then
-      AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(f"{secrets.randbelow(10**6):06d}")')"
+      AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(9))')"
     fi
     export AIMO_APPROVER_PIN
     if ! has_aimo_key && [ -z "${AIMO_REPLAY:-}" ] && [ -d tests/fixtures/snapshot ]; then

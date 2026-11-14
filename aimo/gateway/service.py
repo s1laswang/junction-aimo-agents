@@ -856,6 +856,16 @@ def list_approvals(status: str | None = "pending", customer_id: str | None = Non
     return out
 
 
+def directory_approver_id(who: str) -> str | None:
+    """Canonical directory id of a human approver given an id or display name (any customer), else None."""
+    w = (who or "").strip().lower()
+    for c in list_customers():
+        for a in c.get("approvers", []) or []:
+            if w and w in (str(a.get("id", "")).lower(), str(a.get("name", "")).lower()):
+                return a.get("id")
+    return None
+
+
 def _directory_role(customer_id: str, approver: str) -> str | None:
     for c in list_customers():
         if c.get("customer_id") == customer_id:
