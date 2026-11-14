@@ -7,12 +7,12 @@ Sat 14 Nov 2026. Branch `combined` in `s1laswang/junction-aimo-agents` = Silas's
 | | Silas's build (`aimo/`) | Ours (`ours/`) |
 |---|---|---|
 | Size | 14.8k Python lines in `aimo/` (27.7k across 136 `.py` files, 241 tracked files; 157 commits on `main`, 834 on `fr8/valio/main`) | 6.5k app/scenario Python lines (51.1k incl. tests across 133 `.py` files, 176 tracked files; 349 pre-merge commits) |
-| Tests | 748 collected in `tests/` (`pytest -q`: 739 passed, 7 skipped, 2 xfailed; standalone `main` before fleet suites: 285 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
+| Tests | 752 collected in `tests/` at `2468bdd` (`pytest -q` at `cfd6c6b`: 739 passed, 7 skipped, 2 xfailed across 748 collected; standalone `main` before fleet suites: 285 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
 | Run | `uv run aimo serve` (one command, downloads data when `AIMO_API_KEY` is set); `make accept` for keyless judge check | `make demo` (boots, runs 8 scenarios, keeps a stage server) |
 | Agent interface | MCP (13 tools in both `build_mcp().list_tools()` and README), OpenAPI 3.1, OTAP discovery manifest, JWKS | MCP (12 tools) + REST, agent card, JWKS |
 | Buyer | Gemini buyer agent (escalates to gemini-4-hydrogen) + scripted/mock offline fallback when `GEMINI_API_KEY` is absent (`0f86383`, `a5e3881`) | Rule-based parser (en/fi, works offline) + scripted buyer, seller and drift agents |
 | Trust | Ed25519 JWS quotes, hash-chained signed audit, Peppol AP/CA/RE responses, second wholesaler (`toywholesaler`), conformance suite (44/44) | Ed25519 JWS quotes, single-use redeem, hash-chained audit with verify, mandates per customer |
-| Guardrails | Approval gate, human-only approvals (`433fbb1`), customer allergen hard-block in `plan_need` (`a4fa4fc`), 403 for self/stranger/wrong role, 409 on hash mismatch, injection v2 screen (`a6c21c8`) | Per-customer agent keys (X-Agent-Key), mandates (per-order + weekly limits, allergens, substitution policy), reason codes, approval queue |
+| Guardrails | Approval gate, human-only approvals with per-approver credentials + per-identity lockout (`433fbb1`, `0d96f61`, `599a991`), customer allergen hard-block in `plan_need` (`a4fa4fc`), 403 for self/stranger/wrong role, 409 on hash mismatch, injection v2 screen (`a6c21c8`) | Per-customer agent keys (X-Agent-Key), mandates (per-order + weekly limits, allergens, substitution policy), reason codes, approval queue |
 | Exceptions | Cut-off, partial stock, stock-out, drift, event scenario (s0-s7 8/8), chaos/replay fallbacks (`0b33695`) | Split across products/dates, good-better-best substitutes with an allergen hard filter, stock-out simulator, 8 scenarios offline with a mock Valio |
 | Gemini | Embeddings, Gemini allergen hints, Gemini buyer (all with keyless fallbacks) | None needed (optional LLM path) |
 
@@ -43,15 +43,15 @@ Ours: everything that works with no key, strict input models, per-customer auth 
 6. **[DONE: `502572e`, squad `docs`]** README says 9 MCP tools, server has 13: README and architecture diagram state 13 MCP tools, matching `build_mcp().list_tools()`.
 7. **[DONE: `0b33695` / `502572e`]** Approved alternatives always need a human, even for a 10 EUR line: gateway learned approvals (`4e6d82d`: `remember` / `remember_scope`, `/v1/customers/{id}/learned`) let customers pre-authorize recurring substitutions within policy.
 8. **[DONE: `0a792f0`]** Catalog search works without a customer header: catalog search, `/v1` routes, MCP and buyer runs now enforce a known customer while discovery (`/.well-known/*`, `/healthz`) stays open.
-9. **[DONE on `main`, active sync on `fr8/valio/*`]** `team/*` branches hold unmerged commits: all 12 `origin/team/*` branches (plus `origin/justSilas-aimo-integration`) have `0` unmerged commits relative to `origin/main` (`e337c7b`); 9 `team/*` branches + `justSilas-aimo-integration` are already 100% in `combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged here on `fr8/valio/docs`, and `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), and `team/need` (`e337c7b`) are syncing into `fr8/valio/*` (see disposition table below).
+9. **[DONE on `main`, active sync on `fr8/valio/*`]** `team/*` branches hold unmerged commits: 12 of 13 `origin/team/*` branches (plus `origin/justSilas-aimo-integration`) have `0` unmerged commits relative to `origin/main` (`89bc3db`), with only `origin/team/replay` (`f59603a`, 2 commits) ahead of `origin/main`; 9 `team/*` branches + `justSilas-aimo-integration` are already 100% in `combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged here on `fr8/valio/docs` (`2468bdd`), and `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), `team/need` (`89bc3db`), and `team/replay` (`f59603a`) are syncing into `fr8/valio/*` (see disposition table below).
 10. **[DONE: `4ae14c6`, `74b5e79`]** README screenshot: updated to live S5 capture `docs/reports/frontend/s5-approval-signed-in.png` (refresh again at freeze if UI changes).
-11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest -q` runs 739 passed, 7 skipped, 2 xfailed across 748 collected tests; `ours/` remains intact with nothing deleted yet.
+11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest --collect-only -q` collects 752 tests at `2468bdd` (`cfd6c6b` full run: 739 passed, 7 skipped, 2 xfailed across 748 collected); `ours/` remains intact with nothing deleted yet.
 
 ## Disposition of stale team/* branches
 
-Audited with `git rev-list --left-right --count origin/main...origin/<branch>` and `git rev-list --left-right --count origin/combined...origin/<branch>`. Every `origin/team/*` branch (all 12) and `origin/justSilas-aimo-integration` has **0 unmerged commits** relative to `origin/main` (`e337c7b`). Nine round-5 `team/*` branches (plus `justSilas-aimo-integration`) also have **0 unmerged commits** relative to `origin/combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged into `fr8/valio/docs`, and the late-night session tips `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), and `team/need` (`e337c7b`) are being synced into `fr8/valio/main`.
+Audited with `git rev-list --count origin/main..origin/<branch>` and `git rev-list --count origin/combined..origin/<branch>`. Twelve of 13 `origin/team/*` branches and `origin/justSilas-aimo-integration` have **0 unmerged commits** relative to `origin/main` (`89bc3db`), and `origin/team/replay` (`f59603a`) is 2 commits ahead of `origin/main`. Nine round-5 `team/*` branches (plus `justSilas-aimo-integration`) also have **0 unmerged commits** relative to `origin/combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged into `fr8/valio/docs` / `fr8/valio/main` (`2468bdd`), and the late-night session tips `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), `team/need` (`89bc3db`), and `team/replay` (`f59603a`) are syncing into `fr8/valio/main`.
 
-| Remote branch | Tip SHA | Unmerged vs `origin/main` | Unmerged vs `combined` (`cfd6c6b`) | Landed on `main` | Disposition |
+| Remote branch | Tip SHA | Unmerged vs `origin/main` (`89bc3db`) | Unmerged vs `combined` (`cfd6c6b`) | Landed on `main` | Disposition |
 |---|---|---:|---:|---|---|
 | `origin/team/buyer` | `bf961e7` | `0` | `0` | `8b99450` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
 | `origin/team/catalog` | `67a3a90` | `0` | `0` | `e09055c` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
@@ -62,12 +62,13 @@ Audited with `git rev-list --left-right --count origin/main...origin/<branch>` a
 | `origin/team/trust` | `2b21faf` | `0` | `0` | `a6c21c8` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
 | `origin/team/windtunnel` | `4dfb6ad` | `0` | `0` | `0f39945` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
 | `origin/justSilas-aimo-integration` | `6449bf5` | `0` | `0` | `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
-| `origin/team/submit` | `92a7752` | `0` | `4` (merged on `fr8/valio/docs`) | `92a7752` | 100% merged on `main` and `fr8/valio/docs`; safe to close/delete once `fr8/valio/docs` lands on `combined` |
-| `origin/team/harden` | `cf6534e` | `0` | `5` (4 `submit` + `cf6534e`) | `cf6534e` | 100% merged on `main`; squad `inputs` syncing `cf6534e` into `fr8/valio/main` |
-| `origin/team/ui` | `dfe58ef` | `0` | `6` (`4ae14c6` in `combined`; `dfe58ef` syncing) | `dfe58ef` | 100% merged on `main`; UI docs/screenshots synced on `fr8/valio/docs`, `web/` delta syncing into `fr8/valio/main` |
-| `origin/team/need` | `e337c7b` | `0` | `9` (incl. `c01f066`..`e337c7b`) | `e337c7b` | 100% merged on `main`; active session tip, keep until code syncs into `fr8/valio/main` |
+| `origin/team/submit` | `92a7752` | `0` | `4` (`0` vs `fr8/valio/docs`) | `92a7752` | 100% merged on `main`, `fr8/valio/docs`, and `fr8/valio/main`; safe to close/delete once PR #5 lands on `combined` |
+| `origin/team/harden` | `cf6534e` | `0` | `5` (`1` vs `fr8/valio/docs`) | `cf6534e` | 100% merged on `main`; syncing into `fr8/valio/main` |
+| `origin/team/ui` | `dfe58ef` | `0` | `6` (`2` vs `fr8/valio/docs`) | `dfe58ef` | 100% merged on `main`; syncing into `fr8/valio/main` |
+| `origin/team/need` | `89bc3db` | `0` | `10` (`6` vs `fr8/valio/docs`) | `89bc3db` | 100% merged on `main` (S3 need v2); syncing into `fr8/valio/main` |
+| `origin/team/replay` | `f59603a` | `2` | `11` (`7` vs `fr8/valio/docs`) | pending S1 push | Active S1 replay tip (`4ceeeca` + `f59603a`); syncing into `fr8/valio/main` |
 
-All 9 round-5 `team/*` branches (`buyer`, `catalog`, `frontend`, `gateway`, `pitch`, `port`, `trust`, `windtunnel`, plus `justSilas-aimo-integration`) are 100% merged into both `main` and `combined`; `team/submit` (`92a7752`) is merged via `fr8/valio/docs`, and `team/harden`, `team/ui`, and `team/need` are already on `origin/main` (`e337c7b`) and syncing into `fr8/valio/main`.
+All 9 round-5 `team/*` branches (`buyer`, `catalog`, `frontend`, `gateway`, `pitch`, `port`, `trust`, `windtunnel`, plus `justSilas-aimo-integration`) are 100% merged into both `main` and `combined`; `team/submit` (`92a7752`) is merged via `fr8/valio/docs`, and `team/harden`, `team/ui`, `team/need` (`89bc3db`), and `team/replay` (`f59603a`) are syncing into `fr8/valio/main`.
 
 ## Rules for the port
 

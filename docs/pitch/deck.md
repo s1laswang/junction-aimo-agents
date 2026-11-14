@@ -2,7 +2,7 @@
 
 For Chintufp to build the visual deck and record the video. Every number has a source in brackets ([docs/NUMBERS.md](../NUMBERS.md)). Hard questions and answers: [QA.md](QA.md). Keep slides sparse: one idea, one visual, at most 15 words of text. The live demo ([docs/DEMO.md](../DEMO.md)) replaces slide 3 when presenting live; the video uses the screen recording there.
 
-Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots: `docs/pitch/img/approval-ui.png`, plus fresh captures from `/ui` after the freeze.
+Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots: `docs/reports/frontend/s5-approval-signed-in.png` (live S5 UI with sign-in and 3 approval rules) and `docs/pitch/img/approval-ui.png`, plus fresh captures from `/ui` after the freeze.
 
 ---
 
@@ -20,7 +20,7 @@ Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the
 
 ## Slide 3: Solution (demo)
 **On slide:** "Trusted Trade gateway" in the middle; left: "Any agent: Gemini, Claude, ERP" (MCP / OpenAPI); right: "Valio Aimo backend"; bottom: "Human approver". The milk flow as 6 steps: request → live lookup → good-better-best → signed quote → policy: needs approval → approved, placed (AP), audited.
-**Visual:** screenshot `docs/pitch/img/approval-ui.png` or the 60-second clip.
+**Visual:** screenshot `docs/reports/frontend/s5-approval-signed-in.png` (or `docs/pitch/img/approval-ui.png`) or the 60-second clip.
 **Numbers:** €1,010 for 1,000 × Valio Eila 1 L at €1.01 [live run, docs/ARCHITECTURE.md §2]; usual 10 L box missed its cut-off Thu 12 Nov 15:00 [mock API]; 3 rules needed a human: spend > €500, outside preference, 3.3× usual weekly volume [frontend live run screenshot].
 **Speaker notes (40 s):** walk the six steps. Stress: live mock-API data (synthetic, as the challenge provides), the agent re-planned around two real exceptions, the policy is the hotel's own file, the human approved the exact signed quote.
 
