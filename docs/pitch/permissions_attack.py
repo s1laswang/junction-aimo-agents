@@ -16,9 +16,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from pathlib import Path
 import sys
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 APPROVER = {"hotel-aurora": "anna@hotel-aurora.example", "school-tampere": "liisa@school-tampere.example"}
 
