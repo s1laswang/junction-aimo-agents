@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from aimo.backend import clock
+from aimo.gateway import resilience
 from aimo.backend import orders as store
 from aimo.backend.client import INJECTION_TEXT, UpstreamError, current_faults, get_offers_with_meta
 from aimo.models import (
@@ -349,8 +350,20 @@ def find_products(query: str, claims: list[str] | None = None, category: str | N
     res: list[ProductSummary] | None = None
     cat = _catalog()
     if cat is not None:
+        def primary():
+            return cat.search(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
+
+        def deterministic():  # FTS only: no Gemini semantic recall
+            try:
+                from aimo.catalog.textsearch import search as fts
+
+                return fts(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit,
+                           semantic=False)
+            except (ImportError, TypeError):
+                return None
         try:
-            res = cat.search(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
+            res, _path = resilience.guarded("catalog.search", primary, deterministic,
+                                            resilience.timeout_for("catalog.search", 4.0))
         except NotImplementedError:
             res = None
     if res is None:
@@ -387,6 +400,12 @@ def get_product(product_id: str) -> Product:
     return p
 
 
+def _fallback_screen(text: str) -> dict[str, Any]:
+    low = text.lower()
+    hits = [k for k in ("ignore your", "ignore previous", "ai agent", "approval already granted", "system note") if k in low]
+    return {"suspicious": bool(hits), "reasons": hits}
+
+
 def screen_supplier_text(p: Product) -> dict[str, Any]:
     """trust.screen_text over untrusted supplier text (marketing + ingredients)."""
     text = " ".join(x for x in (p.marketing_text, p.ingredients_text) if x)
@@ -394,7 +413,16 @@ def screen_supplier_text(p: Product) -> dict[str, Any]:
         return {"suspicious": False, "reasons": []}
     t = _trust()
     try:
-        return t.screen_text(text)  # type: ignore[union-attr]
+        fn = t.screen_text  # type: ignore[union-attr]
+
+        def regex_only():
+            try:
+                return fn(text, use_gemini=False)
+            except TypeError:
+                return _fallback_screen(text)
+        res, _path = resilience.guarded("trust.screen_text", lambda: fn(text), regex_only,
+                                        resilience.timeout_for("trust.screen_text", 3.0))
+        return res
     except _MISSING:
         low = text.lower()
         hits = [k for k in ("ignore your", "ignore previous", "ai agent", "approval already granted", "system note")
@@ -438,9 +466,29 @@ def _order_lock(key: str) -> threading.Lock:
 
 
 def _upstream(e: UpstreamError) -> ServiceError:
-    status = 503 if e.status_code in (429, 503, 504) or e.status_code >= 500 else 502
-    return ServiceError(status, "upstream_unavailable", str(e),
-                        {"upstream_status": e.status_code, "retry_after": e.retry_after or 2, "injected": e.injected})
+    """Agent-facing upstream error: plain language, safe-to-retry, and when."""
+    sc = e.status_code
+    ra = int(max(1, round(e.retry_after))) if e.retry_after else (5 if sc == 429 else 10)
+    msg = str(e)
+    if sc == 429:
+        code, text = "upstream_rate_limited", (f"Valio Aimo's price and stock service is asking us to slow down (HTTP 429). "
+                                              f"Nothing was quoted or ordered. Retry in {ra} s.")
+    elif sc == 504 or "timed out" in msg:
+        code, text = "upstream_timeout", (f"Valio Aimo's price and stock service did not answer in time. "
+                                         f"Nothing was quoted or ordered. Retry in {ra} s.")
+    elif "unreachable" in msg or "circuit open" in msg:
+        code, text = "upstream_unreachable", (f"Valio Aimo's price and stock service is unreachable and no recorded "
+                                             f"snapshot covers this request. Nothing was quoted or ordered. Retry in {ra} s.")
+    elif "replay snapshot has no" in msg:
+        code, text = "replay_no_data", f"Offline replay has no recorded data for this request: {msg}."
+    else:
+        code, text = "upstream_unavailable", (f"Valio Aimo's price and stock service returned an error (HTTP {sc}). "
+                                             f"Nothing was quoted or ordered. Retry in {ra} s.")
+    if e.injected:
+        text += " (Simulated fault from X-Aimo-Faults.)"
+    status = 503 if sc in (429, 503, 504) or sc >= 500 else 502
+    return ServiceError(status, code, text, {"upstream_status": sc, "retry_after": ra, "injected": e.injected,
+                                             "safe_to_retry": True, "nothing_committed": True, "cause": msg})
 
 
 def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
@@ -464,11 +512,49 @@ def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, *
     if cat is None or not hasattr(cat, "plan_need"):
         raise ServiceError(501, "plan_unavailable", "planner (aimo.catalog.plan_need) is not available yet")
     try:
-        return cat.plan_need(need)
+        plan, path = resilience.guarded("catalog.plan_need", lambda: cat.plan_need(need), lambda: _plan_deterministic(need),
+                                        resilience.timeout_for("catalog.plan_need", 20.0))
+        return plan
     except NotImplementedError as e:
         raise ServiceError(501, "plan_unavailable", "planner not implemented yet") from e
     except UpstreamError as e:
         raise _upstream(e) from e
+
+
+def _plan_deterministic(need: Need) -> Plan:
+    """Planner without any Gemini call: FTS candidates (+ usual products, same category, supplier substitution
+    rules) -> live offers -> catalog.substitution.rank_substitutes -> catalog.plan.fill. Same tiers and split
+    logic as aimo.catalog.plan_need, minus semantic recall and the recipe check."""
+    from aimo.catalog import plan as P
+    from aimo.catalog.substitution import rank_substitutes
+    from aimo.catalog.textsearch import fts_search, get_rows
+
+    n2 = need
+    try:
+        n2, _src = P.with_effective_query(need)
+    except Exception:  # noqa: BLE001
+        pass
+    rel: dict[str, float] = {}
+    for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, content_unit=None, limit=80):
+        rel[pid] = sc
+    if n2.excluded_allergens:
+        for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, free_of=n2.excluded_allergens, limit=80):
+            rel[pid] = max(rel.get(pid, -1e9), sc) + 2.0
+    pref_rows = get_rows(list(n2.preferred_product_ids))
+    for c in {r.get("category") for r in pref_rows.values() if r.get("category")}:
+        for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, category=c, limit=80):
+            rel[pid] = max(rel.get(pid, -1e9), sc) + 1.0
+    for pid in n2.preferred_product_ids:
+        rel.setdefault(pid, 100.0)
+    rows = get_rows(list(rel))
+    order = sorted(rows.values(), key=lambda d: P._static_priority(n2, d, rel.get(d["id"], 0)))
+    top = [d["id"] for d in order[:getattr(P, "MAX_OFFER_IDS", 30)]]
+    top += [pid for pid in n2.preferred_product_ids if pid in rows and pid not in top]
+    offers = get_offers_with_meta(top, n2.delivery_by, n2.customer_id)[0] if top else {}
+    full = rank_substitutes(n2, offers, limit=200, rows={pid: rows[pid] for pid in top}, relevance=rel)
+    plan = P.fill(n2, P._trim(full, 12))
+    note = "Planned with the deterministic planner (Gemini semantic recall and recipe check skipped: slow or unavailable)."
+    return plan.model_copy(update={"need": need, "explanation": f"{plan.explanation} {note}".strip()})
 
 
 # ------------------------------------------------------------------ quotes

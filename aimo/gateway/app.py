@@ -112,6 +112,12 @@ def _replay_info() -> dict[str, Any]:
     return replay.info()
 
 
+def _breakers() -> dict[str, Any]:
+    from aimo.gateway import resilience
+
+    return resilience.states()
+
+
 def _upstream_state() -> dict[str, Any]:
     import time as _t
 
@@ -148,7 +154,7 @@ def build_router() -> APIRouter:
     def healthz() -> dict[str, Any]:
         return {"ok": True, "version": service.VERSION, "integrations": service.integration_status(),
                 "offline": config.OFFLINE, "clock": clock.describe(), "replay": _replay_info(),
-                "upstream": _upstream_state()}
+                "upstream": _upstream_state(), "breakers": _breakers()}
 
     # ---------------------------------------------------------- catalog
     @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary])
