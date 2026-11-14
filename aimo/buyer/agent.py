@@ -29,7 +29,7 @@ from aimo.buyer.tool_schemas import to_gemini_schema
 from aimo.buyer.tools import ToolTransport
 from aimo.models import AgentStep, Need
 
-DRIFT_RATIO = 3.0
+DRIFT_RATIO = 10.0  # harness hold (likely unit mix-up); moderate drift (>3x) is trust policy -> needs_approval
 UNTRUSTED_FIELDS = ("marketing_text", "ingredients_text", "description", "text")
 _INJECTION_RE = re.compile(
     r"ignore (all |your |previous |the )*(instructions|limits|rules|policy)|system (note|prompt|message)|"
