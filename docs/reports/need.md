@@ -41,16 +41,17 @@ Branch `team/need` (worktree `~/junction-aimo-team/sessions/need`). Owner files:
 - **Usual products first in planning:** when the request names no usual product and no brand/spec preference, the
   plan starts from the customer's usual product that matches the request (school "oat drink" → its usual oat drink,
   no swap to approve). An explicit brand preference wins over the profile.
-- **Hotel category scope** widened to the food it actually buys: dry goods (21: flour, pasta, beans), spices/coffee/
-  baking (22), fresh meat and fish (18), frozen food incl. frozen bread (41). Non-food stays out (equipment 20,
-  hygiene/disposables 63/64, confectionery 52, drinks 84/85, office 90). Category groups remain inferred from names.
+- **Hotel category scope** widened to dry goods (21: flour, pasta, beans) and frozen food incl. frozen bread (41).
+  Coffee/spices (22), meat/fish (18) and non-food stay out. Category groups remain inferred from names.
+- **First purchase** only when the request's unit is normal for the product phrase; claim-only "free" allergen
+  status counts as unknown in the allergen rule.
 
 ### 3. Split orders and price jumps
 - **`split_order` rule** (all policies): orders of the same thing (same product, standing-order product, category or
-  request phrase) placed without a human in the last 7 days that add up to more than 2× the auto limit → needs
+  request phrase) placed without a human in the last 7 days that add up to more than the auto limit → needs
   approval. Prior orders come from the audit log (`order.placed` joined to `quote.created` for lines); when the log
   has no line detail, an order counts if it was itself ≥ 60% of the auto limit (the split signature).
-  3 × €399.96 milk at the hotel: auto, auto, **needs approval** on the third.
+  3 × €399.96 milk at the hotel: auto, then **needs approval** on the second and third.
 - **`quantity_drift`** now adds the volume ordered earlier in the last 7 days (`window_days`).
 - **`price_jump` rule:** a unit price more than 15% above the last price paid for the same product (newest placed
   order in the audit log, 90 days) needs approval. The buyer may report `need.preferences.reference_unit_price`;
@@ -62,25 +63,51 @@ Branch `team/need` (worktree `~/junction-aimo-team/sessions/need`). Owner files:
   "Supplier text contains instructions aimed at AI agents (…)" to the candidate and the plan line, so the UI and
   the agent see it before any order decision.
 
-### 5. Wind tunnel: escalation precision before and after (wt640, pipeline, `AIMO_SEMANTIC=0`)
-| | Escalation precision | Recall | Policy violations | Allergen violations |
-|---|---|---|---|---|
-| before (main fac34f0) | 54.0% | 98.8% | 1 (split order) | 0 |
-| after (team/need) | **not measured yet** | | | |
+### 5. Wind tunnel: escalation precision before and after (wt640, pipeline, offline)
+Re-run Sun 15 Nov ~00:30 on the laptop with a memory watchdog (stops only its own run PID below 15% free; it never
+triggered). `AIMO_SEMANTIC=0` keeps it offline. Runtime 171–185 s under load ~28.
 
-The "after" run was stopped by Claude Code because the laptop ran critically low on memory (load ~28 from
-parallel sessions); it was not restarted, per the no-heavy-compute rule. Re-run when the laptop is quiet:
-`AIMO_SEMANTIC=0 uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team`
-then `uv run python -m windtunnel.score --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --runs
-data/windtunnel/runs/wt640_gem__pipeline__team__0of1.jsonl --labels after --name need_after --no-md`
-(about 40 s on an idle laptop; 15+ min under the current load). `AIMO_SEMANTIC=0` keeps it offline: without it,
-each query waits on a Gemini embedding call.
+| System | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Plan coverage |
+|---|---|---|---|---|---|---|
+| before (main fac34f0) | 54.0% | 98.8% | 55.0% | 1 | 0 | 92.4% |
+| after v1 (main e337c7b, first S3 merge) | 67.5% | 94.3% | 72.0% | **21** | **3** | 91.4% |
+| after v2 (this merge) | **68.2%** | **99.7%** | **73.4%** | **0** | **0** | 91.4% |
 
-Before-run breakdown of escalations where the oracle expected no human (my FP script, all non-must cases):
-substitution 283 (any product outside the usual list counted as an unverified swap), category_scope 79 (hotel
-flour/pasta/beans/frozen bread), injection 30 (request-screen hits), empty plans 16, spend 7. The changes above
-target the first two. Misses (recall): 3 price shocks (≥2×) and split_order-00346, both now covered by
-`price_jump` and `split_order` (unit tests reproduce both).
+**Target ≥ 90% precision at ≥ 99% recall: NOT met.** Recall target met (99.7%); precision 68.2% (331 true, 154
+false escalations, against 54.0% before).
+
+v1 was a regression on main: removing the blanket "unverified substitution" escalation exposed four holes it had
+been masking. v2 fixes them, each by escalating more, never less:
+- 3 allergen violations: hospital "juice" auto-ordered 461893, "gluten free" only from a nutrition claim
+  (`allergen_source: structured:claim`). The allergen rule now treats claim-only "free" as unknown.
+- 9 mandate busts: the hotel scope widening admitted coffee (22). Dropped 22 and 18; kept dry goods (21) and frozen
+  food (41).
+- 6 split orders: the oracle counts evasion once auto-placed orders pass the auto limit (the 2nd order). `split_order`
+  `max_factor` 2 → 1: the 2nd same-kind order over the limit goes to a human.
+- 3 wrong units: "lactose-free milk" in KG matched a 5 kg quark, "rice" in L a rice drink. A first purchase is only
+  auto when the unit is normal for the request (≥ 30% of the catalog's top text matches); otherwise unverified.
+
+Remaining false escalations (v2, scorer's definition: auto was the only acceptable outcome):
+| Cause | n | Why it stays |
+|---|---|---|
+| substitution only | 72 | 39 are menu_recipe quotes with several needs: the quote carries one `need`, so lines for the other ingredients cannot be verified. Rest: school/hospital "any substitution needs a human" vs oracle labels without a usual product |
+| allergens (+ substitution) | 27 | claim-only gluten-free products now go to the dietitian (deliberately stricter than the oracle) |
+| injection | 21 | request-screen hits (aimo/trust/screening.py, not this session's file) |
+| price_jump (+ substitution) | 16 | spec rule (>15%); the oracle only expects a human at ≥2x |
+| empty plan / backend error | 14 | catalog coverage, simulated API errors |
+
+Ways to reach 90% (decisions for Silas/CEO, not taken here): carry every need on the quote (multi-need quotes:
+gateway + models, ~39 FP); relax `price_jump` to 2x (~16 FP, contradicts the S3 spec); accept claim-only
+gluten-free for the hospital (~27 FP, weaker allergen safety); tune the request screen (~21 FP).
+
+Reproduce:
+```bash
+AIMO_SEMANTIC=0 uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team
+uv run python -m windtunnel.score --scenarios data/windtunnel/scenarios/wt640_gem.jsonl \
+  --runs data/windtunnel/runs/wt640_gem__pipeline__team__0of1.jsonl --labels after --name need_after --no-md
+```
+Before-run causes (for comparison, all non-must cases): substitution 283, category_scope 79, injection 30, empty
+plans 16, spend 7.
 
 ## Gate
 Rebased on main dfe58ef, Sun 00:00 Helsinki:

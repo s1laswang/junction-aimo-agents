@@ -250,8 +250,9 @@ class MemLog:
                                                           "quote_id": q.quote_id}))
 
 
-def test_split_orders_escalate_on_the_third_order():
-    """3 x €399.96 of milk (each under the €500 auto limit) used to be auto-approved every time."""
+def test_split_orders_escalate_once_they_pass_the_auto_limit():
+    """3 x €399.96 of milk (each under the €500 auto limit) used to be auto-approved every time. Now the second
+    order of the same kind in 7 days (together €799.92 > €500) goes to a human, and so does the third."""
     log = MemLog()
     outcomes = []
     for i in range(3):
@@ -260,9 +261,9 @@ def test_split_orders_escalate_on_the_third_order():
         outcomes.append(d.outcome)
         if d.outcome == "auto_approve":
             log.place(q)
-    assert outcomes == ["auto_approve", "auto_approve", "needs_approval"], outcomes
+    assert outcomes == ["auto_approve", "needs_approval", "needs_approval"], outcomes
     last = hits(d, "split_order")[0]
-    assert last.outcome == "needs_approval" and "order 3 of the same kind" in last.message
+    assert last.outcome == "needs_approval" and "order 2 of the same kind" in last.message
 
 
 def test_split_aggregation_uses_line_detail_from_the_audit_log():
@@ -335,3 +336,27 @@ def test_school_milk_request_needs_a_human_even_without_agent_flags():
     same_for_oat = dec(quote(customer="school-tampere", pid="470889", name="Oatly Oat Drink Whole 1L", qty=20,
                              price=1.5, tier="preferred", query="oat drink", claims=()), customer="school-tampere")
     assert same_for_oat.outcome == "auto_approve", [h.message for h in same_for_oat.hits if h.outcome != "allow"]
+
+
+def test_claim_only_gluten_free_is_not_proof_for_the_hospital():
+    """'Gluten free' from a nutrition claim alone (no allergen declaration) is unknown: the dietitian checks it."""
+    p = Product(id="461893", name="Marli Juissi Mixed juice drink 1 L", sales_unit="ST", category="21400",
+                content_amount=1.0, content_unit="L", claims=["FREE_FROM_GLUTEN"], allergens={"gluten": "free"},
+                allergen_source={"gluten": "structured:claim"}, brand="Marli")
+    q = quote(customer="hospital-meilahti", pid="461893", name=p.name, qty=10, price=1.0, query="juice", claims=())
+    q = q.model_copy(update={"need": q.need.model_copy(update={"excluded_allergens": ["gluten"]})})
+    d = dec(q, customer="hospital-meilahti", products={"461893": p})
+    al = hits(d, "allergens")
+    assert d.outcome == "needs_approval" and al[0].outcome == "needs_approval"
+    assert "nutrition claim" in al[0].message
+
+
+@pytest.mark.needs_data
+def test_new_product_in_an_unusual_unit_needs_a_human():
+    """'lactose-free milk' in KG matched a 5 kg quark; 'rice' in L a rice drink. Wrong unit: a human looks."""
+    from aimo.trust.policy import _unit_plausible
+    assert _unit_plausible("lactose-free milk", "L") and not _unit_plausible("lactose-free milk", "KG")
+    assert _unit_plausible("rice", "KG") and not _unit_plausible("rice", "L")
+    q = quote(pid="477044", name="Valio quark 5 kg lactose free", qty=24, price=10.0, query="lactose-free milk",
+              unit="KG")
+    assert hits(dec(q), "substitution")[0].outcome == "needs_approval"

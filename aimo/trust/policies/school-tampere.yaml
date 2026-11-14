@@ -92,7 +92,7 @@ rules:
   - id: split_order
     type: split_order
     window_days: 7                # same product, standing-order product or category, placed without a human
-    max_factor: 2                 # together more than 2x the spend rule's auto_max -> a human approves
+    max_factor: 1                 # together more than the spend rule's auto_max -> a human approves
     near_limit_share: 0.6         # orders with no line detail in the log count when they were >= 60% of auto_max
     approver_role: kitchen_manager
 

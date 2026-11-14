@@ -561,6 +561,20 @@ def _request_names_excluded(c: Ctx) -> list[str]:
     return literal + implied
 
 
+@lru_cache(maxsize=2048)
+def _unit_plausible(query: str, unit: str, min_share: float = 0.3) -> bool:
+    """Is `unit` a normal unit for what the request names? ('milk' in KG or 'rice' in L is not: the request
+    probably has the wrong unit and the exact-name match is a different product, e.g. quark or rice drink.)
+    Share of the catalog's top text matches sold in that unit; unknown (no matches/catalog) counts as no."""
+    try:
+        from aimo.catalog.textsearch import fts_search, get_rows
+        ids = [pid for pid, _ in fts_search(query, limit=30)]
+        units = [d.get("content_unit") for d in get_rows(ids).values() if d.get("content_unit")]
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(units) and sum(1 for u in units if u == unit) / len(units) >= min_share
+
+
 def _learned(c: Ctx, line, reference: Optional[str], facts: Optional[dict]) -> Optional[dict]:
     try:
         from aimo.trust.learned import match
@@ -597,17 +611,25 @@ def r_substitution(c: Ctx, r: dict) -> None:
         vt, how = verified_tier(c, ln)
         claimed = ln.tier
         new_product, learned, profile_alt = False, None, vt is not None and how.startswith("a customer-approved")
+        unverified_note = None
         if vt != "preferred":
             cv = catalog_verify(c, ln)
             learned = _learned(c, ln, cv["reference"], cv["facts"])
             if vt is None and cv["tier"] in ("best", "better", "good"):
                 vt = cv["tier"]
                 if cv["reference"] is None and c.quote.need is not None and ln.product_id not in _preferred_ids(c.policy):
-                    new_product = vt == "best"
+                    plausible = _unit_plausible(c.quote.need.product_query, c.quote.need.unit)
+                    new_product = vt == "best" and plausible
                     how = ("catalog check: the customer has no usual product of this kind and the product matches "
-                           "the request exactly" if new_product else
-                           "catalog check: the customer has no usual product of this kind; only a partial match "
-                           "for the request")
+                           "the request exactly")
+                    if not new_product:
+                        # no usual product to compare with and not a clean first purchase: nothing verifies the swap
+                        vt = None
+                        why_unverified = ("the request's unit (" + c.quote.need.unit + ") is unusual for '"
+                                          + c.quote.need.product_query + "', so the match may be a different product"
+                                          if not plausible else "it only partly matches the request")
+                        unverified_note = (f"{_line_name(ln)} is not one of the customer's usual products and "
+                                           f"{why_unverified}; treating as substitution.")
                 else:
                     how = f"catalog check against the usual product {cv['reference']}"
         if vt is not None and rank.get(claimed, 0) > rank[vt]:
@@ -623,6 +645,9 @@ def r_substitution(c: Ctx, r: dict) -> None:
                 eff = claimed
                 out = tiers.get(eff, "needs_approval")
                 parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]} (as reported by the agent)."))
+            elif unverified_note:
+                eff, out = None, unverified_out
+                parts.append((out, unverified_note))
             else:
                 eff, out = None, unverified_out
                 parts.append((out, f"Agent-supplied tier could not be verified; treating as substitution. "
@@ -693,6 +718,7 @@ def r_allergen_block(c: Ctx, r: dict) -> None:
         p = c.product(ln.product_id)
         found: dict[str, list[str]] = {"contains": [], "may_contain": [], "unknown": []}
         inferred: list[str] = []
+        claim_only: list[str] = []
         for a in excluded:
             if p is None:
                 st = "contains" if f"contains:{a}" in ln.flags else "may_contain" if f"may_contain:{a}" in ln.flags else "unknown"
@@ -702,6 +728,9 @@ def r_allergen_block(c: Ctx, r: dict) -> None:
                 if src.startswith("inferred") and st != "unknown":
                     inferred.append(a)
                     st = "unknown"  # AI-inferred is a hint for humans, never proof
+                elif src == "structured:claim" and st == "free":
+                    claim_only.append(a)
+                    st = "unknown"  # a nutrition claim is not the supplier's allergen declaration
             if st in found:
                 found[st].append(a)
         rid = f"{r['id']}:{ln.product_id}"
@@ -718,6 +747,8 @@ def r_allergen_block(c: Ctx, r: dict) -> None:
             out = r.get("on_unknown", "reject")
             src = "no supplier allergen data" if p is None else "the supplier data does not state it"
             extra = (f" The {', '.join(inferred)} status was only AI-inferred from the ingredient text." if inferred else "")
+            extra += (f" '{'/'.join(claim_only)}-free' comes only from a nutrition claim, not from the allergen declaration."
+                      if claim_only else "")
             tail = {"reject": " Unknown is never treated as safe, so the line cannot be ordered.",
                     "needs_approval": f" Unknown is never treated as safe: a {role_text(role)} must check the label first.",
                     "allow": ""}[out]
