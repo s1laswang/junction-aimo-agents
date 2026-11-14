@@ -5,7 +5,8 @@
 - Valio has no order endpoint. Orders, approvals and the audit log are our own store (SQLite). In production they would be sent to Valio's order system.
 - Prices and availability come from the shared Valio mock API (`/price`, `/availability`), cached in `var/cache`, ids batched.
 - Agent keys and mandates are seeded in `aimo/mandates.py`. Demo keys are fixed (`demo-hotel-aurora` and so on) and the admin key defaults to `demo-admin`. No real auth.
-- Signing keys are local files. The Ed25519 key is a JSON file in `var/keys/` (`AIMO_KEY_DIR`), created on first use.
+- Signing keys are local files. The Ed25519 key is a JSON file in `var/keys/` (`AIMO_KEY_DIR`), created on first use; `aimo/keys.py` supports key rotation (`python -m aimo.keys rotate`) while serving retired public keys (`retired-*.json`) in JWKS.
+- `/v1/admin/simulate` simulates supplier stock changes in-memory (`aimo/offers.py`, cleared with `DELETE /v1/admin/simulate`) and triggers server-side `orders.react_stockout` (`aimo/orders.py`) on affected orders.
 
 ## Data sources
 
