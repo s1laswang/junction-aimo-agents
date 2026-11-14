@@ -1,0 +1,545 @@
+{
+ "note": "Illustrative per-cover quantities for planning, not Valio figures.",
+ "dishes": [
+  {
+   "id": "salmon-soup",
+   "en": "salmon soup",
+   "fi": "lohikeitto",
+   "aliases": [
+    "salmon soup",
+    "lohikeitto"
+   ],
+   "ingredients": [
+    {
+     "query": "salmon fillet",
+     "per_cover": 50,
+     "unit": "g"
+    },
+    {
+     "query": "potato",
+     "per_cover": 100,
+     "unit": "g"
+    },
+    {
+     "query": "carrot",
+     "per_cover": 30,
+     "unit": "g"
+    },
+    {
+     "query": "leek",
+     "per_cover": 20,
+     "unit": "g"
+    },
+    {
+     "query": "cooking cream",
+     "per_cover": 60,
+     "unit": "ml"
+    },
+    {
+     "query": "milk",
+     "per_cover": 100,
+     "unit": "ml"
+    },
+    {
+     "query": "dill",
+     "per_cover": 2,
+     "unit": "g"
+    },
+    {
+     "query": "butter",
+     "per_cover": 5,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "karelian-stew",
+   "en": "karelian stew",
+   "fi": "karjalanpaisti",
+   "aliases": [
+    "karelian stew",
+    "karelian hotpot",
+    "karjalanpaisti"
+   ],
+   "ingredients": [
+    {
+     "query": "pork shoulder",
+     "per_cover": 80,
+     "unit": "g"
+    },
+    {
+     "query": "beef cubes",
+     "per_cover": 60,
+     "unit": "g"
+    },
+    {
+     "query": "onion",
+     "per_cover": 20,
+     "unit": "g"
+    },
+    {
+     "query": "carrot",
+     "per_cover": 30,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "macaroni-casserole",
+   "en": "macaroni casserole",
+   "fi": "makaronilaatikko",
+   "aliases": [
+    "macaroni casserole",
+    "makaronilaatikko"
+   ],
+   "ingredients": [
+    {
+     "query": "macaroni",
+     "per_cover": 70,
+     "unit": "g"
+    },
+    {
+     "query": "ground beef",
+     "per_cover": 60,
+     "unit": "g"
+    },
+    {
+     "query": "onion",
+     "per_cover": 20,
+     "unit": "g"
+    },
+    {
+     "query": "milk",
+     "per_cover": 100,
+     "unit": "ml"
+    },
+    {
+     "query": "eggs",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "butter",
+     "per_cover": 5,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "pancakes",
+   "en": "pancakes",
+   "fi": "pannukakut",
+   "aliases": [
+    "pancakes",
+    "pannukakut",
+    "lettu",
+    "letut"
+   ],
+   "ingredients": [
+    {
+     "query": "milk",
+     "per_cover": 150,
+     "unit": "ml"
+    },
+    {
+     "query": "wheat flour",
+     "per_cover": 50,
+     "unit": "g"
+    },
+    {
+     "query": "eggs",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "butter",
+     "per_cover": 10,
+     "unit": "g"
+    },
+    {
+     "query": "sugar",
+     "per_cover": 5,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "oat-porridge",
+   "en": "oat porridge",
+   "fi": "kaurapuuro",
+   "aliases": [
+    "oat porridge",
+    "porridge",
+    "kaurapuuro",
+    "puuro"
+   ],
+   "ingredients": [
+    {
+     "query": "oat flakes",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "milk",
+     "per_cover": 150,
+     "unit": "ml"
+    },
+    {
+     "query": "butter",
+     "per_cover": 5,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "lasagne",
+   "en": "lasagne",
+   "fi": "lasagne",
+   "aliases": [
+    "lasagne",
+    "lasagna"
+   ],
+   "ingredients": [
+    {
+     "query": "lasagne",
+     "per_cover": 60,
+     "unit": "g"
+    },
+    {
+     "query": "ground beef",
+     "per_cover": 80,
+     "unit": "g"
+    },
+    {
+     "query": "crushed tomatoes",
+     "per_cover": 80,
+     "unit": "g"
+    },
+    {
+     "query": "grated cheese",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "milk",
+     "per_cover": 100,
+     "unit": "ml"
+    },
+    {
+     "query": "wheat flour",
+     "per_cover": 8,
+     "unit": "g"
+    },
+    {
+     "query": "butter",
+     "per_cover": 8,
+     "unit": "g"
+    },
+    {
+     "query": "onion",
+     "per_cover": 20,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "salad-bar",
+   "en": "salad bar",
+   "fi": "salaattipoyta",
+   "aliases": [
+    "salad bar",
+    "salaattipöytä",
+    "salaattipoyta"
+   ],
+   "ingredients": [
+    {
+     "query": "iceberg lettuce",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "cucumber",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "tomatoes",
+     "per_cover": 50,
+     "unit": "g"
+    },
+    {
+     "query": "carrot",
+     "per_cover": 30,
+     "unit": "g"
+    },
+    {
+     "query": "pepper red",
+     "per_cover": 20,
+     "unit": "g"
+    },
+    {
+     "query": "rapeseed oil",
+     "per_cover": 8,
+     "unit": "ml"
+    }
+   ]
+  },
+  {
+   "id": "meatballs-and-mashed-potatoes",
+   "en": "meatballs and mashed potatoes",
+   "fi": "lihapullat ja perunamuusi",
+   "aliases": [
+    "meatballs",
+    "lihapullat"
+   ],
+   "ingredients": [
+    {
+     "query": "meatballs",
+     "per_cover": 120,
+     "unit": "g"
+    },
+    {
+     "query": "potato",
+     "per_cover": 200,
+     "unit": "g"
+    },
+    {
+     "query": "milk",
+     "per_cover": 50,
+     "unit": "ml"
+    },
+    {
+     "query": "butter",
+     "per_cover": 8,
+     "unit": "g"
+    },
+    {
+     "query": "lingonberry jam",
+     "per_cover": 20,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "creamy-chicken-pasta",
+   "en": "creamy chicken pasta",
+   "fi": "kanapasta",
+   "aliases": [
+    "chicken pasta",
+    "kanapasta"
+   ],
+   "ingredients": [
+    {
+     "query": "chicken fillet",
+     "per_cover": 100,
+     "unit": "g"
+    },
+    {
+     "query": "pasta",
+     "per_cover": 90,
+     "unit": "g"
+    },
+    {
+     "query": "cooking cream",
+     "per_cover": 80,
+     "unit": "ml"
+    },
+    {
+     "query": "onion",
+     "per_cover": 15,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "rice-porridge",
+   "en": "rice porridge",
+   "fi": "riisipuuro",
+   "aliases": [
+    "rice porridge",
+    "riisipuuro"
+   ],
+   "ingredients": [
+    {
+     "query": "rice",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "milk",
+     "per_cover": 250,
+     "unit": "ml"
+    },
+    {
+     "query": "butter",
+     "per_cover": 3,
+     "unit": "g"
+    },
+    {
+     "query": "sugar",
+     "per_cover": 5,
+     "unit": "g"
+    }
+   ]
+  },
+  {
+   "id": "carbonara",
+   "en": "pasta carbonara",
+   "fi": "carbonara",
+   "aliases": [
+    "pasta carbonara",
+    "spaghetti carbonara",
+    "carbonara"
+   ],
+   "ingredients": [
+    {
+     "query": "pasta",
+     "per_cover": 100,
+     "unit": "g"
+    },
+    {
+     "query": "bacon",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "eggs",
+     "per_cover": 40,
+     "unit": "g"
+    },
+    {
+     "query": "cooking cream",
+     "per_cover": 40,
+     "unit": "ml"
+    },
+    {
+     "query": "grated cheese",
+     "per_cover": 15,
+     "unit": "g"
+    }
+   ]
+  }
+ ],
+ "swaps": [
+  {
+   "id": "cream",
+   "match": [
+    "cream",
+    "cooking cream",
+    "whipping cream"
+   ],
+   "trigger": "lactose",
+   "options": [
+    {
+     "query": "lactose-free cream",
+     "ratio": 1.0,
+     "why": "same fat content, lactose free"
+    },
+    {
+     "query": "oat cooking",
+     "ratio": 1.0,
+     "why": "dairy free, thinner sauce"
+    }
+   ]
+  },
+  {
+   "id": "milk",
+   "match": [
+    "milk"
+   ],
+   "trigger": "lactose",
+   "options": [
+    {
+     "query": "lactose-free milk",
+     "ratio": 1.0,
+     "why": "same recipe, lactose free"
+    },
+    {
+     "query": "oat drink",
+     "ratio": 1.0,
+     "why": "dairy free, slightly sweeter"
+    }
+   ]
+  },
+  {
+   "id": "butter",
+   "match": [
+    "butter"
+   ],
+   "trigger": "lactose",
+   "options": [
+    {
+     "query": "lactose-free butter",
+     "ratio": 1.0,
+     "why": "same fat, lactose free"
+    },
+    {
+     "query": "lactose free margarine",
+     "ratio": 1.0,
+     "why": "dairy free, for baking and cooking"
+    }
+   ]
+  },
+  {
+   "id": "cheese",
+   "match": [
+    "grated cheese",
+    "cheese"
+   ],
+   "trigger": "lactose",
+   "options": [
+    {
+     "query": "lactose-free cheese",
+     "ratio": 1.0,
+     "why": "same melt, lactose free"
+    }
+   ]
+  },
+  {
+   "id": "flour",
+   "match": [
+    "wheat flour",
+    "flour"
+   ],
+   "trigger": "gluten",
+   "options": [
+    {
+     "query": "gluten-free flour mix",
+     "ratio": 1.0,
+     "why": "1:1 mix, batter a little denser"
+    }
+   ]
+  },
+  {
+   "id": "pasta",
+   "match": [
+    "macaroni",
+    "pasta",
+    "lasagne"
+   ],
+   "trigger": "gluten",
+   "options": [
+    {
+     "query": "gluten-free pasta",
+     "ratio": 1.0,
+     "why": "same cooking use, shorter cook time"
+    }
+   ]
+  },
+  {
+   "id": "oats",
+   "match": [
+    "oat flakes",
+    "oats"
+   ],
+   "trigger": "gluten",
+   "options": [
+    {
+     "query": "gluten-free oats",
+     "ratio": 1.0,
+     "why": "certified gluten free"
+    }
+   ]
+  }
+ ]
+}
