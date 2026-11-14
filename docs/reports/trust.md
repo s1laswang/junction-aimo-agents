@@ -2,6 +2,18 @@
 
 Branch `team/trust`. Last updated Sat 14 Nov 2026, about 14:30 Helsinki.
 
+## Round 2 (pitch QA fixes), Sat about 15:15
+- **Fixed, HIGH: approval by an unknown identity.** `check_approval` now requires a person in the customer's approver directory whose *directory* role is allowed for the decision. AI agent identities can never approve: `agent:*`, the quote's agent, or any registered agent id, bare or `customer/agent`. Unknown identities are refused with a clear reason and audited as `approval.refused`. A `human:` prefix is stripped, and an empty or missing claimed role falls back to the directory role.
+- **Fixed, HIGH: the policy trusted the agent's tier.** The engine now derives the tier itself:
+  - `preferred` only if the product is in the policy's new `preferred_products` list.
+  - Tiers best, better and good come from `approved_alternatives` (customer-approved swaps), or for best from catalog evidence (same brand, category and unit as a usual product, keeping all its claims).
+  - Anything else gets "Agent-supplied tier could not be verified; treating as substitution" with outcome `unverified` (needs_approval in all three policies). That covers a missing tier, which defaults to "preferred" in the model, and a fake "preferred" or "best".
+  - Profiles: hotel usual 463038, with 464306 pre-approved as best. School usual 472833 and hospital usual 473328 are demo assumptions. Policies are now v1.1.0. `list_customers()` exposes `preferred_products` and `approved_alternatives`.
+- **Fixed, LOW: duplicate rows.** Each rule produces exactly one row per line, with the final outcome. The substitution rule composes one message, and evaluate also merges any duplicate rule_id generically.
+- **Tests.** 39 trust tests, 117 for the whole repo, all passing. New cases: agent ids cannot approve, unknown approvers are refused, the directory role is authoritative, a no-tier substitution and a fake best tier need approval, a catalog-verified best is allowed, a school oat drink with no tier needs the kitchen manager, and each rule_id appears once.
+- **Hero flow unchanged, checked against the real catalog DB.** 1,000 × 464306 best gives needs_approval by the procurement manager, with only spend and the 3.3× drift as non-allow hits. 464306 is allowed as a verified best tier.
+- **Note for gateway and frontend:** approvals must send a directory id (`anna@hotel-aurora.example`) or name. The UI already does.
+
 ## Status
 M1 done. All seven deliverables are implemented, tested (28 tests, about 2 s) and pushed.
 - Walkthrough: `uv run python -m aimo.trust.demo`. It signs and verifies a quote, evaluates it (needs_approval), writes the audit trail, approves, renders the story, tampers with an event and catches it with verify(). It uses a temporary audit DB; pass `--real` to write to `data/state.sqlite`.

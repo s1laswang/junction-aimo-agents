@@ -277,6 +277,55 @@ def test_shortfall_explanation_is_actionable(offline_plan):
     assert "re-plan for a later delivery date" in plan.explanation
 
 
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+@pytest.mark.parametrize("prefs", [{}, {"parsed_by": "gemini"}, {"parsed_by": "regex", "delivery_date_assumed": True,
+                                                                 "injection_flags": []}])
+def test_oat_drink_non_spec_preferences_do_not_drop_type_check(offline_plan, prefs):
+    """Buyer round-3 repro: preferences={'parsed_by': 'gemini'} made the plan pick 18 x Pepsi Max."""
+    from aimo.catalog import get_product
+    from aimo.catalog.plan import plan_need
+    need = Need(customer_id="school-tampere", product_query="oat drink", excluded_allergens=["milk", "nuts"],
+                quantity=120, unit="L", delivery_by=date(2026, 11, 18), preferences=prefs)
+    plan = plan_need(need, offers_fn=_fake_offers())
+    assert plan.lines and plan.shortfall == 0, plan.explanation
+    for line in plan.lines:
+        assert "oat" in get_product(line.product_id).name.lower(), line.product_name
+    for c in plan.candidates:
+        if c.tier != "rejected":
+            n = c.product.name.lower()
+            assert "oat" in n or "kaura" in n or "havre" in n, c.product.name   # no soft drinks for 'oat drink'
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+def test_cream_40l_lactose_free_with_parser_preferences(offline_plan):
+    from aimo.catalog.plan import plan_need
+    need = Need(customer_id="hotel-aurora", product_query="cream", required_claims=["FREE_FROM_LACTOSE"], quantity=40,
+                unit="L", delivery_by=date(2026, 11, 18), preferences={"parsed_by": "gemini"})
+    plan = plan_need(need, offers_fn=_fake_offers())
+    assert plan.lines and plan.shortfall == 0, plan.explanation
+    assert all("cream" in l.product_name.lower() for l in plan.lines)
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+def test_brand_preference_without_usual_product(offline_plan):
+    from aimo.catalog.plan import plan_need
+    need = Need(customer_id="hotel-aurora", product_query="lactose-free milk", required_claims=["FREE_FROM_LACTOSE"],
+                quantity=100, unit="L", delivery_by=date(2026, 11, 16),
+                preferences={"brand": "Arla", "parsed_by": "gemini"})
+    plan = plan_need(need, offers_fn=_fake_offers())
+    best = [c for c in plan.candidates if c.tier == "best"]
+    assert best and all((c.product.brand or "").strip() == "Arla" for c in best)
+    assert all("milk" in c.product.name.lower() for c in best)
+    assert plan.lines[0].tier == "best" and plan.shortfall == 0
+
+
+def test_spec_preferences_ignore_non_spec_keys():
+    from aimo.catalog.substitution import spec_preferences
+    need = Need(customer_id="x", product_query="oat drink", quantity=1, unit="L", delivery_by=date(2026, 11, 18),
+                preferences={"parsed_by": "gemini", "standing_order_qty_per_week": 300, "brand": "Oatly", "use": ""})
+    assert spec_preferences(need) == {"brand": "Oatly"}
+
+
 def test_gemini_inferred_allergens_never_make_free(monkeypatch):
     from aimo.catalog import gemini_allergens, product_from_row
     monkeypatch.setattr(gemini_allergens, "cached_inference",

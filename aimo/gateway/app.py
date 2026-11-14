@@ -66,7 +66,19 @@ def identity(
     x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1"),
     x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora"),
 ) -> service.Identity:
-    return service.Identity(agent_id=x_agent_id or service.DEFAULT_AGENT, customer_id=x_customer_id or service.DEFAULT_CUSTOMER)
+    ident = service.Identity(agent_id=x_agent_id or service.DEFAULT_AGENT,
+                             customer_id=x_customer_id or service.DEFAULT_CUSTOMER)
+    ident.authenticated = {"customer": bool(x_customer_id), "agent": bool(x_agent_id)}  # type: ignore[attr-defined]
+    return ident
+
+
+def _with_body_claims(ident: service.Identity, customer_id: Optional[str], agent_id: Optional[str]) -> service.Identity:
+    """Headers win: a body customer_id/agent_id that disagrees with a header is 403. Without the header
+    (demo convenience) the body value is used."""
+    auth = getattr(ident, "authenticated", {"customer": True, "agent": True})
+    cust = ident.customer_id if auth["customer"] else (customer_id or ident.customer_id)
+    agent = ident.agent_id if auth["agent"] else (agent_id or ident.agent_id)
+    return service.claim_identity(service.Identity(agent_id=agent, customer_id=cust), customer_id, agent_id)
 
 
 class FaultsMiddleware:
@@ -140,7 +152,8 @@ def build_router() -> APIRouter:
         """Merged `/api/price` + `/api/availability` from the Valio Aimo API. `cutoff_passed` is true when the
         product's order closing time is already past (it cannot make the requested date). Provenance is in
         each offer's `provenance` and in the `X-Aimo-*` response headers."""
-        res, meta = service.fetch_offers(body.product_ids, body.requested_date, body.customer_id or ident.customer_id)
+        who = _with_body_claims(ident, body.customer_id, None)
+        res, meta = service.fetch_offers(body.product_ids, body.requested_date, who.customer_id)
         return JSONResponse([o.model_dump(mode="json") for o in res], headers=_prov_headers(meta))
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
@@ -153,7 +166,7 @@ def build_router() -> APIRouter:
         """Re-fetches live offers, refuses lines that are unavailable / past cut-off / short of stock (409 with
         per-line reasons), computes totals, signs the quote (quote_hash + JWS) and fixes the price until
         `expires_at`."""
-        who = service.Identity(agent_id=body.agent_id or ident.agent_id, customer_id=body.customer_id or ident.customer_id)
+        who = _with_body_claims(ident, body.customer_id, body.agent_id)
         return service.make_quote(who, body.delivery_date, [l.model_dump() for l in body.lines], body.need)
 
     @r.get("/v1/quotes/{quote_id}", tags=["quotes"], summary="Get a quote", response_model=Quote, responses=ERR)

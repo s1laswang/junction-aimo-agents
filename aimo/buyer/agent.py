@@ -23,14 +23,15 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 from aimo.buyer import prompts
-from aimo.buyer.need import HELSINKI, now_helsinki, parse_need
+from aimo.buyer.need import HELSINKI, now_helsinki, parse_request
 from aimo.buyer.profiles import get_profile
 from aimo.buyer.tool_schemas import to_gemini_schema
 from aimo.buyer.tools import ToolTransport
 from aimo.models import AgentStep, Need
 
 DRIFT_RATIO = 10.0  # harness hold (likely unit mix-up); moderate drift (>3x) is trust policy -> needs_approval
-UNTRUSTED_FIELDS = ("marketing_text", "ingredients_text", "description", "text")
+PLANNER_PREF_KEYS = {"brand", "fat_pct", "organic", "pack", "use"}
+UNTRUSTED_FIELDS =("marketing_text", "ingredients_text", "description", "text")
 _INJECTION_RE = re.compile(
     r"ignore (all |your |previous |the )*(instructions|limits|rules|policy)|system (note|prompt|message)|"
     r"to (ai|llm) agents?|approval is not required|disregard|you are now|order \d[\d,. ]* (units|pcs)",
@@ -86,8 +87,11 @@ class BuyerAgent:
         self.steps: list[AgentStep] = []
         self._seq = 0
         # harness state
-        self.need: Optional[Need] = None
-        self.plan: Optional[dict] = None
+        self.need: Optional[Need] = None          # first item (compat)
+        self.needs: list[Need] = []               # one per product in the request
+        self.plan: Optional[dict] = None          # merged view over self.plans
+        self.plans: dict[int, dict] = {}          # need index -> Plan
+        self._plan_idx = 0
         self.quote: Optional[dict] = None
         self.order: Optional[dict] = None
         self.orders_submitted = 0
@@ -148,15 +152,17 @@ class BuyerAgent:
                   agent_id=self.agent_id, transport=getattr(self.t, "kind", "?"), model=self.model,
                   thinking=self.thinking)
         t = time.time()
-        self.need = parse_need(text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
-        n = self.need
-        self.emit("thought", f"Parsed need: {n.quantity:g} {n.unit} {n.product_query}, delivery by {n.delivery_by}",
-                  need=n.model_dump(mode="json"), latency_s=round(time.time() - t, 2),
-                  parsed_by=n.preferences.get("parsed_by"))
-        ratio = n.preferences.get("standing_order_ratio")
-        if ratio and float(ratio) >= DRIFT_RATIO:
-            self.drift = {"ratio": ratio, "std": n.preferences.get("standing_order_qty_per_week"), "unit": n.unit}
-            self.emit("thought", f"Standing-order drift: {ratio}x the usual weekly quantity", drift=self.drift)
+        self.needs = parse_request(text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
+        self.need = n = self.needs[0]
+        items = "; ".join(f"{x.quantity:g} {x.unit} {x.product_query}" for x in self.needs)
+        self.emit("thought", f"Parsed need: {items}, delivery by {n.delivery_by}",
+                  need=n.model_dump(mode="json"), needs=[x.model_dump(mode="json") for x in self.needs],
+                  latency_s=round(time.time() - t, 2), parsed_by=n.preferences.get("parsed_by"))
+        for x in self.needs:
+            ratio = x.preferences.get("standing_order_ratio")
+            if ratio and float(ratio) >= DRIFT_RATIO and not self.drift:
+                self.drift = {"ratio": ratio, "std": x.preferences.get("standing_order_qty_per_week"), "unit": x.unit}
+                self.emit("thought", f"Standing-order drift: {ratio}x the usual weekly quantity", drift=self.drift)
 
         mandate = self.profile["mandate_summary"]
         pol = self._tool("list_policies", {})
@@ -169,8 +175,13 @@ class BuyerAgent:
             usual=", ".join(self.profile.get("preferred_product_ids") or []) or "none",
             allergens=", ".join(self.profile.get("excluded_allergens") or []) or "none", mandate=mandate)
         extra = prompts.DRIFT.format(**self.drift) if self.drift else ""
+        if len(self.needs) > 1:
+            extra += prompts.MULTI.format(n=len(self.needs))
+            need_json = json.dumps([x.model_dump(mode="json") for x in self.needs], indent=1, ensure_ascii=False)
+        else:
+            need_json = n.model_dump_json(indent=1)
         task = prompts.TASK.format(customer_name=self.profile["name"], raw_text=text,
-                                   need_json=n.model_dump_json(indent=1), today=now.strftime("%A %Y-%m-%d %H:%M"),
+                                   need_json=need_json, today=now.strftime("%A %Y-%m-%d %H:%M"),
                                    delivery_by=n.delivery_by.isoformat(), extra=extra)
         final_text = self._loop(system, task)
         return self._finish(final_text)
@@ -301,42 +312,114 @@ class BuyerAgent:
             return args
         if name == "plan_need":
             given = args.get("need") if isinstance(args.get("need"), dict) else {}
-            locked = n.model_dump(mode="json")
+            self._plan_idx = idx = self._match_need(given)
+            locked = self.needs[idx].model_dump(mode="json") if self.needs else n.model_dump(mode="json")
             merged = {**locked, **{k: v for k, v in given.items() if k in ("product_query", "preferences")}}
-            merged["preferences"] = {**locked.get("preferences", {}), **(given.get("preferences") or {})}
-            # quantity/unit/date may only come from the parsed need
+            prefs = {**locked.get("preferences", {}), **(given.get("preferences") or {})}
+            # Only spec preferences go to the planner; bookkeeping (parsed_by, notes, site, drift ratios)
+            # made the catalog drop its top-hit reference and return 0 candidates (reported to catalog).
+            merged["preferences"] = {k: v for k, v in prefs.items() if k in PLANNER_PREF_KEYS}
+            # quantity/unit/date and the hard constraints may only come from the parsed need
             return {"need": merged}
         if name == "create_quote":
             args = dict(args)
-            args.setdefault("need", n.model_dump(mode="json"))
+            quote_need = self._quote_need()
+            args.setdefault("need", quote_need)
             if isinstance(args.get("need"), dict):
-                args["need"] = {**args["need"], **{k: v for k, v in n.model_dump(mode="json").items()
+                args["need"] = {**args["need"], **{k: v for k, v in quote_need.items()
                                                    if k in ("customer_id", "required_claims", "excluded_allergens", "raw_text")}}
             args.setdefault("delivery_date", n.delivery_by.isoformat())
             if self.injections and isinstance(args.get("need"), dict):
                 # trust convention (docs/interfaces.md): screen results go to need.preferences
                 prefs = dict(args["need"].get("preferences") or {})
-                prefs["injection_flags"] = self.injections
+                prefs["injection_flags"] = self._injection_flags()
                 args["need"] = {**args["need"], "preferences": prefs}
-            if self.plan:  # never quote a candidate the planner rejected
-                rejected = {c.get("product", {}).get("id") for c in self.plan.get("candidates", [])
-                            if c.get("tier") == "rejected"}
-                bad = [l.get("product_id") for l in args.get("lines", []) if l.get("product_id") in rejected]
-                if bad:
-                    return {"__blocked__": f"Products {bad} were rejected by the planner (hard constraint, cut-off or allergen)."}
+            return self._enforce_plan_lines(args)
         return args
 
+    def _enforce_plan_lines(self, args: dict) -> dict:
+        """Quantities come from the deterministic planner, never from the LLM: the quote must carry
+        exactly the plan's lines (product_id, qty_sales_units). A mismatch is corrected to the plan
+        and logged as a thought, so the Plan and the Quote/Approval views always agree."""
+        if not self.plans:
+            return {"__blocked__": "Call plan_need first: quote lines must come from the planner."}
+        unplanned = [x.product_query for i, x in enumerate(self.needs) if i not in self.plans]
+        if unplanned:
+            return {"__blocked__": f"Call plan_need for every item first (not planned yet: {unplanned})."}
+        plan_lines = [{"product_id": l["product_id"], "qty_sales_units": l["qty_sales_units"],
+                       **({"tier": l["tier"]} if l.get("tier") else {})} for l in self.plan.get("lines", [])]
+        if not plan_lines:
+            return {"__blocked__": "The plan has no orderable lines (full shortfall), so there is nothing to quote. "
+                                   "Report the shortfall and its reasons to the buyer."}
+
+        def key(ls):
+            return sorted((str(l.get("product_id")), round(float(l.get("qty_sales_units") or 0), 4)) for l in ls)
+
+        proposed = args.get("lines") or []
+        if key(proposed) != key(plan_lines):
+            self.emit("thought", "Quote lines corrected to the planner's lines (quantities never come from the model)",
+                      proposed=[{"product_id": l.get("product_id"), "qty_sales_units": l.get("qty_sales_units")}
+                                for l in proposed], plan_lines=plan_lines)
+            args = {**args, "lines": plan_lines}
+        return args
+
+    def _match_need(self, given: dict) -> int:
+        """Which parsed item a plan_need call is about: by product_query, else the next unplanned one."""
+        if len(self.needs) <= 1:
+            return 0
+        q = str(given.get("product_query") or "").lower().strip()
+        for i, x in enumerate(self.needs):
+            if q and q == x.product_query.lower():
+                return i
+        qw = set(re.findall(r"\w+", q))
+        best = max(range(len(self.needs)), key=lambda i: len(qw & set(re.findall(r"\w+", self.needs[i].product_query.lower()))))
+        if qw & set(re.findall(r"\w+", self.needs[best].product_query.lower())):
+            return best
+        return next((i for i in range(len(self.needs)) if i not in self.plans), 0)
+
+    def _quote_need(self) -> dict:
+        """The need attached to the quote. Several items -> one combined need: hard constraints are
+        the intersection of claims and the union of excluded allergens; items listed in preferences."""
+        if len(self.needs) <= 1:
+            return self.need.model_dump(mode="json")
+        first = self.needs[0].model_dump(mode="json")
+        claims = set(self.needs[0].required_claims)
+        for x in self.needs[1:]:
+            claims &= set(x.required_claims)
+        allergens = list(dict.fromkeys(a for x in self.needs for a in x.excluded_allergens))
+        return {**first, "product_query": "; ".join(x.product_query for x in self.needs),
+                "required_claims": [c for c in first["required_claims"] if c in claims],
+                "excluded_allergens": allergens,
+                "delivery_by": min(x.delivery_by for x in self.needs).isoformat(),
+                "preferences": {**first.get("preferences", {}),
+                                "items": [{"product_query": x.product_query, "quantity": x.quantity, "unit": x.unit,
+                                           "required_claims": x.required_claims} for x in self.needs]}}
+
+    def _merge_plans(self) -> dict:
+        ps = [self.plans[i] for i in sorted(self.plans)]
+        if len(ps) == 1:
+            return ps[0]
+        return {"need": self._quote_need(), "lines": [l for p in ps for l in p.get("lines", [])],
+                "candidates": [c for p in ps for c in p.get("candidates", [])],
+                "covered_amount": sum(p.get("covered_amount") or 0 for p in ps),
+                "shortfall": sum(p.get("shortfall") or 0 for p in ps),
+                "total_net": round(sum(p.get("total_net") or 0 for p in ps), 2),
+                "items": [{"product_query": (p.get("need") or {}).get("product_query"), "shortfall": p.get("shortfall"),
+                           "total_net": p.get("total_net")} for p in ps]}
+
     def _screen(self, name: str, result: Any) -> Any:
+        found: list[dict] = []
+
         def visit(x: Any, path: str) -> Any:
             if isinstance(x, dict):
                 out = {}
+                pid = x.get("id") or x.get("product_id")
                 for k, v in x.items():
                     if k in UNTRUSTED_FIELDS and isinstance(v, str) and v:
                         s = screen_text(v)
                         if s.get("suspicious"):
-                            self.injections.append({"tool": name, "field": f"{path}.{k}", "reasons": s.get("reasons")})
-                            self.emit("thought", f"Flagged suspected prompt injection in supplier text ({k}); redacted",
-                                      tool=name, field=f"{path}.{k}", reasons=s.get("reasons"), excerpt=v[:160])
+                            found.append({"tool": name, "product_id": pid, "field": f"{path}.{k}",
+                                          "reasons": list(s.get("reasons") or []), "excerpt": v[:160]})
                             out[k] = "[REDACTED by buyer harness: suspected prompt injection in supplier text]"
                             out["_untrusted_text_flagged"] = True
                             continue
@@ -345,20 +428,41 @@ class BuyerAgent:
             if isinstance(x, list):
                 return [visit(v, f"{path}[{i}]") for i, v in enumerate(x)]
             return x
-        return visit(result, name)
+        screened = visit(result, name)
+        if found:
+            self.injections += found
+            ids = [f["product_id"] for f in found if f["product_id"]]
+            reasons = sorted({r for f in found for r in f["reasons"]})
+            self.emit("thought", f"Flagged suspected prompt injection in supplier text of {len(found)} item(s); "
+                                 f"redacted before the model saw it",
+                      tool=name, product_ids=ids, reasons=reasons, excerpt=found[0]["excerpt"])
+        return screened
+
+    def _injection_flags(self) -> list[str]:
+        """Plain-language flags for need.preferences.injection_flags (read by trust's policy)."""
+        seen, out = set(), []
+        for f in self.injections:
+            key = (f.get("product_id"), f.get("field", "").rsplit(".", 1)[-1])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(f"{f.get('product_id') or f.get('tool')} {key[1]}: {', '.join(f.get('reasons') or [])}")
+        return out
 
     def _after(self, name: str, args: dict, result: Any) -> Any:
         if not isinstance(result, dict):
             return result
         if name == "plan_need" and "lines" in result:
-            self.plan = result
+            self.plans[self._plan_idx] = result
+            self.plan = self._merge_plans()
             rationale = self._explain(result) if self.explain_enabled else ""
             lines = result.get("lines", [])
             flagged = (any(l.get("flags") or l.get("tier") not in ("preferred",) for l in lines)
                        or (result.get("shortfall") or 0) > 0)
-            self.emit("plan", f"Plan: {len(lines)} line(s), EUR {result.get('total_net', 0):.2f}, "
+            item = f" for {self.needs[self._plan_idx].product_query}" if len(self.needs) > 1 else ""
+            self.emit("plan", f"Plan{item}: {len(lines)} line(s), EUR {result.get('total_net', 0):.2f}, "
                               f"shortfall {result.get('shortfall', 0):g}",
-                      plan=self._trim(result), rationale=rationale)
+                      plan=self._trim(result), rationale=rationale, item_index=self._plan_idx)
             if flagged and self.escalate:
                 self.escalate_next = True
                 self.emit("thought", f"Substitution decision needed: escalating to {self.reasoning_model} "
@@ -417,7 +521,7 @@ class BuyerAgent:
     # ------------------------------------------------------------ explanations and summary
     def _explain(self, plan: dict) -> str:
         facts = {
-            "need": {k: (self.need.model_dump(mode="json") if self.need else {}).get(k)
+            "need": {k: (plan.get("need") or (self.need.model_dump(mode="json") if self.need else {})).get(k)
                      for k in ("product_query", "quantity", "unit", "delivery_by", "required_claims",
                                "excluded_allergens", "preferred_product_ids")},
             "lines": [{k: l.get(k) for k in ("product_id", "product_name", "tier", "qty_sales_units", "sales_unit",
@@ -446,7 +550,7 @@ class BuyerAgent:
                                                       "no_order")
         facts = {
             "request": self.need.raw_text if self.need else "",
-            "need": self.need.model_dump(mode="json") if self.need else None,
+            "needs": [x.model_dump(mode="json") for x in self.needs],
             "plan_lines": (self.plan or {}).get("lines"), "shortfall": (self.plan or {}).get("shortfall"),
             "quote": {k: (self.quote or {}).get(k) for k in ("quote_id", "total_net", "lines", "quote_hash")} if self.quote else None,
             "order_status": status,
@@ -454,7 +558,7 @@ class BuyerAgent:
             "approved_by": (self.order or {}).get("approved_by"),
             "approval_note": (self.order or {}).get("approval_note"),
             "drift_hold": self.drift,
-            "injections_flagged": self.injections,
+            "injections_flagged": self._injection_flags(),
             "agent_final_text": agent_text,
             "audit_report_link": self._audit_link(),
         }
@@ -473,7 +577,7 @@ class BuyerAgent:
 
     def result(self, summary: str, status: str) -> dict:
         return {"run_id": self.run_id, "status": status, "summary": summary,
-                "need": self.need.model_dump(mode="json") if self.need else None,
+                "need": self.need.model_dump(mode="json") if self.need else None, "needs": [x.model_dump(mode="json") for x in self.needs],
                 "quote": self.quote, "order": self.order, "plan": self.plan,
                 "latency_s": round(time.time() - self.t0, 2), "models_used": self.models_used,
                 "steps": [s.model_dump(mode="json") for s in self.steps]}
