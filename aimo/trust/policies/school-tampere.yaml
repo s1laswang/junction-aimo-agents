@@ -1,0 +1,83 @@
+# Buyer mandate / purchasing policy for a Tampere school kitchen (demo customer).
+# Pupils with milk and nut allergies: allergen rules are hard blocks, unknown is never safe.
+policy_id: school-tampere
+version: "1.0.0"
+effective_from: "2026-08-01"
+customer:
+  id: school-tampere
+  name: Tampere Hervanta School Kitchen
+  segment: school
+  description: Central kitchen, 650 lunches a day; milk-free and nut-free by policy.
+
+approver_roles: [kitchen_manager]
+override_roles: [catering_director]
+approvers:
+  - {id: liisa@school-tampere.example, name: Liisa Korhonen, role: kitchen_manager}
+  - {id: jari@school-tampere.example, name: Jari Nieminen, role: catering_director}
+
+agents:
+  - agent_id: school-tampere/buyer-1
+    label: Gemini purchasing agent
+    scopes: [catalog:read, quote:create, order:submit]
+
+standing_orders:
+  - id: oat_drink
+    label: oat drink
+    keywords: [oat, kaura, havre]
+    weekly_qty: 400
+    unit: L
+  - id: potatoes
+    label: potatoes
+    keywords: [potato, peruna, potatis]
+    weekly_qty: 300
+    unit: KG
+
+rules:
+  - id: mandate_scope
+    type: scope
+    required_scopes: [order:submit]
+
+  - id: quote_freshness
+    type: quote_freshness
+
+  - id: spend
+    type: spend_threshold
+    auto_max: 300
+    approval_max: 3000
+    approver_role: kitchen_manager
+
+  - id: weekly_budget
+    type: period_spend
+    period_days: 7
+    limit: 4000
+    outcome: needs_approval
+    approver_role: kitchen_manager
+
+  - id: substitution
+    type: substitution
+    require_claims: true
+    # any substitution needs the kitchen manager
+    tiers: {preferred: allow, best: needs_approval, better: needs_approval, good: needs_approval, rejected: reject}
+    outside_preference: needs_approval
+    approver_role: kitchen_manager
+
+  - id: allergens
+    type: allergen_block
+    excluded: [milk, nuts]
+    reason: pupils with milk and nut allergies
+    on_contains: reject
+    on_may_contain: reject
+    on_unknown: reject            # no allergen data -> the line must not be ordered
+    approver_role: kitchen_manager
+
+  - id: delivery
+    type: delivery
+
+  - id: quantity_drift
+    type: quantity_drift
+    max_factor: 3
+    approver_role: kitchen_manager
+
+  - id: injection
+    type: injection
+    approver_role: kitchen_manager

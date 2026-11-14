@@ -1,0 +1,73 @@
+# Buyer mandate / purchasing policy for a hospital ward kitchen in Meilahti (demo customer).
+# Coeliac patients: gluten is excluded. A dietitian signs off on every substitution and on any
+# product whose allergen data is missing or only AI-inferred.
+policy_id: hospital-meilahti
+version: "1.0.0"
+effective_from: "2026-10-01"
+customer:
+  id: hospital-meilahti
+  name: Meilahti Hospital Ward Kitchen
+  segment: hospital
+  description: Patient meals incl. gluten-free and texture-modified diets.
+
+# dietitian first: a clinical sign-off outranks a budget sign-off when both are needed.
+approver_roles: [dietitian, procurement_manager]
+override_roles: [head_of_nutrition]
+approvers:
+  - {id: sara@hospital-meilahti.example, name: Sara Lindqvist, role: dietitian}
+  - {id: olli@hospital-meilahti.example, name: Olli Mäkinen, role: procurement_manager}
+  - {id: helena@hospital-meilahti.example, name: Helena Salo, role: head_of_nutrition}
+
+agents:
+  - agent_id: hospital-meilahti/buyer-1
+    label: Gemini purchasing agent
+    scopes: [catalog:read, quote:create, order:submit]
+
+standing_orders:
+  - id: milk
+    label: milk
+    keywords: [milk, maito, mjölk]
+    weekly_qty: 500
+    unit: L
+
+rules:
+  - id: mandate_scope
+    type: scope
+    required_scopes: [order:submit]
+
+  - id: quote_freshness
+    type: quote_freshness
+
+  - id: spend
+    type: spend_threshold
+    auto_max: 1000
+    approval_max: 10000
+    approver_role: procurement_manager
+
+  - id: substitution
+    type: substitution
+    require_claims: true
+    tiers: {preferred: allow, best: needs_approval, better: needs_approval, good: needs_approval, rejected: reject}
+    outside_preference: needs_approval
+    approver_role: dietitian
+
+  - id: allergens
+    type: allergen_block
+    excluded: [gluten]
+    reason: coeliac patients
+    on_contains: reject
+    on_may_contain: reject
+    on_unknown: needs_approval    # a dietitian checks the label before it reaches a patient
+    approver_role: dietitian
+
+  - id: delivery
+    type: delivery
+
+  - id: quantity_drift
+    type: quantity_drift
+    max_factor: 3
+    approver_role: procurement_manager
+
+  - id: injection
+    type: injection
+    approver_role: procurement_manager
