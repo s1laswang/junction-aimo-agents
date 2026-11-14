@@ -5,6 +5,8 @@ import {
   claimLabel, roleLabel, flagInfo, flagEl, TIER_LABEL, TIER_HINT, VERDICT, actorKind, pretty, download, verifyJws,
 } from "./util.js";
 import { createLiveApi } from "./api.js";
+import { renderOps, loadOps, blockedEvents } from "./ops.js";
+import { renderRecipes, loadRecipes } from "./recipes.js";
 
 const params = new URLSearchParams(location.search);
 const MOCK = params.get("mock") === "1";
@@ -41,7 +43,22 @@ const S = {
   sigs: new Map(),             // quote_hash -> {state, detail} | "pending"
   jwks: null,
   audit: { state: "idle", events: [], error: null, scope: "flow", verify: null, verifying: false },
+  image: null,                 // {mime, data_b64, name, preview} photo intake
+  optimize: "agent",           // agent | cheapest | greenest | reliable
+  answers: {},                 // step seq -> answer label (needs_clarification)
+  learned: {},                 // customer_id -> {state, items[]}
+  remember: false, rememberScope: "product",
+  requote: null,               // {order_id, old, fresh, detail} after 409 requote_needed
+  ledger: { events: [], at: 0 }, // whole-ledger cache for the blocked-attacks feed
+  voice: null,                 // {order_id, phase, text, tts, transcript, intent, error} voice approval
+  voiceStatus: null,           // GET /v1/voice/status
 };
+const OPTIMIZE = [
+  { id: "agent", label: "Agent's ranking" },
+  { id: "cheapest", label: "Cheapest" },
+  { id: "greenest", label: "Greenest" },
+  { id: "reliable", label: "Most reliable" },
+];
 let closeStream = null;
 
 // ================================================================== boot
@@ -57,6 +74,14 @@ async function boot() {
   pill.className = `mode-pill ${MOCK ? "mock" : "live"}`;
   for (const k of ["docs", "otap", "jwks", "mcp"]) $(`lnk-${k}`).href = api.links[k];
   $("btn-connect").addEventListener("click", openConnect);
+  api.setSignInHandler?.(openSignIn);
+  renderApproverChip();
+  api.voiceStatus?.().then((v) => { S.voiceStatus = v; }).catch(() => {});
+  $("blocked-pill").addEventListener("click", () => setTab("ops"));
+  const rc = $("request-card");
+  rc.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) { e.preventDefault(); rc.classList.add("drop"); } });
+  rc.addEventListener("dragleave", () => rc.classList.remove("drop"));
+  rc.addEventListener("drop", (e) => { e.preventDefault(); rc.classList.remove("drop"); const f = e.dataTransfer?.files?.[0]; if (f) readPhoto(f); });
   document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
   setTab("plan");
   renderRequest();
@@ -69,10 +94,13 @@ async function boot() {
   api.demoAvailable?.().then((ok) => { S.demoTamper = !!ok; renderAudit(); }).catch(() => {});
   if (params.get("customer") && S.customers.find((c) => c.id === params.get("customer"))) selectCustomer(params.get("customer"));
   refreshApprovals();
+  loadLearned(S.customerId);
+  refreshLedger();
+  setInterval(() => refreshLedger(), MOCK ? 4000 : 8000);
   // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
   if (params.get("autorun") === "1") startRun();
   else if (params.get("tab")) setTab(params.get("tab"));
-  if (!MOCK) setInterval(() => { if (S.tab === "approvals" && !S.deciding) refreshApprovals(true); }, 5000);
+  if (!MOCK) setInterval(() => { if (S.tab === "approvals" && !S.deciding && !S.voice) refreshApprovals(true); }, 5000);
 }
 
 function banner(msg, actions = [], kind = "") {
@@ -122,6 +150,7 @@ function normCustomer(c) {
     segment: c.segment ? c.segment.charAt(0).toUpperCase() + c.segment.slice(1) : c.type || "",
     agent_id: c.agent_id || m.agent_id || c.agents?.[0]?.agent_id || c.mandates?.[0]?.agent_id || `${id}/buyer-1`,
     approvers: c.approvers || [],
+    excluded_allergens: c.excluded_allergens || [],
     policy_id: c.policy_id || m.policy_id || id,
     scopes: m.scopes || c.scopes || null,
     summary: toLines(c.summary || c.policy_summary || c.rules || c.policy),
@@ -135,17 +164,364 @@ function selectCustomer(id) {
   if (!S.textEdited && c) S.text = c.default_request || DEFAULT_REQ[id] || S.text;
   S.approver = "";
   renderRequest();
+  loadLearned(id);
+}
+
+// Learned swaps ("always allow this swap"). PROPOSED endpoint GET /v1/customers/{id}/learned; 404 hides the panel.
+async function loadLearned(id, force) {
+  if (!api.learned || (!force && S.learned[id]?.state === "ok")) return;
+  try {
+    const res = await api.learned(id);
+    if (res && !Array.isArray(res) && res.available === false) { S.learned[id] = { state: "absent", items: [] }; renderRequest(); return; }
+    const items = Array.isArray(res) ? res : res?.swaps || res?.items || res?.learned || [];
+    S.learned[id] = { state: "ok", items };
+  } catch (e) {
+    S.learned[id] = { state: e.status === 404 ? "absent" : "error", items: [] };
+  }
+  renderRequest();
+}
+
+function learnedPanel(id) {
+  const L = S.learned[id];
+  if (!L || L.state !== "ok") return null;
+  if (!L.items.length && S.run && !S.editing) return null;
+  return h("details", { class: "learned", open: !S.run && L.items.length <= 2 },
+    h("summary", { class: "section-label" }, `Learned swaps · ${L.items.length}`, L.items.length ? h("span", { class: "more" }, "show ›") : null),
+    L.items.length ? h("ul", null, L.items.map((x) => h("li", null,
+      h("b", null, x.product_name || x.to_name || x.to_product_name || x.to_product_id || x.product_id || x.product_type || "swap"),
+      x.replaces_name || x.from_name || x.from_product_name || x.replaces_product_id || x.from_product_id
+        ? [" for ", h("span", null, x.replaces_name || x.from_name || x.from_product_name || x.replaces_product_id || x.from_product_id)] : null,
+      h("span", { class: "faint" }, ` · ${x.scope === "product_type" ? "any product of this type" : "this product"}`,
+        x.approved_by || x.approver ? ` · ${directoryEntry(x.approved_by || x.approver)?.name || x.approved_by || x.approver}` : "",
+        x.approved_at || x.created_at || x.ts ? ` · ${dayTime(x.approved_at || x.created_at || x.ts)}` : "")))) :
+      h("div", { class: "faint small" }, "None yet. Tick “Always allow this swap” when approving, and the agent stops asking for it."));
+}
+
+// Photo intake: downscale in the browser (max 1600 px JPEG) and send with the run.
+function readPhoto(file) {
+  if (!file || !/^image\//.test(file.type)) return;
+  const fr = new FileReader();
+  fr.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL("image/jpeg", 0.85);
+      S.image = { mime: "image/jpeg", data_b64: url.split(",")[1], name: file.name || "photo.jpg", preview: url };
+      renderRequest();
+    };
+    img.src = fr.result;
+  };
+  fr.readAsDataURL(file);
+}
+
+// ================================================================== approver sign-in
+// Approvals are human-only. A person signs in once with their name and the approver PIN; the gateway returns an
+// 8-hour session bound to that one person (POST /v1/auth/approver-session). Agents never get the PIN, and any request
+// with agent identity on the decision route is refused (403), so this panel is the only way to approve.
+const svgIcon = (d) => h("span", { class: "ico", "aria-hidden": "true",
+  html: `<svg viewBox="0 0 16 16" width="14" height="14"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` });
+const lockIcon = () => svgIcon("M4.5 7V5a3.5 3.5 0 0 1 7 0v2M3.5 7h9v7h-9z");
+const micIcon = () => svgIcon("M8 1.5a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0V4A2.5 2.5 0 0 0 8 1.5zM3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5");
+
+/** Directory entry {id?, name, role, customer} for an approver id or name, from /v1/customers. */
+function directoryEntry(who) {
+  if (!who) return null;
+  const w = String(who).toLowerCase();
+  for (const c of S.customers) for (const a of c.approvers || []) {
+    if ((a.id && a.id.toLowerCase() === w) || (a.name && a.name.toLowerCase() === w)) return { ...a, customer: c };
+  }
+  return null;
+}
+
+function renderApproverChip() {
+  const el = $("approver-chip");
+  if (!el || !api?.signedInApprover) return;
+  const me = api.signedInApprover();
+  const e = directoryEntry(me);
+  mount(el, me
+    ? h("div", { class: "approver-chip on", title: "Signed in as a human approver (8-hour session). Agents can never hold this." },
+        h("span", { class: "dot ok", "aria-hidden": "true" }),
+        h("span", { class: "who" }, e?.name || me, e?.role ? h("span", { class: "role" }, ` · ${roleLabel(e.role)}`) : null),
+        h("button", { class: "btn btn-quiet btn-sm", onclick: () => { api.signOut(); S.voice = null; renderApproverChip(); refreshApprovals(); } }, "Sign out"))
+    : h("button", { class: "btn btn-sm approver-chip off", onclick: () => openSignIn().then(() => refreshApprovals()) }, lockIcon(), "Sign in as approver"));
+}
+
+function switchApprover() {
+  api.signOut();
+  renderApproverChip();
+  openSignIn("Sign in as the approver who should decide.").then(() => { renderApprovals(); });
+}
+
+function signInCard(customerId) {
+  return h("div", { class: "card signin-card" },
+    h("div", { class: "card-body" },
+      h("div", { class: "row" }, h("span", { class: "signin-badge" }, lockIcon()), h("h3", { class: "grow" }, "Approvals are human-only")),
+      h("p", { class: "muted sm" }, "Orders outside an agent's mandate wait here for a named person. Sign in with your name and the approver PIN; agents never receive it, and the gateway refuses any approval that carries agent identity."),
+      h("button", { class: "btn btn-primary", onclick: () => openSignIn(null, customerId).then(() => refreshApprovals()) }, lockIcon(), "Sign in as approver")));
+}
+
+let signInOpen = null;
+/** Opens the sign-in panel. Resolves when the panel closes (signed in or cancelled); api.js checks which. */
+function openSignIn(reason, customerId) {
+  if (signInOpen) return signInOpen;
+  const dlg = $("signin-dialog");
+  const it = selectedItem();
+  const custId = customerId || it?.order?.customer_id || S.customerId;
+  const needRole = it?.order?.status === "pending_approval" ? it.order.decision?.approver_role : null;
+  const groups = [...S.customers].filter((c) => (c.approvers || []).length)
+    .sort((a, b) => (b.id === custId) - (a.id === custId));
+  const home = groups.find((c) => c.id === custId);
+  const pick = (home?.approvers || []).find((a) => a.role === needRole) || home?.approvers?.[0] || groups[0]?.approvers?.[0];
+  const st = { who: S.signinWho || pick?.name || pick?.id || "", other: false, busy: false, error: null };
+
+  signInOpen = new Promise((resolve) => {
+    const finish = () => { signInOpen = null; resolve(); };
+    const render = () => {
+      const whoSel = groups.length && !st.other
+        ? h("select", { class: "input", id: "signin-who", disabled: st.busy, onchange: (e) => { if (e.target.value === "__other") { st.other = true; st.who = ""; render(); } else st.who = e.target.value; } },
+            groups.map((c) => h("optgroup", { label: c.name },
+              c.approvers.map((a) => { const v = a.id || a.name; return h("option", { value: v, selected: v === st.who || a.name === st.who }, `${a.name || a.id} · ${roleLabel(a.role)}`); }))),
+            h("option", { value: "__other" }, "Someone else…"))
+        : h("input", { class: "input", id: "signin-who", placeholder: "Name or email from the approver directory", value: st.who, disabled: st.busy, oninput: (e) => (st.who = e.target.value) });
+      const pin = h("input", { class: "input mono", id: "signin-pin", type: "password", autocomplete: "current-password", placeholder: "Approver PIN", disabled: st.busy,
+        onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } } });
+      mount(dlg, h("form", { class: "signin", method: "dialog", onsubmit: (e) => { e.preventDefault(); submit(); } },
+        h("div", { class: "row" }, h("span", { class: "signin-badge" }, lockIcon()), h("h2", { class: "grow" }, "Sign in as approver")),
+        reason ? h("div", { class: "inline-warn small" }, reason) : null,
+        h("p", { class: "muted sm" }, "Approvals are human-only. Your decisions are recorded and signed under your name. Agents never get this PIN, and any approval that carries agent identity is refused."),
+        h("div", { class: "field" }, h("label", { for: "signin-who" }, "Approver"), whoSel),
+        h("div", { class: "field" }, h("label", { for: "signin-pin" }, "PIN"), pin),
+        st.error ? h("div", { class: "inline-error small", role: "alert" }, st.error) : null,
+        h("div", { class: "faint small" }, MOCK ? "Mock mode: any PIN works." : "Demo PIN: data/keys/approver_pin, or AIMO_APPROVER_PIN. In production this is the customer's SSO."),
+        h("div", { class: "row signin-actions" }, h("span", { class: "grow" }),
+          h("button", { type: "button", class: "btn", disabled: st.busy, onclick: () => dlg.close() }, "Cancel"),
+          h("button", { type: "submit", class: "btn btn-primary", disabled: st.busy }, st.busy ? [h("span", { class: "spinner" }), "Signing in"] : "Sign in"))));
+      setTimeout(() => (st.who ? pin : $("signin-who"))?.focus(), 30);
+    };
+    async function submit() {
+      const pin = $("signin-pin")?.value || "";
+      if (!st.who.trim() || !pin) { st.error = "Enter your name and the PIN."; render(); return; }
+      st.busy = true; st.error = null; render();
+      try {
+        await api.signIn(st.who.trim(), pin);
+        S.signinWho = st.who.trim();
+        dlg.close();
+      } catch (e) {
+        st.busy = false;
+        st.error = e.code === "unknown_approver" ? "That name is not in any customer's approver directory."
+          : e.status === 401 ? "Wrong PIN." : e.status === 429 ? "Too many wrong PINs from this computer. Wait a few minutes."
+          : e.message;
+        render();
+      }
+    }
+    dlg.addEventListener("close", async function onClose() {
+      dlg.removeEventListener("close", onClose);
+      if (api.signedInApprover()) { renderApproverChip(); try { await loadCustomers(); } catch { /* keep */ } renderApproverChip(); }
+      finish();
+    });
+    render();
+    dlg.showModal();
+  });
+  return signInOpen;
+}
+
+// ================================================================== voice approval
+// Voice suggests, the human confirms. The order is read out (ElevenLabs if ELEVENLABS_API_KEY is set on the gateway,
+// else the browser's speech synthesis), the answer is transcribed (ElevenLabs Scribe, else the browser's speech
+// recognition, else typed), and the gateway suggests approve/reject/unclear. Nothing is decided until the approver
+// clicks Confirm, which calls the same POST /v1/approvals/{id}/decision with their session and the quote hash.
+const voiceBusy = () => S.voice && ["prompt", "speaking", "listening", "thinking"].includes(S.voice.phase);
+let voiceAudio = null, voiceRec = null, speakDone = null;
+
+function stopVoiceIo() {
+  try { voiceAudio?.pause(); } catch { /* ignore */ }
+  try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+  try { voiceRec?.stop(); } catch { /* ignore */ }
+  voiceAudio = null; voiceRec = null;
+}
+
+function setVoice(patch) {
+  if (!S.voice) return;
+  Object.assign(S.voice, patch);
+  renderApprovals();
+}
+
+async function startVoice(o, q) {
+  stopVoiceIo();
+  S.decideError = null;
+  S.voice = { order_id: o.order_id, quote_hash: q.quote_hash, phase: "prompt" };
+  renderApprovals();
+  try {
+    const p = await api.voicePrompt(o.order_id);
+    if (!S.voice || S.voice.order_id !== o.order_id) return;
+    if (p.quote_hash && p.quote_hash !== q.quote_hash) throw new Error("The quote changed since this page loaded. Refresh the inbox.");
+    setVoice({ phase: "speaking", text: p.text, tts: p.tts, ttsError: p.tts_error });
+    await speak(p);
+    if (S.voice?.phase !== "speaking") return;
+    await listen(o);
+  } catch (e) {
+    if (S.voice) setVoice({ phase: "error", error: e.code === "signin_cancelled" ? "Sign in as an approver to use voice." : e.message });
+  }
+}
+
+function speak(p) {
+  return new Promise((resolve) => {
+    const cap = setTimeout(resolve, Math.min(25000, 2500 + (p.text || "").length * 75));   // never hang on audio
+    const done = () => { clearTimeout(cap); speakDone = null; resolve(); };
+    speakDone = done;
+    if (p.audio_b64) {
+      voiceAudio = new Audio(`data:${p.mime || "audio/mpeg"};base64,${p.audio_b64}`);
+      voiceAudio.onended = done; voiceAudio.onerror = done;
+      voiceAudio.play().catch(done);
+      return;
+    }
+    const synth = window.speechSynthesis;
+    if (!synth || typeof SpeechSynthesisUtterance === "undefined") { done(); return; }
+    const u = new SpeechSynthesisUtterance(p.text);
+    u.lang = "en-GB"; u.rate = 1.05;
+    u.onend = done; u.onerror = done;
+    synth.cancel(); synth.speak(u);
+  });
+}
+
+async function listen(o) {
+  const serverStt = S.voiceStatus?.stt === "elevenlabs" && window.MediaRecorder && navigator.mediaDevices?.getUserMedia;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (serverStt) {
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { setVoice({ phase: "type", engine: "typed", note: "Microphone blocked: type the answer instead." }); return; }
+    const chunks = [];
+    const rec = new MediaRecorder(stream);
+    voiceRec = rec;
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      if (S.voice?.phase !== "listening") return;
+      setVoice({ phase: "thinking" });
+      try {
+        const r = await api.voiceTranscribe(new Blob(chunks, { type: rec.mimeType || "audio/webm" }));
+        await understand(o, r.transcript, "ElevenLabs Scribe");
+      } catch (e) { setVoice({ phase: "error", error: e.message }); }
+    };
+    rec.start();
+    setVoice({ phase: "listening", engine: "ElevenLabs Scribe" });
+    setTimeout(() => { if (voiceRec === rec && rec.state === "recording") rec.stop(); }, 6000);
+    return;
+  }
+  if (SR) {
+    const rec = new SR();
+    voiceRec = rec;
+    rec.lang = navigator.language || "en-GB"; rec.interimResults = false; rec.maxAlternatives = 1;
+    let got = false;
+    rec.onresult = (e) => { got = true; understand(o, e.results[0][0].transcript, "browser speech recognition"); };
+    rec.onerror = (e) => { if (!got) setVoice({ phase: "type", engine: "typed", note: e.error === "not-allowed" ? "Microphone blocked: type the answer instead." : "Didn't hear anything: type the answer, or try again." }); };
+    rec.onend = () => { if (!got && S.voice?.phase === "listening") setVoice({ phase: "type", engine: "typed", note: "Didn't hear anything: type the answer, or try again." }); };
+    try { rec.start(); setVoice({ phase: "listening", engine: "browser speech recognition" }); } catch { setVoice({ phase: "type", engine: "typed" }); }
+    return;
+  }
+  setVoice({ phase: "type", engine: "typed", note: "This browser has no speech recognition: type what you would say." });
+}
+
+async function understand(o, transcript, engine) {
+  setVoice({ phase: "thinking", transcript, engine });
+  try {
+    const i = await api.voiceIntent(o.order_id, transcript);
+    setVoice({ phase: "confirm", intent: i });
+  } catch (e) { setVoice({ phase: "error", error: e.message }); }
+}
+
+function voiceCard(o, q) {
+  const V = S.voice;
+  const ttsLabel = V.tts === "elevenlabs" ? "ElevenLabs voice" : "browser voice";
+  const cancel = h("button", { type: "button", class: "btn btn-quiet btn-sm", onclick: () => { stopVoiceIo(); S.voice = null; renderApprovals(); } }, "Cancel");
+  const again = h("button", { type: "button", class: "btn btn-sm", onclick: () => startVoice(o, q) }, "Try again");
+  const body = [];
+  if (V.text) body.push(h("details", { class: "voice-prompt", open: V.phase === "speaking" },
+    h("summary", null, V.phase === "speaking" ? `Reading the order aloud (${ttsLabel})…` : `Read aloud (${ttsLabel})`), h("div", { class: "small" }, V.text)));
+  if (V.ttsError) body.push(h("div", { class: "faint small" }, `ElevenLabs unavailable (${V.ttsError}); used the browser voice.`));
+  if (V.phase === "prompt") body.push(h("div", { class: "row" }, h("span", { class: "spinner" }), h("span", { class: "muted small" }, "Preparing the spoken summary")));
+  if (V.phase === "speaking") body.push(h("div", { class: "row" }, h("button", { type: "button", class: "btn btn-sm", onclick: () => { try { voiceAudio?.pause(); window.speechSynthesis?.cancel(); } catch { /* */ } speakDone?.(); } }, "Skip to answer")));
+  if (V.phase === "listening") body.push(h("div", { class: "row" }, h("span", { class: "rec-dot", "aria-hidden": "true" }), h("b", null, "Listening: say “approve” or “reject”"),
+    h("span", { class: "faint small grow" }, V.engine), h("button", { type: "button", class: "btn btn-sm", onclick: () => { try { voiceRec?.stop(); } catch { /* */ } } }, "Done"),
+    h("button", { type: "button", class: "btn btn-quiet btn-sm", onclick: () => { stopVoiceIo(); setVoice({ phase: "type", engine: "typed" }); } }, "Type instead")));
+  if (V.phase === "type") {
+    // The inbox re-renders every few seconds: keep the draft in state and only take focus once.
+    const inp = h("input", { class: "input input-sm", id: "voice-typed", placeholder: "e.g. yes, approve it", value: V.typed || "",
+      oninput: (e) => { V.typed = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter" && inp.value.trim()) understand(o, inp.value.trim(), "typed"); } });
+    body.push(V.note ? h("div", { class: "faint small" }, V.note) : null,
+      h("div", { class: "row" }, inp, h("button", { type: "button", class: "btn btn-sm", onclick: () => inp.value.trim() && understand(o, inp.value.trim(), "typed") }, "Send"), again));
+    if (!V.focused) { V.focused = true; setTimeout(() => inp.focus(), 30); }
+    else if (document.activeElement?.id === "voice-typed") setTimeout(() => { const n = $("voice-typed"); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 0);
+  }
+  if (V.phase === "thinking") body.push(V.transcript ? h("div", { class: "voice-heard" }, "Heard: ", h("q", null, V.transcript)) : null,
+    h("div", { class: "row" }, h("span", { class: "spinner" }), h("span", { class: "muted small" }, "Understanding the answer")));
+  if (V.phase === "confirm") {
+    const i = V.intent || {};
+    const intent = i.intent;
+    const clear = intent === "approve" || intent === "reject";
+    const me = directoryEntry(api.signedInApprover?.())?.name || api.signedInApprover?.() || "you";
+    body.push(
+      h("div", { class: "voice-heard" }, "Heard: ", h("q", null, i.transcript || V.transcript), h("span", { class: "faint small" }, ` · ${V.engine}`)),
+      h("div", { class: "row" }, h("span", { class: `voice-intent ${intent}` }, clear ? (intent === "approve" ? "Approve" : "Reject") : "Not clear"),
+        h("span", { class: "faint small grow" }, `${i.source === "gemini" ? `Gemini (${i.model || "fast"})` : "keyword rules"}${i.confidence != null ? ` · confidence ${pct(i.confidence)}` : ""}${i.note ? ` · “${i.note}”` : ""}${i.reason && !clear ? ` · ${i.reason}` : ""}`)),
+      clear
+        ? h("div", { class: "row voice-confirm" },
+            h("span", { class: "binding-note grow" }, `One click records the decision as ${me}, bound to quote hash `, h("span", { class: "mono" }, shortHash(q.quote_hash)), ". Voice alone never orders."),
+            again,
+            h("button", { type: "button", class: `btn btn-lg ${intent === "approve" ? "btn-ok" : "btn-bad"}`, id: "voice-confirm", disabled: !!S.deciding,
+              onclick: () => decide(o, q, intent, `Voice (${V.engine}): “${String(i.transcript || V.transcript).slice(0, 120)}”`) },
+              intent === "approve" ? `Confirm approve · ${eur(q.total_net)}` : "Confirm reject"))
+        : h("div", { class: "row" }, h("span", { class: "muted small grow" }, "No clear approve or reject, so nothing will happen. Say it again, or use the buttons below."), again));
+  }
+  if (V.phase === "error") body.push(h("div", { class: "inline-error small" }, V.error), h("div", { class: "row" }, again));
+  return h("div", { class: "voice-card", style: { gridColumn: "1 / -1" }, "aria-live": "polite" },
+    h("div", { class: "row" }, micIcon(), h("b", { class: "grow" }, "Decide by voice"), cancel), body);
 }
 
 // ================================================================== tabs
+const VIEWS = ["plan", "approvals", "audit", "recipes", "ops"];
 function setTab(tab) {
+  if (!VIEWS.includes(tab)) tab = "plan";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
   const changed = S.tab !== tab;
-  for (const v of ["plan", "approvals", "audit"]) $(`view-${v}`).hidden = v !== tab;
+  for (const v of VIEWS) $(`view-${v}`).hidden = v !== tab;
   if (changed) document.querySelector(".tab-body").scrollTop = 0;
   S.tab = tab;
   if (tab === "audit") loadAudit();
   if (tab === "approvals") refreshApprovals(true);
+  if (tab === "ops") { renderOps(opsCtx); loadOps(opsCtx); refreshLedger(); }
+  if (tab === "recipes") { renderRecipes(recipesCtx); loadRecipes(recipesCtx); }
+}
+
+// Context objects for the ops and recipes modules.
+function openOrder(orderId) { S.selected = orderId; S.requote = null; setTab("approvals"); }
+const opsCtx = { get api() { return api; }, S, rerender: () => renderOps(opsCtx), openOrder };
+const recipesCtx = {
+  get api() { return api; }, S, rerender: () => renderRecipes(recipesCtx), openOrder,
+  afterOrder: (o) => { if (o?.status === "pending_approval") S.selected = o.order_id; refreshApprovals(true); refreshLedger(); },
+};
+
+// Whole-ledger cache: drives the "Blocked attacks" header pill and the ops feed.
+let ledgerBusy = false;
+async function refreshLedger() {
+  if (ledgerBusy) return;
+  ledgerBusy = true;
+  try {
+    const evs = await api.audit();
+    S.ledger = { events: Array.isArray(evs) ? evs : [], at: Date.now() };
+  } catch { /* keep last */ }
+  ledgerBusy = false;
+  const n = blockedEvents(S.ledger.events).length;
+  const pill = $("blocked-pill");
+  pill.hidden = false;
+  pill.className = `blocked-pill ${n ? "on" : ""}`;
+  pill.textContent = `${n} attack${n === 1 ? "" : "s"} blocked`;
+  $("cnt-ops").textContent = n ? String(n) : "";
+  $("cnt-ops").className = `tab-count ${n ? "bad" : ""}`;
+  if (S.tab === "ops") renderOps(opsCtx);
 }
 
 function updateCounts() {
@@ -176,15 +552,16 @@ function renderRequest() {
       h("div", { class: "req-compact" },
         h("div", { style: { minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" } },
           h("span", { class: "section-label" }, c ? `${c.name}${c.segment ? " · " + c.segment : ""}` : S.customerId),
-          h("div", { class: "q" }, "“", S.text, "”"),
-          h("span", { class: "faint small mono" }, `${S.model} · thinking ${S.thinking}`)),
+          h("div", { class: "q" }, S.run.image ? h("img", { class: "q-thumb", src: S.run.image, alt: "Attached photo" }) : null, S.text ? ["“", S.text, "”"] : h("span", { class: "muted" }, "Order from the photo")),
+          h("span", { class: "faint small mono" }, `${S.model} · thinking ${S.thinking}${S.optimize !== "agent" ? ` · optimize ${S.optimize}` : ""}`)),
         h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } },
           running ? h("span", { class: "status neutral" }, h("span", { class: "spinner", style: { width: "10px", height: "10px" } }), "Running")
             : S.run.status === "waiting" ? h("span", { class: "status pending" }, "Awaiting approval")
+            : S.run.status === "input" ? h("span", { class: "status pending" }, "Needs your answer")
             : S.run.status === "error" ? h("span", { class: "status bad" }, "Failed")
             : h("span", { class: "status ok" }, "Finished"),
           h("button", { class: "btn btn-sm", disabled: running, onclick: () => { S.editing = true; renderRequest(); } }, "New request"))),
-      mandate);
+      mandate, learnedPanel(S.customerId));
     return;
   }
   const ta = h("textarea", { class: "input", id: "req-text", rows: 2, disabled: running, oninput: (e) => { S.text = e.target.value; S.textEdited = true; } });
@@ -194,7 +571,17 @@ function renderRequest() {
   mount($("request-card"),
     h("div", { class: "field" }, h("label", { for: "customer" }, "Customer"), sel),
     mandate,
+    learnedPanel(S.customerId),
     h("div", { class: "field" }, h("label", { for: "req-text" }, "Request to the buyer agent"), ta),
+    h("div", { class: "req-extras" },
+      S.image
+        ? h("span", { class: "photo-chip" }, h("img", { src: S.image.preview, alt: "" }), h("span", { class: "ellipsis" }, S.image.name),
+            h("button", { class: "btn btn-quiet btn-sm", disabled: running, onclick: () => { S.image = null; renderRequest(); } }, "Remove"))
+        : h("label", { class: "btn btn-sm", for: "photo-in", title: "Photo of an order note, a delivery slip or a shelf" }, "Add or take photo"),
+      h("input", { type: "file", id: "photo-in", accept: "image/*", capture: "environment", hidden: true, onchange: (e) => readPhoto(e.target.files[0]) }),
+      !S.image ? h("span", { class: "faint small grow" }, "or drop it here") : h("span", { class: "grow" }),
+      h("select", { class: "input input-sm", id: "optimize", "aria-label": "Optimize the plan for", title: "Optimize the plan for", disabled: running, onchange: (e) => { S.optimize = e.target.value; renderPlan(); } },
+        OPTIMIZE.map((o) => h("option", { value: o.id, selected: o.id === S.optimize }, o.id === "agent" ? "Optimize: agent's ranking" : `Optimize: ${o.label.toLowerCase()}`)))),
     h("div", { class: "req-controls" },
       h("div", { class: "field" }, h("label", { for: "model" }, "Model"),
         h("select", { class: "input", id: "model", disabled: running, onchange: (e) => (S.model = e.target.value) },
@@ -209,12 +596,14 @@ function renderRequest() {
 async function startRun() {
   if (closeStream) closeStream();
   S.editing = false;
-  S.run = { id: null, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null };
+  S.run = { id: null, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null, image: S.image?.preview || null };
+  S.requote = null;
   S.audit.verify = null;
   renderRequest(); renderTimeline(); renderPlan(); updateCounts();
   setTab("plan");
   try {
-    const { run_id } = await api.startRun({ text: S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking });
+    const image = S.image ? { mime: S.image.mime, data_b64: S.image.data_b64, name: S.image.name } : null;
+    const { run_id } = await api.startRun({ text: S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking, image });
     S.run.id = run_id;
     $("run-meta").textContent = run_id;
     closeStream = api.streamRun(run_id, onStep, (info) => {
@@ -235,6 +624,7 @@ let auditTimer = null;
 function onStep(step) {
   const r = S.run;
   if (!r || (r.id && step.run_id && step.run_id !== r.id)) return;
+  const statusBefore = r.status;
   r.steps.push(step);
   const d = step.data || {};
   if (d.need) r.need = d.need;
@@ -244,6 +634,8 @@ function onStep(step) {
   if (d.decision) r.decision = d.decision;
   if (d.order) r.order = d.order;
   if (step.kind === "approval_wait") r.status = "waiting";
+  if (step.kind === "needs_clarification" || (d.question && Array.isArray(d.options))) { r.status = "input"; r.clarSeq = step.seq; }
+  if (step.kind !== "needs_clarification" && r.status === "input" && step.seq > (r.clarSeq || 0) && ["tool_call", "thought", "plan"].includes(step.kind)) r.status = "running";
   if (step.kind === "decision" && !d.order && d.order_id) r.order = { ...(r.order || {}), order_id: d.order_id, status: d.status, quote_id: r.quote?.quote_id, decision: d.decision };
   if (step.kind === "final") {
     r.status = d.status === "error" ? "error" : "done";
@@ -253,19 +645,21 @@ function onStep(step) {
 
   appendStep(step);
   if (d.need || ["plan", "decision", "error", "final"].includes(step.kind)) renderPlan();
-  if (step.kind === "plan") setTab("plan");
+  // Follow the agent between its own tabs only; never yank the user out of Recipes or Ops.
+  const agentTab = ["plan", "approvals", "audit"].includes(S.tab);
+  if (step.kind === "plan" && agentTab) setTab("plan");
   if (step.kind === "decision" || step.kind === "approval_wait" || step.kind === "order") {
     const oid = d.order_id || d.order?.order_id;
     if (oid) S.selected = oid;
     if (d.order && d.order.status !== "pending_approval") S.decided.set(d.order.order_id, { order: d.order, quote: r.quote, decision: d.order.decision || r.decision });
     refreshApprovals(true);
-    if (step.kind === "approval_wait") setTimeout(() => setTab("approvals"), 900);
+    if (step.kind === "approval_wait" && agentTab) setTimeout(() => { if (["plan", "approvals", "audit"].includes(S.tab)) setTab("approvals"); }, 900);
     if (step.kind === "approval_wait" && params.get("autoapprove") === "1") setTimeout(() => {
       const it = selectedItem();
       if (it && it.quote) decide(it.order, it.quote, "approve").then(() => { if (params.get("tab")) setTab(params.get("tab")); });
     }, 2500);
   }
-  if (["final", "error", "approval_wait"].includes(step.kind)) renderRequest();
+  if (r.status !== statusBefore || step.kind === "final") renderRequest();
   clearTimeout(auditTimer);
   auditTimer = setTimeout(() => loadAudit(true), 400);
   updateCounts();
@@ -410,8 +804,10 @@ function needChips(need) {
 function stepItem(step) {
   const d = step.data || {};
   const k = step.kind;
-  const cls = { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-warnstep", final: d.status === "error" ? "k-error" : "k-final" }[k] || "";
-  const icon = { thought: "·", plan: "P", quote: "Q", decision: "§", approval_wait: "…", order: "✓", error: "!", final: "■" }[k] || "·";
+  const isClar = k === "needs_clarification" || (d.question && Array.isArray(d.options));
+  const lines = d.extracted ? (d.lines || d.extracted.lines || []) : d.extracted_lines || d.lines_from_photo || (k === "extracted_lines" ? d.lines : null);
+  const cls = isClar ? "k-clar" : lines ? "k-photo" : { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-warnstep", final: d.status === "error" ? "k-error" : "k-final" }[k] || "";
+  const icon = isClar ? "?" : lines ? "▣" : { thought: "·", plan: "P", quote: "Q", decision: "§", approval_wait: "…", order: "✓", error: "!", final: "■" }[k] || "·";
   const body = [];
   const ttl = String(step.title || "").replace(/…$/, "");
   if (d.text && !(d.text.startsWith(ttl) && d.text.length < ttl.length + 20)) body.push(h("div", { class: "tl-text" }, d.text));
@@ -420,6 +816,8 @@ function stepItem(step) {
   if (d.excerpt || /(flagged|suspected) (suspected )?prompt injection/i.test(step.title)) body.push(h("div", { class: "exc bad" }, h("b", null, "✕"), h("div", null, h("b", null, "Prompt injection flagged and redacted. "),
     h("span", { class: "exc-body" }, d.excerpt ? `“${d.excerpt}”` : "", (d.reasons || []).length ? ` (${d.reasons.join("; ")})` : ""))));
   if (d.need) body.push(needChips(d.need));
+  if (lines) body.push(extractedTable(lines, d));
+  if (isClar) body.push(clarCard(step));
   if (k === "plan") {
     const p = d.plan || d;
     body.push(h("div", { class: "tl-text" }, `${p.lines?.length || 0} line(s), covers ${num(p.covered_amount)} ${p.need?.unit || ""}, total ${eur(p.total_net)} net.`),
@@ -456,6 +854,67 @@ function stepItem(step) {
       ["thought", "plan", "quote", "decision"].includes(k) && Object.keys(extra).length ? jsonDetails("Data", d) : null));
 }
 
+// Photo intake result: what Gemini read off the photo, line by line (aimo/buyer/vision.py ImageOrder).
+function extractedTable(lines, d) {
+  const ex = d.extracted || {};
+  const unreadable = ex.unreadable || [];
+  return h("div", { class: "photo-lines" },
+    S.run?.image ? h("img", { src: S.run.image, alt: "Photo sent with the request" }) : null,
+    h("div", { class: "grow", style: { minWidth: 0 } },
+      h("table", { class: "t" },
+        h("thead", null, h("tr", null, h("th", null, "On the photo"), h("th", null, "Read as"), h("th", { class: "n" }, "Qty"))),
+        h("tbody", null, lines.map((l) => {
+          const unclear = l.unclear || l.quantity == null && !!(l.original_text || l.text) && ex.document_type !== "menu" || (l.confidence != null && l.confidence < 0.6);
+          return h("tr", { class: unclear ? "unclear" : "" },
+            h("td", { class: "mono" }, l.original_text || l.text || l.raw || "–"),
+            h("td", null, l.product || l.product_query || l.item || l.name || "–", l.notes ? h("span", { class: "faint small" }, ` · ${l.notes}`) : null,
+              unclear ? h("span", { class: "flag warn", style: { marginLeft: "6px" } }, "Unclear") : null),
+            h("td", { class: "n" }, l.quantity != null ? `${num(l.quantity)} ${l.unit || ""}` : "–"));
+        }))),
+      unreadable.length ? h("div", { class: "inline-warn small" }, "Not readable, not guessed: ", unreadable.join("; ")) : null,
+      h("div", { class: "faint small" }, [ex.document_type ? String(ex.document_type).replace(/_/g, " ") : null, ex.language ? `language ${ex.language}` : null,
+        d.model || "read by Gemini vision", d.request_text ? `→ “${d.request_text}”` : null].filter(Boolean).join(" · "))));
+}
+
+// needs_clarification: the agent asks one question with options; the answer goes to POST /v1/agent/runs/{id}/answer.
+function clarCard(step) {
+  const d = step.data || {};
+  const answered = S.answers[step.seq];
+  const opts = (d.options || []).map((o, i) => (typeof o === "string" ? { id: String(i), label: o } : { id: o.id ?? String(i), label: o.label || o.text || String(o.id) }));
+  const send = async (answer, option_id) => {
+    S.answers[step.seq] = { label: answer, pending: true };
+    rerenderStep(step);
+    try {
+      await api.answer(S.run.id, option_id != null ? { option_id, question_id: d.question_id } : { text: answer, question_id: d.question_id });
+      S.answers[step.seq] = { label: answer };
+      if (S.run.status === "input") S.run.status = "running";
+      renderRequest();
+    } catch (e) {
+      S.answers[step.seq] = { label: answer, error: e.message };
+    }
+    rerenderStep(step);
+  };
+  const box = h("div", { class: "clar" },
+    d.question && d.question !== step.title ? h("div", { class: "clar-q" }, d.question) : null,
+    d.why ? h("div", { class: "faint small" }, d.why) : null);
+  if (answered && !answered.error) {
+    box.appendChild(h("div", { class: "clar-a" }, answered.pending ? h("span", { class: "spinner" }) : "✓", ` You answered: ${answered.label}`));
+    return box;
+  }
+  box.appendChild(h("div", { class: "row wrap" }, opts.map((o, i) => h("button", { class: `btn btn-sm ${i === 0 ? "btn-primary" : ""}`, onclick: () => send(o.label, o.id) }, o.label))));
+  if (d.free_text !== false && d.allow_free_text !== false) {
+    const inp = h("input", { class: "input input-sm", placeholder: "Or type an answer", onkeydown: (e) => { if (e.key === "Enter" && inp.value.trim()) send(inp.value.trim(), null); } });
+    box.appendChild(h("div", { class: "row" }, inp, h("button", { class: "btn btn-sm", onclick: () => inp.value.trim() && send(inp.value.trim(), null) }, "Send")));
+  }
+  if (answered?.error) box.appendChild(h("div", { class: "inline-error small" }, answered.error));
+  return box;
+}
+
+function rerenderStep(step) {
+  const li = $("timeline").querySelector(`[data-seq="${step.seq}"]`);
+  if (li) { const n = stepItem(step); n.dataset.seq = step.seq; n.style.animation = "none"; li.replaceWith(n); }
+}
+
 // ================================================================== plan view
 function renderPlan() {
   const v = $("view-plan");
@@ -473,9 +932,10 @@ function renderPlan() {
     h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 } },
       h("span", { class: "section-label" }, "Structured need"),
       r.need ? needChips(r.need) : h("div", { class: "skeleton", style: { height: "22px", width: "60%" } }),
-      h("div", { class: "muted sm" }, "“", (r.need && r.need.raw_text) || S.text, "”")),
+      (r.need && r.need.raw_text) || S.text ? h("div", { class: "muted sm" }, "“", (r.need && r.need.raw_text) || S.text, "”") : null),
     p ? h("div", { class: "kpis" },
       h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(p.covered_amount)} / ${num(p.need?.quantity)} ${p.need?.unit || ""}`), h("span", { class: "l" }, p.shortfall ? `Shortfall ${num(p.shortfall)} ${p.need?.unit}` : "Covered")),
+      planCo2(p) != null ? h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(planCo2(p), 0)} kg`), h("span", { class: "l" }, "CO₂e, category average")) : null,
       h("div", { class: "kpi" }, h("span", { class: "v big" }, eur(p.total_net)), h("span", { class: "l" }, "Total, net of VAT"))) : null));
 
   if (r.decision) parts.push(verdictBanner(r.decision));
@@ -493,12 +953,26 @@ function renderPlan() {
 
   const cands = p.candidates || [];
   const inPlan = new Set((p.lines || []).map((l) => l.product_id));
-  for (const t of TIER_ORDER) {
-    const list = cands.filter((c) => c.tier === t);
-    if (!list.length) continue;
+  const usable = cands.filter((c) => c.tier !== "rejected");
+  const wins = winners(usable);
+  parts.push(h("div", { class: "rank-bar" },
+    h("span", { class: "section-label" }, `Candidates · ${usable.length}`), h("span", { class: "grow" }),
+    h("span", { class: "muted small" }, "Rank by"),
+    h("div", { class: "seg" }, OPTIMIZE.map((o) => h("button", { class: o.id === S.optimize ? "on" : "", onclick: () => { S.optimize = o.id; renderPlan(); renderRequest(); } }, o.label)))));
+  if (S.optimize === "agent") {
+    for (const t of TIER_ORDER) {
+      const list = cands.filter((c) => c.tier === t);
+      if (!list.length) continue;
+      parts.push(h("div", { class: "tier-group" },
+        h("div", { class: "tier-head" }, h("span", { class: `tier-tag ${t}` }, TIER_LABEL[t]), h("span", { class: "muted sm" }, TIER_HINT[t])),
+        list.map((c) => candCard(c, p, inPlan, wins))));
+    }
+  } else {
+    const key = { cheapest: (c) => perL(c).v ?? Infinity, greenest: (c) => c.product?.co2_kg_per_kg ?? Infinity, reliable: (c) => -(c.product?.delivery_reliability ?? -1) }[S.optimize];
+    const sorted = [...usable].sort((a, b) => key(a) - key(b) || (perL(a).v ?? Infinity) - (perL(b).v ?? Infinity));
     parts.push(h("div", { class: "tier-group" },
-      h("div", { class: "tier-head" }, h("span", { class: `tier-tag ${t}` }, TIER_LABEL[t]), h("span", { class: "muted sm" }, TIER_HINT[t])),
-      list.map((c) => candCard(c, p, inPlan))));
+      h("div", { class: "muted small" }, `Re-ranked in the browser for “${OPTIMIZE.find((o) => o.id === S.optimize).label}”. The policy still evaluates whatever the agent quotes.`),
+      sorted.map((c, i) => candCard(c, p, inPlan, wins, i + 1))));
   }
   const rej = cands.filter((c) => c.tier === "rejected");
   if (rej.length) {
@@ -525,18 +999,59 @@ function planLines(p) {
   return h("div", { class: "card" },
     h("div", { class: "card-head" }, h("h3", null, "Order lines the agent proposes"), h("span", { class: "muted sm" }, `Delivery by ${day(p.need?.delivery_by)}`)),
     h("table", { class: "t" },
-      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Covers"), h("th", { class: "n" }, "Line total"))),
+      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Covers"), h("th", { class: "n" }, "CO₂e"), h("th", { class: "n" }, "Line total"))),
       h("tbody", null, (p.lines || []).map((l) => h("tr", null,
         h("td", null, h("div", { style: { fontWeight: 500 } }, l.product_name), h("div", { class: "faint small mono" }, l.product_id), (l.flags || []).length ? h("div", { class: "row wrap", style: { marginTop: "4px" } }, l.flags.map(flagEl)) : null),
         h("td", null, h("span", { class: `tier-tag ${l.tier}` }, TIER_LABEL[l.tier] || l.tier)),
         h("td", { class: "n" }, `${num(l.qty_sales_units)} ${l.sales_unit}`),
         h("td", { class: "n" }, eur(l.unit_price)),
         h("td", { class: "n" }, `${num(l.covered_amount)} ${p.need?.unit || ""}`),
+        h("td", { class: "n" }, lineCo2(p, l) != null ? `${num(lineCo2(p, l), 0)} kg` : "–"),
         h("td", { class: "n" }, eur(l.line_total))))),
-      h("tfoot", null, h("tr", null, h("td", { colspan: 5 }, "Total net"), h("td", { class: "n" }, eur(p.total_net))))));
+      h("tfoot", null, h("tr", null, h("td", { colspan: 5 }, "Total net"), h("td", { class: "n" }, planCo2(p) != null ? `${num(planCo2(p), 0)} kg` : "–"), h("td", { class: "n" }, eur(p.total_net))))),
+    h("div", { class: "card-body faint small" }, "CO₂e uses the category-average kg CO₂e per kg from the Valio Aimo dataset (1 L counted as 1 kg); it is an estimate, not a product footprint."));
 }
 
-function candCard(c, p, inPlan) {
+// ---- sustainability and reliability helpers
+const LABELS = {
+  GOODS_FROM_FINLAND_BLUE_SWAN: "Hyvää Suomesta", FINNISH_HEART_SYMBOL: "Heart symbol", EU_ORGANIC_FARMING: "EU organic",
+  OFFICIAL_ECO_LABEL_SUN: "Luomu (sun)", RAINFOREST_ALLIANCE: "Rainforest Alliance", MADE_IN_FINLAND_FLAG_WITH_KEY: "Avainlippu",
+  FAIR_TRADE_MARK: "Fairtrade", ORGANIC: "Organic",
+};
+const labelName = (l) => LABELS[l] || (String(l).startsWith("injected:") ? null : titleCaseLabel(l));
+const titleCaseLabel = (l) => String(l).toLowerCase().replace(/_/g, " ").replace(/^./, (m) => m.toUpperCase());
+
+function productOf(p, pid) { return (p.candidates || []).find((c) => c.product?.id === pid)?.product; }
+function lineCo2(p, l) {
+  const prod = productOf(p, l.product_id);
+  if (!prod || prod.co2_kg_per_kg == null || !prod.content_amount || prod.content_unit === "PCS") return null;
+  return l.qty_sales_units * prod.content_amount * prod.co2_kg_per_kg;
+}
+function planCo2(p) {
+  const xs = (p.lines || []).map((l) => lineCo2(p, l));
+  return xs.length && xs.every((x) => x != null) ? xs.reduce((a, b) => a + b, 0) : null;
+}
+function relBadge(r) {
+  if (r == null) return h("span", { class: "rel none", title: "No delivery reliability data for this product" }, "Reliability: no data");
+  const cls = r >= 0.98 ? "ok" : r >= 0.93 ? "warn" : "bad";
+  return h("span", { class: `rel ${cls}`, title: "Share of past deliveries that arrived complete and on time (Valio Aimo dataset)" }, `Reliability ${pct(r)}`);
+}
+// Winners among usable candidates; a badge only shows when the metric actually separates candidates.
+function winners(list) {
+  const pick = (f, better) => {
+    const vals = list.map(f).filter((v) => v != null && isFinite(v));
+    if (new Set(vals).size < 2) return null;
+    const best = vals.reduce((a, b) => (better(b, a) ? b : a));
+    return list.find((c) => f(c) === best)?.product?.id;
+  };
+  return {
+    cheapest: pick((c) => perL(c).v, (a, b) => a < b),
+    greenest: pick((c) => c.product?.co2_kg_per_kg, (a, b) => a < b),
+    reliable: pick((c) => c.product?.delivery_reliability, (a, b) => a > b),
+  };
+}
+
+function candCard(c, p, inPlan, wins = {}, rankNo = null) {
   const prod = c.product || {};
   const o = c.offer || {};
   const pl = perL(c);
@@ -560,9 +1075,15 @@ function candCard(c, p, inPlan) {
     h("div", { class: "cand-body" },
       h("div", { class: "cand-top" },
         h("div", { class: "grow" },
-          h("div", { class: "row wrap" }, h("span", { class: "cand-name" }, prod.name), inPlan.has(prod.id) ? h("span", { class: "plan-badge" }, "✓ In plan") : null),
+          h("div", { class: "row wrap" },
+            rankNo ? h("span", { class: "rank-no" }, `#${rankNo}`) : null,
+            rankNo ? h("span", { class: `tier-tag ${c.tier}` }, TIER_LABEL[c.tier] || c.tier) : null,
+            h("span", { class: "cand-name" }, prod.name), inPlan.has(prod.id) ? h("span", { class: "plan-badge" }, "✓ In plan") : null,
+            wins.cheapest === prod.id ? h("span", { class: "win" }, "Cheapest") : null,
+            wins.greenest === prod.id ? h("span", { class: "win green" }, "Greenest") : null,
+            wins.reliable === prod.id ? h("span", { class: "win" }, "Most reliable") : null),
           h("div", { class: "cand-sub" }, [prod.id, prod.brand, prod.vendor, o.logistic_model, o.closing_time ? `cut-off ${dayTime(o.closing_time)}` : null].filter(Boolean).join(" · "))),
-        h("div", { class: "cand-price" }, h("div", { class: "v" }, pl.v != null ? eur(pl.v) : "–"), h("div", { class: "l" }, `per ${pl.u}`))),
+        h("div", { class: "cand-price" }, h("div", { class: "v" }, pl.v != null ? eur(pl.v) : "–"), h("div", { class: "l" }, `per ${pl.u}`), relBadge(prod.delivery_reliability))),
       h("div", { class: "facts" },
         fact("Pack", prod.content_amount ? `${num(prod.content_amount)} ${prod.content_unit || ""} / ${prod.sales_unit}` : prod.sales_unit || "–"),
         fact("Unit price", eur(o.unit_price)),
@@ -572,7 +1093,8 @@ function candCard(c, p, inPlan) {
         fact("Reliability", prod.delivery_reliability != null ? pct(prod.delivery_reliability) : "no data"),
         fact("CO₂e / kg", prod.co2_kg_per_kg != null ? `${num(prod.co2_kg_per_kg)} kg` : "no data")),
       (c.reasons || []).length ? h("ul", { class: "reasons" }, c.reasons.map((x) => h("li", null, x))) : null,
-      (c.flags || []).length || (prod.claims || []).length ? h("div", { class: "row wrap" },
+      (c.flags || []).length || (prod.claims || []).length || (prod.labels || []).length ? h("div", { class: "row wrap" },
+        (prod.labels || []).map(labelName).filter(Boolean).map((x) => h("span", { class: "flag label" }, x)),
         (prod.claims || []).map((x) => h("span", { class: "flag ok" }, claimLabel(x))), (c.flags || []).map(flagEl)) : null));
 }
 
@@ -585,10 +1107,13 @@ function verdictBanner(dec) {
       h("span", { class: "verdict-icon" }, v.icon),
       h("div", { class: "grow" }, h("div", { class: "verdict-title" }, title),
         h("div", { class: "muted small" }, `Policy ${dec.policy_id} · version ${dec.policy_version} · ${hits.filter((x) => x.outcome !== "allow").length} of ${hits.length} rules need attention`))),
-    hits.length ? h("ul", { class: "hits" }, hits.map((x) => h("li", { class: "hit" },
-      h("span", { class: `outcome ${x.outcome}` }, x.outcome === "needs_approval" ? "Needs approval" : x.outcome === "allow" ? "Pass" : "Reject"),
-      h("span", null, x.message),
-      h("span", { class: "rid" }, x.rule_id)))) : null);
+    hits.length ? h("ul", { class: "hits" }, hits.map((x) => {
+      const learned = x.learned || /learned|remembered/i.test(x.rule_id || "") || /^Allowed: you approved/i.test(x.message || "");
+      return h("li", { class: `hit ${learned ? "learned" : ""}` },
+        h("span", { class: `outcome ${x.outcome}` }, learned ? "Learned" : x.outcome === "needs_approval" ? "Needs approval" : x.outcome === "allow" ? "Pass" : "Reject"),
+        h("span", null, x.message),
+        h("span", { class: "rid" }, x.rule_id));
+    })) : null);
 }
 const rank = (o) => ({ reject: 2, needs_approval: 1, allow: 0 }[o] ?? 0);
 
@@ -596,7 +1121,7 @@ const rank = (o) => ({ reject: 2, needs_approval: 1, allow: 0 }[o] ?? 0);
 async function refreshApprovals(quiet) {
   if (!quiet) { S.approvals.state = "loading"; renderApprovals(); }
   try {
-    let items = await api.approvals("pending");
+    let items = await api.approvals("pending", { ask: false });
     // after the approver signs in (first inbox load), reload customers so approver ids become visible
     if (S.customers.some((c) => (c.approvers || []).some((a) => !a.id))) { try { await loadCustomers(); } catch { /* keep masked */ } }
     if (items && !Array.isArray(items)) items = items.items || items.approvals || [];
@@ -607,7 +1132,8 @@ async function refreshApprovals(quiet) {
     S.approvals = { state: "ok", items, error: null };
     if (!S.selected && items[0]) S.selected = items[0].order.order_id;
   } catch (e) {
-    S.approvals = { ...S.approvals, state: "error", error: e.message };
+    if (e.code === "signin_required" || e.code === "signin_cancelled") S.approvals = { state: "signin", items: [], error: null };
+    else S.approvals = { ...S.approvals, state: "error", error: e.message };
   }
   updateCounts();
   renderApprovals();
@@ -633,7 +1159,9 @@ function renderApprovals() {
     !MOCK ? h("span", { class: "faint small" }, "Refreshes every 5 s") : null,
     h("button", { class: "btn btn-sm", onclick: () => refreshApprovals() }, A.state === "loading" ? [h("span", { class: "spinner" }), "Refreshing"] : "Refresh")));
 
-  if (A.state === "loading" && !A.items.length) {
+  if (A.state === "signin") {
+    parts.push(signInCard(selectedItem()?.order?.customer_id));
+  } else if (A.state === "loading" && !A.items.length) {
     parts.push(h("div", { class: "card" }, [1, 2].map(() => h("div", { class: "inbox-row" }, h("div", { class: "skeleton", style: { height: "32px" } })))));
   } else if (A.state === "error") {
     parts.push(h("div", { class: "exc bad" }, h("b", null, "!"), h("div", null, h("b", null, "Could not load approvals. "), h("span", { class: "exc-body" }, A.error), " ",
@@ -667,7 +1195,8 @@ function renderApprovals() {
   const it = selectedItem();
   if (it) parts.push(approvalDetail(it));
   // The decision bar sticks to the bottom of the pane so Approve is always reachable on a 720p projector.
-  if (it && it.order.status === "pending_approval" && it.quote) parts.push(decisionForm(it.order, it.quote));
+  if (it && S.requote && S.requote.order_id === it.order.order_id) parts.push(requoteCard(it));
+  else if (it && it.order.status === "pending_approval" && it.quote) parts.push(decisionForm(it.order, it.quote));
   mount(v, parts);
   tick();
 }
@@ -732,42 +1261,64 @@ function sigState(q) {
 function decisionForm(o, q) {
   const busy = S.deciding === o.order_id;
   const role = roleLabel((o.decision || {}).approver_role || "approver");
-  // Approver directory comes from /v1/customers (policy YAML); default to someone holding the required role.
+  // Approvals are bound to the signed-in human (POST /v1/auth/approver-session). The gateway records the decision
+  // under that person only and refuses a different name (403 approver_mismatch), so there is no approver picker.
   const cust = S.customers.find((c) => c.id === o.customer_id);
   const dir = cust?.approvers || [];
   const needRole = (o.decision || {}).approver_role;
-  // The approver must come from THIS order's customer directory: reset when switching orders or customers.
-  if (S.approverFor !== o.order_id || (dir.length && !dir.some((a) => a.id === S.approver))) {
-    S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || (dir.length ? "" : S.approver);
-    S.approverFor = o.order_id;
-  }
-  const approver = dir.length
-    ? h("select", { class: "input", id: "approver", disabled: busy, onchange: (e) => (S.approver = e.target.value) },
-        dir.map((a) => h("option", { value: a.id, selected: a.id === S.approver }, `${a.name || a.id} · ${roleLabel(a.role)}`)))
-    : h("input", { class: "input", id: "approver", value: S.approver, placeholder: "name@company", oninput: (e) => (S.approver = e.target.value), disabled: busy });
+  const me = api.signedInApprover?.();
+  const meEntry = me ? dir.find((a) => a.id === me || a.name === me) : null;
+  const meAny = me ? directoryEntry(me) : null;
+  const approver = me
+    ? h("div", { class: "signed-as", id: "approver" },
+        h("span", { class: "dot ok", "aria-hidden": "true" }), h("b", null, meAny?.name || me),
+        meAny?.role ? h("span", { class: "muted small" }, roleLabel(meAny.role)) : null,
+        h("button", { class: "btn btn-quiet btn-sm", disabled: busy, onclick: () => switchApprover() }, "Switch"))
+    : h("button", { class: "btn btn-sm", id: "approver", onclick: () => openSignIn().then(() => renderApprovals()) }, lockIcon(), "Sign in as approver");
+  const roleWarn = !me ? null
+    : !meEntry && dir.length ? `You are not in ${cust?.name || o.customer_id}'s approver directory; the gateway will refuse this decision.`
+    : meEntry && needRole && meEntry.role !== needRole ? `The policy asks for a ${roleLabel(needRole)}; you are signed in as ${roleLabel(meEntry.role)}. The gateway checks the role.` : null;
   const note = h("input", { class: "input", id: "note", placeholder: "Optional, stored in the audit trail", oninput: (e) => (S.note = e.target.value), disabled: busy });
   note.value = S.note;
   const expired = new Date(q.expires_at) < new Date();
+  const isSwap = (q.lines || []).some((l) => (l.tier && l.tier !== "preferred") || (l.flags || []).some((f) => /preference|substitution/.test(f)))
+    || (o.decision?.hits || []).some((x) => /substitution/.test(x.rule_id || "") && x.outcome !== "allow");
+  const remember = isSwap ? h("div", { class: "remember" },
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: S.remember, disabled: busy, onchange: (e) => { S.remember = e.target.checked; renderApprovals(); } }),
+      " Always allow this swap"),
+    h("select", { class: "input input-sm", disabled: busy || !S.remember, onchange: (e) => (S.rememberScope = e.target.value) },
+      h("option", { value: "product", selected: S.rememberScope === "product" }, "for this product"),
+      h("option", { value: "product_type", selected: S.rememberScope === "product_type" }, "for any product of this type")),
+    h("span", { class: "faint small" }, "Next time the policy shows “Allowed: you approved this swap” and the agent does not ask.")) : null;
   return h("div", { class: "card decide-sticky" },
     h("div", { class: "card-body decide" },
       h("h3", { style: { gridColumn: "1 / -1" } }, `Decision as ${role}`),
-      h("div", { class: "field" }, h("label", { for: "approver" }, "Approver"), approver),
+      h("div", { class: "field" }, h("label", { for: "approver" }, "Deciding as"), approver),
       h("div", { class: "field" }, h("label", { for: "note" }, "Note"), note),
+      remember,
+      roleWarn ? h("div", { class: "inline-warn small", style: { gridColumn: "1 / -1" } }, roleWarn) : null,
+      S.voice && S.voice.order_id === o.order_id ? voiceCard(o, q) : null,
       S.decideError ? h("div", { class: "inline-error", style: { gridColumn: "1 / -1" } }, S.decideError) : null,
       h("div", { class: "decide-actions" },
         h("span", { class: "binding-note" }, "Your decision is bound to quote hash ", h("span", { class: "mono" }, shortHash(q.quote_hash)), ". If the price or lines change, it no longer applies."),
-        h("button", { class: "btn btn-bad", disabled: busy || !S.approver.trim(), onclick: () => decide(o, q, "reject") }, "Reject"),
-        h("button", { class: "btn btn-ok btn-lg", disabled: busy || !S.approver.trim() || expired, title: expired ? "The price lock has expired: the agent must request a new quote" : "",
+        h("button", { class: "btn btn-voice", disabled: busy || expired || voiceBusy(), title: "Hear the order read out, answer approve or reject, then confirm on screen", onclick: () => startVoice(o, q) }, micIcon(), "Decide by voice"),
+        h("button", { class: "btn btn-bad", disabled: busy, onclick: () => decide(o, q, "reject") }, "Reject"),
+        h("button", { class: "btn btn-ok btn-lg", disabled: busy || expired, title: expired ? "The price lock has expired: the agent must request a new quote" : "",
           onclick: () => decide(o, q, "approve") }, busy ? [h("span", { class: "spinner" }), "Placing order"] : `Approve ${eur(q.total_net)}`))));
 }
 
-async function decide(o, q, decision) {
+async function decide(o, q, decision, voiceNote) {
   S.deciding = o.order_id;
   S.decideError = null;
   renderApprovals();
   try {
-    const dirEntry = (S.customers.find((c) => c.id === o.customer_id)?.approvers || []).find((a) => a.id === S.approver);
-    const order = await api.decide(o.order_id, { decision, approver: S.approver.trim(), approver_role: dirEntry?.role || undefined, note: S.note.trim(), quote_hash: q.quote_hash });
+    const remember = decision === "approve" && S.remember ? { remember: true, remember_scope: S.rememberScope } : {};
+    const note = [voiceNote, S.note.trim()].filter(Boolean).join(" · ");
+    const order = await api.decide(o.order_id, { decision, note: note || undefined, quote_hash: q.quote_hash, ...remember });
+    S.voice = null;
+    renderApproverChip();
+    if (remember.remember) { S.remember = false; loadLearned(o.customer_id, true); }
+    if (S.requote?.order_id === o.order_id) S.requote = null;
     const dec = order.decision || o.decision;
     S.decided.set(order.order_id, { order, quote: q, decision: dec });
     if (S.run && S.run.order && S.run.order.order_id === order.order_id) { S.run.order = order; }
@@ -779,9 +1330,52 @@ async function decide(o, q, decision) {
     loadAudit(true);
   } catch (e) {
     S.deciding = null;
+    const det = (e.body && typeof e.body.detail === "object" ? e.body.detail : null) || e.body || {};
+    const fresh = det.new_quote || det.fresh_quote || det.quote;
+    if (e.code === "requote_needed" || fresh) {
+      // Prices moved since the quote was signed: show old vs new and let the approver approve the fresh quote in one click.
+      S.requote = { order_id: o.order_id, old: q, fresh: fresh || null, new_order_id: det.new_order?.order_id || det.new_order_id || det.order_id || o.order_id,
+        changes: det.changes || null, reason: e.body?.message || e.message };
+      S.voice = null;
+      if (!fresh && (det.new_quote_id || det.quote_id)) { try { S.requote.fresh = await api.getQuote(det.new_quote_id || det.quote_id); } catch { /* shown as missing */ } }
+      renderApprovals();
+      return;
+    }
+    if (e.code === "signin_cancelled") { S.decideError = "Sign in as an approver to decide. Agents can never approve."; renderApprovals(); return; }
     S.decideError = e.status === 409 ? `The gateway refused: ${e.message}. The quote may have changed; ask the agent for a new quote.` : e.message;
     renderApprovals();
   }
+}
+
+function requoteCard(it) {
+  const R = S.requote;
+  const old = R.old || it.quote;
+  const fresh = R.fresh;
+  const busy = !!S.deciding;
+  const byId = new Map((fresh?.lines || []).map((l) => [l.product_id, l]));
+  const ids = [...new Set([...(old.lines || []).map((l) => l.product_id), ...byId.keys()])];
+  const oldBy = new Map((old.lines || []).map((l) => [l.product_id, l]));
+  const delta = fresh ? fresh.total_net - old.total_net : null;
+  const diffCell = (a, b, fmt) => a === b || b == null ? h("span", null, a == null ? "–" : fmt(a)) : h("span", null, h("s", { class: "faint" }, a == null ? "–" : fmt(a)), " ", h("b", { class: b > a ? "up" : "down" }, fmt(b)));
+  return h("div", { class: "card requote decide-sticky" },
+    h("div", { class: "card-head" }, h("h3", { class: "grow" }, "Prices changed: re-quote needed"),
+      delta != null ? h("span", { class: `delta ${delta > 0 ? "up" : "down"}` }, `${delta > 0 ? "+" : ""}${eur(delta)} (${num((delta / old.total_net) * 100, 1)}%)`) : null),
+    h("div", { class: "card-body sm muted" }, R.reason, " Your approval was bound to the old quote hash, so it did not apply. Nothing was ordered."),
+    h("table", { class: "t" },
+      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Line total"))),
+      h("tbody", null, ids.map((id) => {
+        const a = oldBy.get(id), b = byId.get(id);
+        return h("tr", null, h("td", null, (a || b).product_name, h("div", { class: "faint small mono" }, id, !b ? " · removed" : !a ? " · new" : "")),
+          h("td", { class: "n" }, diffCell(a?.qty_sales_units, b?.qty_sales_units, (x) => num(x))),
+          h("td", { class: "n" }, diffCell(a?.unit_price, b?.unit_price, eur)),
+          h("td", { class: "n" }, diffCell(a?.line_total, b?.line_total, eur)));
+      })),
+      h("tfoot", null, h("tr", null, h("td", { colspan: 3 }, "Total net"), h("td", { class: "n" }, diffCell(old.total_net, fresh?.total_net, eur))))),
+    h("div", { class: "card-body row" },
+      h("span", { class: "binding-note grow" }, fresh ? ["New signed quote ", h("span", { class: "mono" }, fresh.quote_id), " · hash ", h("span", { class: "mono" }, shortHash(fresh.quote_hash)), ` · locked until ${hm(fresh.expires_at)}`] : "The gateway did not return the fresh quote; ask the agent to re-quote."),
+      h("button", { class: "btn btn-sm", disabled: busy, onclick: () => { S.requote = null; renderApprovals(); } }, "Back"),
+      fresh ? h("button", { class: "btn btn-ok btn-lg", disabled: busy, onclick: () => decide({ ...it.order, order_id: R.new_order_id, quote_id: fresh.quote_id, quote_hash: fresh.quote_hash }, fresh, "approve") },
+        busy ? [h("span", { class: "spinner" }), "Placing order"] : `Approve new quote ${eur(fresh.total_net)}`) : null));
 }
 
 function approverName(customerId, raw, roleField) {

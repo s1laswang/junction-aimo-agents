@@ -436,6 +436,8 @@ def create_app(with_mcp: bool = True) -> FastAPI:
         return JSONResponse(e.to_dict(), status_code=e.status, headers=headers)
 
     app.include_router(build_router())
+    try: from aimo.voice.routes import router as _voice; app.include_router(_voice)  # noqa: E702 S5 voice approval
+    except Exception as e: log.warning("voice router not mounted: %s", e)  # noqa: BLE001
     try:  # recipes, drift, proactive seller (ported from Momin's junction26-valio)
         from aimo.gateway.extras import router as extras_router
         app.include_router(extras_router)
