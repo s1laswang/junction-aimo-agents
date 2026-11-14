@@ -314,7 +314,8 @@ def _gemini_parse(text: str, profile: dict, now: datetime, run_id: str = "",
         allergens=", ".join(profile.get("excluded_allergens") or []) or "none", text=text)
     cfg = types.GenerateContentConfig(
         response_mime_type="application/json", response_json_schema=_gemini_schema(),
-        thinking_config=types.ThinkingConfig(thinking_level="LOW"), max_output_tokens=4096)
+        thinking_config=types.ThinkingConfig(thinking_level="LOW"), max_output_tokens=4096,
+        http_options=types.HttpOptions(timeout=45_000))  # ms
     last: Exception | None = None
     for _ in range(2):  # one retry on empty / invalid JSON
         r = gemini.generate("buyer.parse_need", model or GEMINI_AGENT_MODEL, prompt, cfg, run_id=run_id)
