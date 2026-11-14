@@ -7,7 +7,7 @@ Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" chall
 > A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L dispenser box missed its order cut-off (Thu 12 Nov 15:00, live data from the challenge's mock API; all challenge data is synthetic). The gateway plans a same-brand substitute (Valio Eila 1 L, 464306, €1.01/L, €1,010 total), issues an Ed25519-signed quote, and the hotel's own policy says **needs approval**: €1,010 is over the €500 auto limit and 3.3× the usual weekly milk volume. The procurement manager approves the exact quote hash. The order is placed in our own mock order service (the challenge API has price and availability but no order endpoint) and answered with a Peppol-style response `AP`, and the whole story is in a hash-chained, signed audit log that anyone can verify.
 
 ![Approval UI: the agent paused for the procurement manager, every rule explained, order placed with Peppol AP](docs/pitch/img/approval-ui.png)
-<!-- Screenshot from the frontend engineer's live integration run (team/frontend, Sat 14 Nov 14:45). TODO: re-capture from main after the freeze. -->
+<!-- Screenshot from the frontend engineer's live integration run (team/frontend, Sat 14 Nov 14:45). Newer screenshots: docs/reports/frontend/. -->
 
 ## Prerequisites
 
@@ -24,15 +24,30 @@ Environment variables (names only; copy `.env.example` to `.env` and fill them i
 | `AIMO_API_KEY` | `aimo serve` / `aimo fetch-data` downloading `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs). Needed for the live catalog, catalog-backed pytest cases, `qa_milk_flow.py`, and the conformance suite's catalog-backed checks. | Download is skipped with a warning. `aimo serve` still starts (UI / docs / `/.well-known`). Tests that need the product JSON skip. |
 | `AIMO_PORTAL_URL`, `AIMO_PORTAL_PASSWORD` | portal login to obtain a mock-API key if you do not already have `AIMO_API_KEY` | leave blank if you already have a key |
 | `GEMINI_API_KEY` | `uv run aimo demo` (Gemini buyer), embeddings / allergen hints, wind-tunnel live runs | Keyless path: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (still needs the product data + a running gateway). `aimo serve --no-build` skips Gemini catalog builds. |
+| `AIMO_APPROVER_PIN` | the **human approver credential** (see [Approving as a human](#approving-as-a-human)) | Generated once into `data/keys/approver_pin` (a random 12-character passphrase). No API route or MCP tool ever returns it. |
+| `AIMO_REPLAY` | `=tests/fixtures/snapshot` serves recorded mock-API price and availability responses with no network | Unset: live mock API. `make accept` sets it automatically when `AIMO_API_KEY` is empty. Responses say `served_from: replay`. |
+| `AIMO_NOW` | simulated clock, e.g. `AIMO_NOW=2026-11-15T10:00:00+02:00` (add `AIMO_NOW_FROZEN=1` to stop it running forward) | Real clock. Replay mode anchors the clock at the snapshot's recording time (Sat 14 Nov 14:20 Helsinki) unless `AIMO_NOW` is set. |
 
 Do not put real values in the README. A judge machine with none of these variables set can still run `make accept`, which will SKIP key-gated steps and must not crash.
 
-One-command check (keyless steps + documented skips):
+One-command check:
 
 ```bash
 cp .env.example .env    # fill keys if you have them
 make accept             # or: uv run bash scripts/judge_accept.sh
 ```
+
+`make accept` runs pytest, starts the gateway on a free port with a fresh approver credential, checks the discovery and docs endpoints, then (when the catalog data is present) the conformance suite and `qa_milk_flow.py` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → human approval → Peppol AP → audit verify). It prints a PASS/FAIL/SKIP table and ends in `RESULT: PASS` or `RESULT: FAIL`.
+
+### Keyless vs keyed
+
+| | Keyless (empty `.env`) | Keyed (`AIMO_API_KEY`, `GEMINI_API_KEY`) |
+|---|---|---|
+| Price and availability | Replay of recorded mock-API responses (`tests/fixtures/snapshot`: 92 product ids, delivery dates 13, 15, 16 and 17 Nov). Dates that were not recorded are refused, never invented. | Live Valio Aimo mock API with a 5-minute cache; with `AIMO_REPLAY_FALLBACK=tests/fixtures/snapshot` it falls back to the snapshot if the upstream is unreachable |
+| Clock | Anchored at the snapshot's recording time, so the story's Monday cut-offs still hold | Real time, or `AIMO_NOW` |
+| Catalog | Needs `data/valio_aimo_junction26_product_data.json` (downloaded with a key). Without it, catalog-backed tests and checks SKIP. | Downloaded on first `aimo serve` |
+| Buyer agent | `qa_milk_flow.py` (scripted, no LLM) or `/ui?mock=1` | `uv run aimo demo` (Gemini) |
+| Search | Full-text (FTS5 trigram) | Full-text plus gemini-embedding-2 |
 
 ## Quickstart (one command)
 
@@ -66,7 +81,16 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **263 passed, 7 skipped, 2 xfailed** (Sat 14 Nov 23:00). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (8/8 with the live mock API). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **267 passed, 7 skipped, 2 xfailed** in 71 s (main at fac34f0, Sat 14 Nov 23:05). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (8/8 with the live mock API). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+
+### Approving as a human
+
+Approvals are human-only. The approver credential is `AIMO_APPROVER_PIN` from `.env`, or, if that is empty, the passphrase the gateway generated into `data/keys/approver_pin` on first start (`cat data/keys/approver_pin` on the machine running the gateway). No API route and no MCP tool ever returns it; in production it is replaced by the customer's SSO.
+
+- **In the UI:** the first time you approve or reject, the UI asks you to sign in as an approver (your name or email from the customer's approver directory, e.g. Anna Virtanen, then the PIN). It exchanges them once for a signed 8-hour session bound to that person and stores only the session, never the PIN.
+- **Over REST:** `POST /v1/auth/approver-session` with `X-Approver-Pin` and `{"approver": "anna@hotel-aurora.example"}` returns `{"session": ...}`; send it as `X-Approver-Session` on decisions. A session cannot decide as anyone else (403 `approver_mismatch`).
+- **Agents can never approve:** any decision request carrying `X-Agent-Id` gets 403 `agent_cannot_approve`, even if it names a real approver; no credential gets 401. Every refusal is written to the audit log as `approval.refused`. Five wrong credentials from one client lock that client for 5 minutes (429); signed-in sessions are never locked out.
+- `uv run aimo demo --auto-approve-as …` and `qa_milk_flow.py` read the operator's credential from the same env var or file, so they only work on the machine that runs the gateway.
 
 ## What it is: five pillars
 
@@ -183,14 +207,23 @@ curl -s -X POST http://localhost:8000/v1/quotes "${H[@]}" \
 # 5. Order: returns status pending_approval with every rule's reason
 curl -s -X POST http://localhost:8000/v1/orders "${H[@]}" -d '{"quote_id":"Q-...","quote_hash":"..."}'
 
-# 6. Human approval, bound to the hash (a wrong hash returns 409 quote_hash_mismatch)
+# 6. The agent tries to approve its own order: 403 agent_cannot_approve (audited as approval.refused)
 curl -s -X POST http://localhost:8000/v1/approvals/ORD-.../decision "${H[@]}" \
-  -d '{"decision":"approve","approver":"anna@hotel-aurora.example","approver_role":"procurement_manager","quote_hash":"..."}'
+  -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"..."}'
 
-# 7. Audit: readable story, and chain verification
+# 7. A human signs in once (PIN from .env or data/keys/approver_pin), then approves the exact hash
+#    (a wrong hash returns 409 quote_hash_mismatch)
+S=$(curl -s -X POST http://localhost:8000/v1/auth/approver-session -H "Content-Type: application/json" \
+  -H "X-Approver-Pin: $(cat data/keys/approver_pin)" -d '{"approver":"anna@hotel-aurora.example"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['session'])")
+curl -s -X POST http://localhost:8000/v1/approvals/ORD-.../decision -H "Content-Type: application/json" \
+  -H "X-Approver-Session: $S" -d '{"decision":"approve","quote_hash":"..."}'
+
+# 8. Audit: readable story (including the refused agent attempt), and chain verification
 curl -s http://localhost:8000/v1/audit/report/ORD-...
 curl -s http://localhost:8000/v1/audit/verify
 ```
+Steps 4–8 were re-run on Sat 14 Nov 23:10 against `AIMO_REPLAY=tests/fixtures/snapshot uv run aimo serve`: quote €1,010, `pending_approval`, agent 403, session approval → `placed`, report shows `#11 approval.refused`, verify `ok: true`.
 The same flow as one script with checks: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000`.
 
 Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULTS`): `stockout:<id|*>`, `partial:<id|*>:<n>`, `price_shock:<id|*>:<factor>`, `cutoff:<id|*>`, `error_rate:<p>`, `rate_limit:<p>`, `latency_ms:<n>`. See [docs/interfaces.md](docs/interfaces.md).
@@ -245,9 +278,11 @@ Pilot KPIs:
 | `aimo/trust/` | Policy engine and YAML policies, Ed25519 JWS signing, approvals, hash-chained signed audit, injection screening |
 | `aimo/buyer/` | Gemini buyer agent, need parsing, tool transports (MCP / in-process / fake), terminal demo, `POST /v1/agent/runs` + SSE |
 | `web/` | No-build approval UI served at `/ui`, with `?mock=1` offline mode |
-| `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline *(landing)* |
+| `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline ([results](docs/windtunnel-results.md)) |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | Offline tests for gateway, catalog, trust and buyer |
+| `tests/` | Offline tests for gateway, catalog, trust, buyer, human-only approval, edge cases and quantity validation; `tests/fixtures/snapshot` is the recorded mock-API replay |
+| `scenarios/`, `conformance/` | Acceptance scenarios s0–s7 (`python -m scenarios.run_all`) and the `otap/0.1` conformance suite |
+| `docs/evidence/` | Sanitized Gemini ledgers behind the montage cost numbers (`montage_stats.py`) |
 | `docs/` | [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
@@ -261,7 +296,7 @@ git clone https://github.com/s1laswang/junction-aimo-agents.git aimo && cd aimo
 cp .env.example .env && make accept      # keyless acceptance; add keys to .env for the live mock API and Gemini
 ```
 
-The final submission will be pinned to the tag `aimo-v1` (created at the Sun 06:00 freeze). Do not confuse this repo with AfterQuery Canary/Sleeper (`s1laswang/agent-arena`) or HoldUp (`s1laswang/junction-meta-glasses`).
+The judged version is the tag **`aimo-v1`**, created at the code freeze (Sun 15 Nov 06:00 Helsinki). To review exactly that: `git checkout aimo-v1`. Do not confuse this repo with AfterQuery Canary/Sleeper (`s1laswang/agent-arena`) or HoldUp (`s1laswang/junction-meta-glasses`).
 
 ## Team
 

@@ -28,7 +28,7 @@ Status words: **VERIFIED** = we measured it; **ASSUMED** = our choice, not given
 
 ### A2. Customers, policies, approvers and usual products are invented
 - **Evidence:** `aimo/trust/policies/hotel-aurora.yaml`, `school-tampere.yaml`, `hospital-meilahti.yaml` (v1.1.0). Hotel usual product 463038 with 464306 pre-approved as best; school usual 472833 and hospital usual 473328 are demo assumptions (trust report, round 2). Standing orders (hotel milk 300 L/week) and approver names (`anna@hotel-aurora.example`) are invented.
-- **Impact:** the €500 / €5,000 thresholds, the 3× drift rule and the approver roles are illustrative. A mentor has not yet validated them (**TODO**, PLAN scoring checklist).
+- **Impact:** the €500 / €5,000 thresholds, the 3× drift rule and the approver roles are illustrative. They have not been validated with Valio or a customer; we present them as examples of what a customer would set, never as recommended values.
 - **Production:** each customer authors and versions its own policy (or brings OPA/Cedar), maintains its approver directory in its identity provider, and issues mandates to its agents.
 
 ### A3. Category groupings are inferred from category codes
@@ -41,7 +41,7 @@ Measured with `uv run python docs/pitch/probe_mock_quirks.py` (Sat 14 Nov 18:59 
 - **Availability ignores `requestedDate`.** Requests for 16 Nov, 20 Nov and 1 Dec return the same single schedule line dated 2026-11-16 for 463038, 464306 and 469363 (the upstream echoes the requested date but does not change the schedule).
 - **`closingTime` is fixed per product.** 463038: 2026-11-12 15:00; 464306 and 469363: 2026-11-15 17:00, for every requested date.
 - **Terminal stock is unknown.** Terminal product 463038 reports 999,999, which we map to "unknown quantity" (`terminal_unknown_qty`); Stock items report 9,999,999,999 for unlimited (catalog report).
-- **Impact:** we cannot show multi-date delivery splits from real data, and the hero story depends on the wall clock: after Sun 15 Nov 17:00, Monday delivery is closed for stock milk (docs/SCENARIOS.md). Mitigation: fault injection (`X-Aimo-Faults: cutoff:…`, `partial:…`) makes each exception reproducible; `AIMO_NOW` and replay mode are in progress (**TODO**, gateway lead).
+- **Impact:** we cannot show multi-date delivery splits from real data, and the hero story depends on the wall clock: after Sun 15 Nov 17:00, Monday delivery is closed for stock milk (docs/SCENARIOS.md). Mitigation: fault injection (`X-Aimo-Faults: cutoff:…`, `partial:…`) makes each exception reproducible; `AIMO_NOW` (simulated clock, also per request with `X-Aimo-Now`) and replay mode (`AIMO_REPLAY=tests/fixtures/snapshot`, recorded mock-API responses) keep the story reproducible after the real cut-off (README, DEMO checklist step 5; verified Sat 23:15).
 - **Production:** SAP available-to-promise per date, route and delivery slot.
 
 ### A5. CO2 is a category average
@@ -60,11 +60,11 @@ Measured with `uv run python docs/pitch/probe_mock_quirks.py` (Sat 14 Nov 18:59 
 - **Production:** customer price conditions from SAP; the signed quote format already carries whatever price the backend returns.
 
 ### A8–A10
-- **A8 identity:** headers `X-Customer-Id` / `X-Agent-Id` (docs/interfaces.md); the header wins over any body field and unregistered agents are refused (pitch report, round 2). Production: OAuth 2.1 per the MCP authorization spec (**TODO**: minimal client-credentials flow, gateway lead).
+- **A8 identity:** headers `X-Customer-Id` / `X-Agent-Id` (docs/interfaces.md); the header wins over any body field and unregistered agents are refused (pitch report, round 2). The headers are not authenticated in the demo, so a caller that knows a registered customer/agent pair can claim it; this is the main demo-only shortcut (pitch/QA.md Q4). Human approvers are separate and do authenticate (approver PIN → signed per-person session). Production: OAuth 2.1 client credentials per the MCP authorization spec; not built.
 - **A9 keys:** `data/keys/` (gitignored, generated on first use). Production: KMS/HSM.
 - **A10 units:** the content-per-sales-unit parser agrees with live comparison prices for 702 of 752 sampled products (93%); at plan time the live price wins and the line is flagged `content_from_price` (catalog report).
 
-## Still open (numbers coming)
-- **TODO** gold set: zero-correction rate on 1,000 requests in fi/sv/en (swarm A).
-- **TODO** wind tunnel at scale: violations over ≥10k attacks, escalation precision/recall (swarm B, wind tunnel).
-- **TODO** multimodal: photo intake accuracy (swarm C).
+## Not measured
+- Gold set: zero-correction rate on fi/sv/en requests. Only a 20-request set exists (`tests/fixtures/gold/gold-buyer-20.jsonl`), with no committed run, so we claim no accuracy number.
+- Wind tunnel scale: the largest run is 2,560 template scenarios plus 640 Gemini-written ones (docs/windtunnel-results.md), not ≥10k attacks.
+- Photo intake (`aimo/buyer/vision.py`): built, 4 development calls, no accuracy number.
