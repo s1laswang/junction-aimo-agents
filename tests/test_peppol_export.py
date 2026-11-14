@@ -74,7 +74,7 @@ def test_gateway_route_ab_then_ap(tmp_path, monkeypatch):
     bc.set_client(FixtureClient())
     try:
         from aimo.gateway.app import create_app
-        api = TestClient(create_app(with_mcp=False))
+        api = TestClient(create_app(with_mcp=False), headers={"X-Approver-Pin": "test-pin"})
         q = api.post("/v1/quotes", headers=H, json={"delivery_date": "2026-11-16",
                                                     "lines": [{"product_id": "464306", "qty_sales_units": 1000}]}).json()
         o = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
