@@ -1,7 +1,7 @@
 # Numbers we may say
 
 Rule: a number is only said if it has a source command that was run. Unmeasured = NOT FOUND, never guessed.
-Regenerate: `python3 pitch/measure_data.py` (reads data/ files only, never the Valio API). Run on 2026-11-13 against the files in `data/`.
+Regenerate: `.venv/bin/python pitch/measure_data.py` (reads `data/` files only, never the Valio API). Verified on 2026-11-14 against the files in `data/`.
 
 ## From local data files (measured)
 
@@ -35,23 +35,28 @@ Caveats to say out loud if asked: lactose-free is the supplier's declared claim,
 |---|---|
 | 20,000 kitchens, 25,000 products | AIMO.md challenge text |
 
-## From our running system (measured 2026-11-14, dev at merge of sh-ui/gateway, local, no LLM key, rule parser)
+## From our running system (measured 2026-11-14 on fr8/valio/pitch, local gateway, rule parser, warmed Valio cache)
 
-Command: `.venv/bin/uvicorn aimo.app:app --port 8124` then `python -m pitch.measure_live --url http://localhost:8124`.
+Command: `AIMO_CACHE_DIR=/tmp/opencode/aimo-cache .venv/bin/uvicorn aimo.app:app --host 127.0.0.1 --port 8201` (fresh temporary `AIMO_DB` and `AIMO_KEY_DIR`) then `.venv/bin/python -m pitch.measure_live --url http://127.0.0.1:8201` (also runnable in-process via `.venv/bin/python -m pitch.measure_live --inprocess`).
 
 | Customer | mandate ms | parse ms | offers ms | quote ms | order ms | approvals ms | audit ms | offers | total net | outcome | reasons | audit events |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| hotel-aurora | 15 | 65 | 5525 | 20 | 30 | 7 | 5 | 1 | 1400.0 | auto | WITHIN_MANDATE | 5 |
-| hospital-tays | 5 | 3 | 278 | 8 | 25 | 5 | 5 | 1 | 1400.0 | auto | WITHIN_MANDATE | 5 |
-| school-hervanta | 5 | 3 | 218 | 9 | 18 | 4 | 5 | 1 | 1400.0 | needs_approval | OVER_ORDER_LIMIT | 3 |
+| hotel-aurora | 16 | 48 | 3632 | 10 | 8 | 2 | 4 | 1 | 1332.0 | auto | WITHIN_MANDATE | 6 |
+| hospital-tays | 3 | 3 | 19 | 3 | 7 | 2 | 4 | 1 | 1332.0 | auto | WITHIN_MANDATE | 6 |
+| school-hervanta | 2 | 4 | 17 | 3 | 6 | 2 | 4 | 1 | 1332.0 | needs_approval | OVER_ORDER_LIMIT | 4 |
 
-- Milk request: auto 2, needs_approval 1, blocked 0 of 3 customers. Median step latency 8 ms over 21 calls.
-- First offers call is 5,525 ms because it is cold (fetches Valio). Later calls 218 and 278 ms from cache. Say "about 5 s cold, a fraction of a second warm", not "8 ms".
-- 1,000 L milk = 1,400.0 EUR net (1.40 EUR per L, Valio Eila 3 % milk 1 l lactose-free). Hotel mandate per order is 2,500 EUR, so hotel goes through on its own.
-- Offers returned: 1, with 4 more lactose-free milks skipped and the reason written in the notes (order cutoff 2026-11-12T15:00 already passed).
-- Stock number in the offer is 9999999999. That is the mock's sentinel, never say it as stock.
-- Hotel needs_approval does not happen for the plain milk request. Use school-hervanta or a larger order for the approval scene.
-- Scenarios, `python scenarios/run_all.py --base http://localhost:8124`: 1 of 8 passing (only s7_drift). Failing: s0 (409 on approval), s1 (jws verify), s2 and s3 (recipe gives 1 line), s4, s5, s6. This is dev as it stands, not final. Re-run before the pitch.
-- `pytest -q` on dev: 185 passed, 1 failed (tests/test_mcp_parity.py), 3 skipped, 10 xfailed.
+- Milk request (`"I need 1,000 litres of lactose-free milk by Monday"`): `auto 2, needs_approval 1, blocked 0` of 3 customers. Median step latency `4 ms` over 21 calls.
+- First `offers` call is `3,632 ms` because the worker loads and indexes the 17,546-product catalog file on first search (and uncached Valio API calls add a few seconds when cold). Warm subsequent `offers` calls are `19 ms` and `17 ms`. Say "a few seconds on first load, under 20 ms warm", not "4 ms".
+- Picked milk product: `464119` `Valio rasvaton maito 1 l laktoositon UHT` (`sales_unit "KI"`, `10 L`), `100 x 10 L = 1,000 L` at `13.32 EUR` net per 10 L case (`1.332 EUR/L`), totaling `1,332.00 EUR` net / `1,512.00 EUR` gross (`units_needed=100.0`, `unit_price_net=13.32`, `total_net=1332.0`, `total_gross=1512.0`).
+- Mandate decisions on `1,332.00 EUR` net: `hotel-aurora` (`2,500.00 EUR` per-order limit) and `hospital-tays` (`1,500.00 EUR` per-order limit) pass automatically (`WITHIN_MANDATE`, 6 audit events each including simulated confirmation); `school-hervanta` (`600.00 EUR` per-order limit) is routed to human approval (`OVER_ORDER_LIMIT`, 4 audit events, held in pending approvals).
+- Ranked `good` / `better` / `best` alternatives returned alongside the primary offer (`alternatives=3`):
+  - `good`: `464401` `Valio Hyvä suomalainen Arki® Eila® rasvaton maitojuoma 1 l laktoositon` (`1,100.00 EUR` net / `1,250.00 EUR` gross)
+  - `better`: `464073` `Valio täysmaito 1 l laktoositon UHT` (`1,640.00 EUR` net / `1,860.00 EUR` gross)
+  - `best`: `464201` `Valio kevytmaito 1 l laktoositon UHT` (`1,560.00 EUR` net / `1,770.00 EUR` gross)
+- Stock number in the Valio mock response is `9999999999`. That is the mock's sentinel, never say it as real warehouse stock.
+- Interface and planning counts (measured from `aimo.app:app.openapi()`, `aimo.mcp_server:mcp.list_tools()`, and `data_extra/recipes.json`): `12` MCP tools (identical over HTTP `/mcp` and stdio), `15` OpenAPI paths (`12` under `/v1/*` with `15` HTTP operations, plus `/health`, `/.well-known/agent-card.json`, `/.well-known/jwks.json`), and `11` recipe dishes in `data_extra/recipes.json`.
+- Search and parse precision (`.venv/bin/python scripts/eval_precision.py --holdout3`; `AIMO_EVAL=1 .venv/bin/pytest -q tests/test_precision*.py`): `set1 20/20, holdout 10/10, holdout2 10/10, total 40/40` (`27 passed, 13 xpassed` across `test_precision*.py`) on the core benchmark suites, and `holdout3 9/15` on the harder unseen holdout3 suite (`49/55` overall).
+- End-to-end scenarios (`AIMO_CACHE_DIR=/tmp/opencode/aimo-cache .venv/bin/python scenarios/run_all.py --base http://127.0.0.1:8202 --boot`, verified on `63649fc`): `7/8 passed` (`s0_guardrails`, `s1_milk`, `s2_need_recipe_order`, `s3_event_substitution`, `s4_stockout`, `s5_allergen_safe`, `s6_proactive_seller` pass; `s7_drift` fails on `injected stock-out is flagged for that product`).
+- Automated test suite (`.venv/bin/pytest -q` on `63649fc`): `525 passed, 44 skipped` (`0 failed`).
 
-Still NOT FOUND: scenarios passing after fixes, latency with an LLM key, milk order value once more than one offer comes back.
+Still NOT FOUND: latency with a live LLM key configured, `8/8` scenarios passing once `s7_drift` is fixed.
