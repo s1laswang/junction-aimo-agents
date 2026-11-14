@@ -319,6 +319,25 @@ def test_brand_preference_without_usual_product(offline_plan):
     assert plan.lines[0].tier == "best" and plan.shortfall == 0
 
 
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+@pytest.mark.parametrize("query", ["maito", "milk", "laktoositon maito"])
+def test_milk_queries_rank_milk_drinks_above_jugs_and_cleaners(query):
+    """Pitch QA: 'maito' ranked milk jugs (466434) and a milk-system cleaner above actual milk."""
+    from aimo.catalog import search
+    top = search(query, limit=5)
+    assert len(top) == 5
+    for p in top:
+        assert p.category == "10400", (query, p.id, p.name)          # milk drinks
+        assert "milk" in p.name.lower(), (query, p.name)
+        assert not any(w in p.name.lower() for w in ("jug", "cleaner", "kannu"))
+
+
+@pytest.mark.skipif(not _have_data(), reason="product data not present")
+def test_equipment_queries_still_find_equipment():
+    from aimo.catalog import search
+    assert any("jug" in p.name.lower() for p in search("milk jug", limit=5))
+
+
 def test_spec_preferences_ignore_non_spec_keys():
     from aimo.catalog.substitution import spec_preferences
     need = Need(customer_id="x", product_query="oat drink", quantity=1, unit="L", delivery_by=date(2026, 11, 18),
