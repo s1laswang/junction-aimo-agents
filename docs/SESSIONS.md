@@ -57,6 +57,7 @@ The review scored each criterion (it was given before the self-approval fix, 433
 3. **No product data:** `/v1/products/search` and `/v1/plan` return **503 `catalog_missing`** with "run `uv run aimo fetch-data`" instead of a 500. Commit a small catalog subset fixture (only the products the replay ids need, from the public challenge files) so a keyless clone can run the demo end to end without the 87 MB file.
 4. **No hard-coded `2026-11-16`.** In scenarios, demo and docs scripts, delivery dates derive from the (simulated) clock: the next feasible weekday ≥ cut-off. Use `AIMO_NOW` when set. The demo must work after Sun 17:00.
 5. **`make accept` shows a real order:** it runs `scenarios.run_all` in replay plus qa_milk_flow, and prints the order id, the Peppol code and audit verify.
+   **Reviewer finding (re-score 82, Sat 23:40):** conformance and qa_milk_flow in `scripts/judge_accept.sh` (around line 145) are still gated on `has_env AIMO_API_KEY`, so a truly keyless run gives 11 PASS / 5 SKIP. Gate them on "AIMO_API_KEY set OR AIMO_REPLAY set" instead. The CEO's earlier "15/15 keyless" claim was wrong (a key was in .env). Verify with a truly empty `.env` in a fresh clone.
 **Done when:** a fresh clone with an empty `.env` runs `make accept` → PASS with 8/8 scenarios, and `uv run aimo serve` + `/ui` completes the hero flow in replay.
 
 ## S2 `harden`: no 500s, sane quantities, agent runs that never hang (Robustness +2, Demo +1)

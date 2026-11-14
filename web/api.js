@@ -59,7 +59,12 @@ export function createLiveApi(base) {
       jwks: url("/.well-known/jwks.json"),
       mcp: url("/mcp"),
     },
-    customers: () => req("GET", "/v1/customers"),
+    // approver ids are only returned to a signed-in approver: send the stored PIN if we have one (never prompts)
+    customers: () => {
+      let pin = null;
+      try { pin = sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
+      return req("GET", "/v1/customers", null, pin ? { "X-Approver-Pin": pin } : {});
+    },
     startRun: ({ text, customer_id, model, thinking }) =>
       // `thinking` is an optional extra field (UNVERIFIED: not yet in interfaces.md); model is documented.
       req("POST", "/v1/agent/runs", { text, customer_id, model, thinking: thinking ? String(thinking).toUpperCase() : undefined }, { "X-Customer-Id": customer_id }),
