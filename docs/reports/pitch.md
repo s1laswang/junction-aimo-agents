@@ -1,6 +1,8 @@
 # Pitch, QA and docs report
 
-Branch `team/pitch` / `fr8/valio/docs`. Last updated Sat 14 Nov 2026, 23:30 Helsinki. Round 4 truth pass: reconciled all docs against merged `main` + `fr8/valio/main` (human-only approvals with `X-Approver-Pin` / `X-Approver-Session`, 13 MCP tools, 44/44 conformance on two wholesalers, keyless scripted buyer fallback, `409 requote_needed` price-change beat, S5 UI/voice approval, wind tunnel `wt640` + `wt2560` tables, and `docs/pitch/QA.md`).
+> **From Sat 14 Nov 23:25 the submit session (S4, [submit.md](submit.md)) and `fr8/valio/docs` coordinate these docs.** Gate runs and sanitized montage evidence: [submit.md](submit.md).
+
+Branch `team/pitch` / `fr8/valio/docs`. Last updated Sat 14 Nov 2026, 23:45 Helsinki. Round 4 truth pass: reconciled all docs against merged `main` + `fr8/valio/main` (human-only approvals with `X-Approver-Pin` / `X-Approver-Session`, known-customer enforcement across `/v1`, catalog search, MCP and buyer runs, `injection_screen` on plan lines and candidates, 13 MCP tools, 44/44 conformance on two wholesalers, keyless scripted buyer fallback, `409 requote_needed` price-change beat, S5 UI/voice approval, wind tunnel `wt640` + `wt2560` tables, and `docs/pitch/QA.md`).
 
 ## Status
 | Deliverable | File | State |

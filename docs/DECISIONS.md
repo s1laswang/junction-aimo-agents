@@ -37,7 +37,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Evidence:** `tests/test_trust.py` per-customer outcomes; the hero decision shows 3 needs-approval reasons in plain language (docs/demo-montage.md, pitch report).
 
 ## D5. Verified-best substitutes auto-approve, plus learned approvals
-- **Status:** Accepted.
+- **Status:** Accepted (verified tiers and customer-scoped learned approvals recorded via `remember` / `GET /v1/customers/{id}/learned`).
 - **Context:** escalating every substitution is safe but makes the agent useless (the PLAN checklist records baseline escalation precision at 54%); trusting the agent's own tier label is unsafe (pitch QA issue 2).
 - **Decision:** the policy derives the tier itself: `preferred` only for the customer's listed usual products; `best` only for customer-approved alternatives or catalog evidence (same brand, category and unit, all claims kept); anything else is `unverified` → needs approval. When a human approves a recurring swap with `remember` / `remember_scope`, the gateway records a customer-scoped learned rule (`/v1/customers/{id}/learned`) as an audited policy update.
 - **Rejected:** escalate every substitution (precision too low, approvers learn to rubber-stamp); trust the agent's tier (red-teamed: a substitute sent as "preferred" was auto-placed before the fix); fully learned/ML approval models (not explainable, can't be audited rule by rule).
@@ -61,7 +61,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Status:** Accepted.
 - **Context:** the agent must be fast enough for a live conversation, careful on the decision a human will later defend, and cheap per order.
 - **Decision:** `gemini-3.8-flash` with LOW thinking for routine agent steps and need parsing; escalate only the quote-decision turn to `gemini-4-hydrogen` with HIGH thinking when the plan contains a substitution, flag or shortfall; `gemini-3.1-flash-lite` for bulk classification (allergen inference, injection screen, recipe check); `gemini-embedding-2` for search. Structured output everywhere with deterministic fallbacks.
-- **Rejected:** the strongest model for every step (the playbook measured 23 s per call for gemini-4-carbon at high thinking; a montage run makes 8–9 Gemini calls); flash LOW only (no extra care on the substitution decision: in `windtunnel/thinking.py`, flash LOW reaches 93.8% on `substitute` and 85.4% on `parse` vs 100.0% for hydrogen HIGH, [windtunnel-results.md](windtunnel-results.md)); an open-weights model hosted by us (GPU ops we can't run at a hackathon, and no embeddings, batch and structured output from one API).
+- **Rejected:** the strongest model for every step (the playbook measured 23 s per call for gemini-4-carbon at high thinking; a montage run makes 8–9 Gemini calls); flash only (no extra care on the substitution decision; measured in `windtunnel/thinking.py`: flash LOW is 93.8% accurate on `substitute` and 85.4% on `parse` vs 100.0% for hydrogen HIGH at p50 3.5–3.7 s / p95 < 7.2 s, while flash HIGH reaches ~98–100% only with a 15–69.5 s p95; [windtunnel-results.md](windtunnel-results.md) "Thinking level"); an open-weights model hosted by us (GPU ops we can't run at a hackathon, and no embeddings, batch and structured output from one API).
 - **Evidence:** montage 6/6 PASS, escalation on 6 of 31 agent steps (19%), $0.0339 per placed order, down from $0.0822 after a token trim (docs/demo-montage.md).
 
 ## D9. Embeddings plus full-text search instead of long-context catalog prompts
@@ -79,7 +79,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Evidence:** gateway report; s4 re-quote gets 409 naming the product, then a re-plan covers 200 L (docs/SCENARIOS.md).
 
 ## D11. Hosting: a tunnel from the demo laptop, replay mode as fallback
-- **Status:** Accepted (replay snapshot + Dockerfile shipped; live tunnel URL filled at freeze).
+- **Status:** Open at the freeze (replay snapshot and Dockerfile shipped). If a tunnel URL is up, it goes into the "Public URL" row of [SUBMISSION.md](SUBMISSION.md); otherwise the submission says "runs locally with one command" and judges use `make accept` plus replay mode.
 - **Context:** judges should be able to connect their own MCP client; we have no shared cloud project, and the mock API key and Gemini key must not leave the team's machines.
 - **Decision:** a cloudflared tunnel from the demo laptop to `aimo serve`, with replay mode (recorded mock-API responses) as the fallback if the venue network fails (PLAN, decided with Silas).
 - **Rejected:** Cloud Run or similar (needs a GCP project and secret handling we can't set up safely in time); localhost only (judges can't try it); a recorded video only (not a working demo).

@@ -7,58 +7,60 @@ UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes
 
 ## Before you go on stage (T-15 min)
 
-1. **Fresh state and approver PIN.** The weekly-budget rule sums every order placed in the last 7 days, so rehearsal orders change the verdict. Start from a clean state DB, keeping the signing key and a 12+ character `AIMO_APPROVER_PIN` (or let first boot write one to `data/keys/approver_pin`, mode `0600`):
+1. **Fresh state.** The weekly-budget rule sums every order placed in the last 7 days, so rehearsal orders change the verdict. Start from a clean state DB, keeping the signing key and the approver credential:
    ```bash
    mkdir -p ~/aimo-demo-data && cd ~/aimo-demo-data
    for f in /PATH/TO/junction-aimo-agents/data/*; do case "$f" in *state.sqlite*) ;; *) ln -sf "$f" . ;; esac; done
-   cd /PATH/TO/junction-aimo-agents && AIMO_DATA_DIR=~/aimo-demo-data AIMO_APPROVER_PIN="<12-char-passphrase>" uv run aimo serve
+   cd /PATH/TO/junction-aimo-agents && AIMO_REPLAY_FALLBACK=tests/fixtures/snapshot AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve
    ```
-2. **Check health:** `curl -s localhost:8000/healthz` must show every integration as `aimo.catalog` / `aimo.trust`, not `fallback`.
-3. **Warm up once** (fills the 5-minute offers cache and the query-embedding cache): `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` must end in `MILK FLOW OK`. Then restart with a fresh state dir again (step 1) so the audit view starts clean.
-4. **Cut-off clock.** The story depends on real mock-API data: 463038's cut-off passed Thu 12 Nov 15:00, and 464306 can be ordered for Monday until **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). If you present after Sun 16:30, anchor the gateway clock with `AIMO_NOW=2026-11-14T14:00:00+02:00` (or `AIMO_REPLAY=data/windtunnel/snapshot`), use mock mode (`?mock=1`), or say "delivery Tuesday" and check the plan first.
-5. Open three tabs: (a) `http://localhost:8000/ui/?customer=hotel-aurora`, (b) `http://localhost:8000/ui/?mock=1` (backup), (c) a terminal with large font in the repo directory. **Sign in as Anna before going on stage:** in tab (a), click the header chip **Sign in as approver**, select `Anna Virtanen (anna@hotel-aurora.example)` and enter `AIMO_APPROVER_PIN` (or `data/keys/approver_pin`). The UI calls `POST /v1/auth/approver-session` once and stores only the signed 8-hour `X-Approver-Session` token in `sessionStorage` (never the PIN), showing **Deciding as Anna Virtanen · Procurement Manager [Switch]**, so stage clicks never prompt and Anna's active session stays immune to anonymous brute-force lockouts (`429 approver_locked`). Demo tamper routes (`/v1/demo/tamper/{seq}`) also require `X-Approver-Pin` or that session token.
-6. Phone on silent, laptop on power, Wi-Fi checked (the mock API and Gemini are both online services).
-7. **T-4 min:** start the robustness montage in tab (c) against the second gateway on port 8031 (see "Robustness montage" below). Run it under `caffeinate -i` so the laptop cannot sleep mid-run (the buyer report lost a run that way).
+   `AIMO_REPLAY_FALLBACK` makes the gateway answer from the recorded snapshot if the live mock API stops responding (Wi-Fi drop). Without it there is no automatic fallback on this laptop, because `data/windtunnel/snapshot` does not exist.
+2. **Approver PIN.** Set a stage-only `AIMO_APPROVER_PIN` (12+ characters) in `.env` before starting the gateway, or read the generated one with `cat ~/aimo-demo-data/keys/approver_pin`. Write it on paper for the driver. The sign-in panel's PIN field is masked. Do not sign in during the warm-up in tab (a): the sign-in is a beat in the script.
+3. **Check health:** `curl -s localhost:8000/healthz` must show every integration as `aimo.catalog` / `aimo.trust`, not `fallback`, and `"clock": {"mode": ...}` must be what you expect (`real`, `env` when `AIMO_NOW` is set, or `replay`).
+4. **Warm up once** (fills the 5-minute offers cache and the query-embedding cache): `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` must end in `MILK FLOW OK`. Then restart with a fresh state dir again (step 1) so the audit view starts clean.
+5. **Cut-off clock.** The story depends on real mock-API data: 463038's cut-off passed Thu 12 Nov 15:00, and 464306 can be ordered for Monday until **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). **Presenting after Sun 16:30:** start the gateway on a simulated clock: `AIMO_NOW=2026-11-15T10:00:00+02:00 AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve` (the clock runs forward from Sun 10:00; add `AIMO_NOW_FROZEN=1` to hold it). Verified Sat 23:15: with now = Sun 10:00, 464306 has no issues for Monday; with now = Sun 18:00 it shows `cutoff_passed`. Say once: "the gateway runs on a demo clock set to Sunday morning."
+6. Open three tabs: (a) a **fresh** browser tab at `http://localhost:8000/ui/?customer=hotel-aurora` (the approver session lives in that tab's sessionStorage, so a fresh tab guarantees the sign-in moment on stage), (b) `http://localhost:8000/ui/?mock=1` (backup), (c) a terminal with large font in the repo directory, with this line typed but not yet run:
+   `uv run python docs/pitch/permissions_attack.py --base http://localhost:8000`
+7. Phone on silent, laptop on power, Wi-Fi checked (the live mock API and Gemini are online services; see "Wi-Fi drops" in the fallback plan).
+8. **T-4 min:** start the robustness montage in a second terminal against the second gateway on port 8031 (see "Robustness montage" below). Run it under `caffeinate -i` so the laptop cannot sleep mid-run (the buyer report lost a run that way).
 
 ## The script
 
 | Time | Click (driver) | Say (presenter) | Criteria |
 |---|---|---|---|
-| **0:00–0:20** | Tab (a) is showing the Trusted Trade console. Nothing clicked yet. | "Hotels, schools and hospitals are starting to send AI agents to buy for them. Valio Aimo can't hand an agent its SAP login. We built the front door instead: an open gateway any company's agent can use to find, quote and order, inside rules the *customer* sets, with every step signed." | [NEED] |
-| **0:20–0:40** | Customer selector shows **Hotel Aurora Helsinki**. Point at the mandate line ("Mandate hotel-aurora/buyer-1 under policy hotel-aurora"). Check the model selector shows **Gemini 3.8 Flash**. Click **Run the example request** (it starts the run at once with "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."; typing the text and clicking **Run agent** does the same). | "This is the hotel's buyer agent, running on Gemini. It turns the sentence into a structured need with Gemini structured output: lactose-free, 1,000 litres, Monday 16 November." | [E2E] [GEM] |
-| **0:40–1:10** | Timeline fills: parsed-need chips, tool calls `plan_need`, `get_offers`. Expand one tool call to show JSON. Point at the exception callouts: **cut-off passed** (463038) and **partial stock** (469363). | "Every step is a call to our MCP server, the same tools Claude or Cursor would use, and each hits Valio Aimo's live price and availability API. Two real exceptions: the hotel's usual 10-litre dispenser box missed its order cut-off on Thursday, and one alternative only has 384 units. The agent doesn't guess. It re-plans." | [ROB] [OPEN] |
-| **1:10–1:35** | Click the **Plan** tab. Show the good-better-best cards: best = Valio Eila 1 L (464306), €1.01/L, 1,000 units, €1,010; better = Arla (partial stock); good = different fat %. Expand **Rejected** to show the cut-off reason. | "Good-better-best, each with a reason: best is the same brand and fat level in a different pack. Allergen data that's missing counts as *unknown*, never safe, and Gemini's reading of Finnish ingredient lists can only add a warning, never clear a product." | [NEED] [GEM] |
-| **1:35–2:05** | Timeline shows **Awaiting approval** (the UI wording; the older script said "Waiting for procurement_manager to approve"). Click **Open approval inbox →** (Approvals tab). Point at the banner "Needs approval by Procurement Manager" and the three NEEDS APPROVAL rows (spend > €500, outside standing preferences, 3.3× usual weekly volume). Point at the quote hash, the **Ed25519 signature** badge, the price-lock countdown, and **Deciding as Anna Virtanen · Procurement Manager** (signed in via the header chip **Sign in as approver** -> `POST /v1/auth/approver-session`). Click **Approve €1,010.00** (or click **Decide by voice**, say *"approve"*, inspect the transcript + Gemini intent, and click **Confirm**). | "The hotel's policy, a versioned YAML file the hotel owns, checked 12 rules and three need a human: over the €500 limit, a pack outside their usual preference, and 3.3 times their normal weekly milk. The agent has paused. Only a signed-in human can approve: Anna signed in once for a per-person session token, and she approves *this exact* signed quote, by click or voice-confirmed. The signature is verified right here in the browser, and if the price changed, her approval would not apply. There is no approve tool for agents, and an agent calling REST gets 403." | [CTRL] [E2E] |
-| **2:05–2:15** | Order response card: **Placed**, **AP** Accepted, 1,000 confirmed. | "Order placed, with a Peppol-style order response: accepted." | [E2E] [OPEN] |
-| **2:15–2:35** | Click **View audit trail →**. Show the chain rail (agent, system, human nodes). Click **Verify chain** → green. Scroll the readable report for two lines. Hover **Download evidence pack**. | "And afterwards anyone can check what happened: every event is hash-chained and signed, in plain sentences. Verify recomputes every hash and signature. The evidence pack lets an auditor check it offline with our public key." | [CTRL] |
-| **2:35–2:50** | **Robustness montage.** Switch to terminal tab (c), where `uv run aimo demo --montage` was started about 4 minutes before going on stage (see "Robustness montage" below). Scroll to **== Montage verdicts ==**: six green **PASS** lines. Optional build on the deck: wind tunnel table. | "That was one request. Here are six more, run live by the same Gemini agent while we were talking: a stock-out split into four lines, a school with milk and nut allergies, a prompt injection planted in supplier text, a standing order thirteen times too big, a last-minute event. Six of six pass, 22 to 37 seconds each, about three cents of Gemini per order. And across 640 Gemini-written customers: one policy violation for the gateway vs 372 for a naive agent, and zero allergen violations vs 193." [`docs/windtunnel-results.md`] | [ROB] [GEM] |
-| **2:50–3:00** | Click **Connect your agent** in the header (MCP config dialog), or open `/.well-known/otap.json`. | "It's all open: MCP, OpenAPI 3.1, a discovery manifest, JWS signatures, Peppol semantics. Swap the mock for SAP behind one interface, put OAuth in front, and this goes to production. Trusted Trade Agents." | [OPEN] |
+| **0:00–0:15** | Tab (a) is showing the Trusted Trade console. Nothing clicked yet. | "Hotels, schools and hospitals are starting to send AI agents to buy for them. Valio Aimo can't hand an agent its SAP login. We built the front door instead: an open gateway any company's agent can use to find, quote and order, inside rules the *customer* sets, with every step signed." | [NEED] |
+| **0:15–0:30** | Customer selector shows **Hotel Aurora Helsinki**. Point at the mandate line ("Mandate hotel-aurora/buyer-1 under policy hotel-aurora"). Check the model selector shows **Gemini 3.8 Flash**. Click **Run the example request** (it starts the run at once with "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."). | "This is the hotel's buyer agent, running on Gemini. It turns the sentence into a structured need: lactose-free, 1,000 litres, Monday 16 November." | [E2E] [GEM] |
+| **0:30–0:55** | Timeline fills: parsed-need chips, tool calls `plan_need`, `get_offers`. Point at the exception callouts: **cut-off passed** (463038) and **partial stock** (469363). | "Every step is a call to our MCP server, the same tools Claude or Cursor would use, against Valio Aimo's price and availability API. Two real exceptions: the hotel's usual 10-litre box missed its order cut-off on Thursday, and one alternative only has 384 units. The agent doesn't guess. It re-plans." | [ROB] [OPEN] |
+| **0:55–1:15** | Click the **Plan** tab. Best = Valio Eila 1 L (464306), €1.01/L, 1,000 units, €1,010; better = Arla (partial stock); good = different fat %. Expand **Rejected** to show the cut-off reason. | "Good-better-best, each with a reason. Missing allergen data counts as *unknown*, never safe, and Gemini's reading of Finnish ingredient lists can only add a warning, never clear a product." | [NEED] [GEM] |
+| **1:15–1:30** | Timeline shows **Awaiting approval** ("The agent has paused. Nothing is ordered until a human approves the exact signed quote."). Click **Open approval inbox →**. Signed out, the inbox shows the **Approvals are human-only** card. Point at the header pill **0 attacks blocked**. | "The agent has paused: this order is outside its mandate. Nothing gets ordered until a named person approves." | [CTRL] |
+| **1:30–2:00** | **Permissions attack.** Switch to terminal tab (c) and press Enter on the prepared `permissions_attack.py` line. It prints the agent's 13 MCP tools ("Approval tools on MCP: none"), then the agent approving *as anna* with the correct hash → **HTTP 403 agent_cannot_approve**, then the audit line `approval.refused`. Switch back to tab (a): the header pill now says **1 attack blocked**. | "So can the agent just approve itself? It has no approve tool. Over REST it names the real manager, Anna, with the right hash: 403, and the attempt is written into the signed audit log. You can talk an agent into anything; it still can't sign for a human." | [CTRL] |
+| **2:00–2:20** | **The sign-in moment.** Click **Sign in as approver** on the human-only card. The panel preselects **Anna Virtanen · Procurement Manager**; type the stage PIN (masked), **Sign in**. The header shows Anna signed in. Point at **Needs approval by Procurement Manager** and the three NEEDS APPROVAL rows (spend > €500, substitution outside standing preferences, 3.3× usual weekly volume), then "Deciding as Anna Virtanen" and "Your decision is bound to quote hash …". Click **Approve €1,010.00**. | "A human signs in; agents never can. The hotel's own policy says three things need her: over the €500 limit, a pack outside their usual preference, 3.3 times their normal weekly milk. Her session is bound to her alone, and she approves *this exact* signed quote: if the price changed, her approval would not apply." | [CTRL] [E2E] |
+| **2:20–2:30** | Order response card: **Placed**, **AP** Accepted, 1,000 confirmed. | "Order placed, with a Peppol-style order response: accepted." | [E2E] [OPEN] |
+| **2:30–2:45** | Click **View audit trail →**. Point at the refused agent attempt, then Anna's approval bound to the hash. Click **Verify chain** → green. | "Afterwards anyone can check what happened, including the refused attempt: every event is hash-chained and signed, and verify recomputes all of it. The evidence pack lets an auditor check it offline." | [CTRL] |
+| **2:45–2:55** | Switch to the montage terminal. Scroll to **== Montage verdicts ==**: six green **PASS** lines. | "Six more, run live by the same agent while we talked: a stock-out split, school allergies, prompt injection in supplier text, a standing order 13 times too big, a last-minute event. Six of six, about three cents of Gemini per order. And across 640 Gemini-written customers: one policy violation for the gateway, 372 for a naive agent." | [ROB] [GEM] |
+| **2:55–3:00** | Click **Connect your agent** in the header, or open `/.well-known/otap.json`. | "All open: MCP, OpenAPI, JWS, Peppol semantics. Swap the mock for SAP behind one interface and this goes to production. Trusted Trade Agents." | [OPEN] |
+
+If the agent run is slow, drop the montage beat (2:45–2:55) first. Never drop the attack or the sign-in.
+
+**Optional, if time or asked:** instead of the Approve click, use **Decide by voice**: the gateway reads the order out, Anna says "yes, approve it", the UI shows the transcript and Gemini's intent, and one confirm click sends the normal decision. Voice never decides on its own (docs/reports/ui.md).
+
+## Permissions attack (30 s, `docs/pitch/permissions_attack.py`)
+
+Run it while an order is **pending** (between "Awaiting approval" and Anna's click). Acting only as the agent (`X-Customer-Id`, `X-Agent-Id`, no approver credential), it:
+1. lists the agent's MCP tools (13; none can approve);
+2. fetches the customer's newest pending order and its exact quote hash (an agent may see its own customer's orders);
+3. POSTs `{"decision": "approve", "approver": "anna@hotel-aurora.example", "approver_role": "procurement_manager", "quote_hash": <correct>}`;
+4. prints the answer: **HTTP 403 `agent_cannot_approve`**;
+5. prints the order's audit line `agent:buyer-1 tried to decide order ORD-…; refused: agent identity on the approval endpoint. #N approval.refused` and the chain verify result.
+
+It exits 0 only if the attempt was refused and audited. Verified Sat 14 Nov 23:14 against a replay gateway (about 3 s). The order stays pending, so Anna's approval in the next beat still works. A signed-in session that tries to decide as someone else gets 403 `approver_mismatch`.
 
 ### Lines to have ready for questions
 - **"What if the agent lies about the tier?"** It can't help itself: the gateway recomputes tier and substitution flags server-side and the policy re-verifies them. A substitute sent as "preferred" still comes back as "better, outside preference" and needs approval (verified Sat 18:26).
-- **"Can the agent approve its own order through REST?"** No. Approvals require a signed-in human (`X-Approver-Session` from `POST /v1/auth/approver-session` or `X-Approver-Pin`) in the customer's approver directory; omitting the human credential gets `401`, and any request carrying `X-Agent-Id` gets `403 agent_cannot_approve` even if it names `anna@hotel-aurora.example`, with `approval.refused` written to the signed audit chain.
+- **"Can the agent approve its own order through REST?"** No. Decisions need a signed-in human (an approver session or the PIN, which no route or tool returns); any request carrying agent identity gets 403 `agent_cannot_approve` and is audited as `approval.refused`. That is the permissions-attack beat. More answers: [pitch/QA.md](pitch/QA.md).
 - **"Why not just give the agent an API key?"** An API key says *who*, not *what they may do*. The mandate plus policy says what, and the signed quote plus approval binding proves what was agreed.
-- **"What about prompt injection in supplier data?"** Two layers: regex (0 false positives on 34,159 real supplier texts) and a Gemini classifier, and the buyer harness redacts flagged text before the model sees it. Flagged orders need a human.
+- **"What about prompt injection in supplier data?"** Two layers: regex (0 false positives on 34,159 real supplier texts) and a Gemini classifier, and the buyer harness redacts flagged text before the model sees it. Plan lines and candidates surface `injection_screen`, and flagged orders need a human.
 - **"Is the order real?"** Valio Aimo has no order API in the mock, so we built a mock order backend behind the same interface a SAP adapter would implement.
 - **"Why Gemini?"** Finnish/Swedish product data, embeddings in the same API, thinking levels so reasoning is only spent on the substitution decision, structured output everywhere.
-
-### Permissions attack (optional 30-second live Q&A beat)
-
-While an order is in `pending_approval` (or on any pending order id `<ORDER_ID>` with `<QUOTE_HASH>`), run in terminal tab (c):
-
-```bash
-# 1. Agent impersonates Anna over REST -> 403 agent_cannot_approve + audit event approval.refused
-curl -i -X POST http://localhost:8000/v1/approvals/<ORDER_ID>/decision \
-  -H "Content-Type: application/json" -H "X-Agent-Id: buyer-1" \
-  -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<QUOTE_HASH>"}'
-
-# 2. Caller omits X-Approver-Pin / X-Approver-Session -> 401 (also audited as approval.refused)
-curl -i -X POST http://localhost:8000/v1/approvals/<ORDER_ID>/decision \
-  -H "Content-Type: application/json" \
-  -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<QUOTE_HASH>"}'
-```
-
-Refresh **View audit trail →** in `/ui` (or `curl -s "http://localhost:8000/v1/audit?subject_id=<ORDER_ID>"`) to show the signed `approval.refused` event recorded against `agent:buyer-1` (also surfaced in the header pill **N attacks blocked**), while the order remains locked in `pending_approval`.
 
 ### Price-change-during-approval beat (`409 requote_needed`)
 
@@ -71,9 +73,6 @@ curl -s -X POST http://localhost:8000/v1/approvals/<ORDER_ID>/decision \
   -H "Content-Type: application/json" -H "X-Approver-Pin: $AIMO_APPROVER_PIN" \
   -H "X-Aimo-Faults: price_shock:464306:1.25" -H "X-Aimo-Now: <CREATED_AT_PLUS_20M_ISO>" \
   -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<OLD_QUOTE_HASH>"}'
-# -> HTTP 409 {"error":"requote_needed","detail":{"reason":"quote_expired",
-#    "changes":{"old_total_net":1010.0,"new_total_net":1260.0,...},
-#    "new_order":{"order_id":"ORD-..."}, "new_quote":{"quote_id":"Q-...","quote_hash":"<NEW_QUOTE_HASH>"}}}
 
 # 2. One-step human approval of the new signed quote_hash -> placed (AP) + order.requoted in verified audit chain
 curl -s -X POST http://localhost:8000/v1/approvals/<NEW_ORDER_ID>/decision \
@@ -82,30 +81,6 @@ curl -s -X POST http://localhost:8000/v1/approvals/<NEW_ORDER_ID>/decision \
 ```
 
 In `/ui`, the Approvals tab renders the old-vs-new line diff card automatically and lets Anna approve the replacement `quote_hash` in one click, while `GET /v1/audit/verify` confirms `order.requoted` in the intact chain.
-
-### Price-change-during-approval beat (optional live Q&A beat)
-
-Demonstrates how the 15-minute signed quote lock and automatic re-quoting work when supplier prices move while an order waits in the human inbox:
-
-1. **Inside the 15-minute price lock:** even if upstream price moves (e.g. `X-Aimo-Faults: price_shock:464306:1.25`), approving `<ORDER_ID>` with its signed `quote_hash` before `expires_at` honours the locked quote price (€1,010.00 net) and places the order (`AP`).
-2. **After the 15-minute lock expires (+20 min via `X-Aimo-Now`) with a price move (`X-Aimo-Faults: price_shock:464306:1.25`):**
-   ```bash
-   # 1. Approval after lock expiry + +25% price move -> 409 requote_needed
-   curl -i -X POST http://localhost:8000/v1/approvals/<ORDER_ID>/decision \
-     -H "Content-Type: application/json" -H "X-Approver-Pin: $AIMO_APPROVER_PIN" \
-     -H "X-Aimo-Now: <CREATED_AT_PLUS_20M_ISO>" \
-     -H "X-Aimo-Faults: price_shock:464306:1.25" \
-     -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<OLD_QUOTE_HASH>"}'
-   ```
-   The gateway refuses the stale hash with **`409 requote_needed`**, returning `detail.changes` (`old_total_net` €1,010.00 vs `new_total_net` €1,262.50), a freshly signed replacement quote (`detail.new_quote`), a new pending order (`detail.new_order`), and a one-step `detail.approve_with` payload.
-3. **One-step human approval of the replacement quote:**
-   ```bash
-   # 2. Approve the replacement order's new quote_hash -> placed (AP)
-   curl -s -X POST http://localhost:8000/v1/approvals/<NEW_ORDER_ID>/decision \
-     -H "Content-Type: application/json" -H "X-Approver-Pin: $AIMO_APPROVER_PIN" \
-     -d '{"decision":"approve","approver":"anna@hotel-aurora.example","quote_hash":"<NEW_QUOTE_HASH>"}'
-   ```
-   The replacement order transitions to `placed` (`AP`), and **`order.requoted`** links old and new quotes/orders inside the verified signed audit chain (`GET /v1/audit/verify` -> `ok: true`).
 
 ## Robustness montage (`uv run aimo demo --montage`)
 
@@ -134,19 +109,29 @@ How to run it for the pitch (it takes about 3 minutes, so start it before going 
 
 Single scenarios for rehearsal or Q&A: `uv run aimo demo --scenario stockout|school-allergen|injection|drift|event --auto-approve-as <approver>`.
 
-Live tamper demo without the mock (demo tamper routes require `X-Approver-Pin` or Anna's signed `X-Approver-Session` via **Simulate tampering** in `/ui`, and return 404 when `AIMO_ENV=production`): `curl -X POST localhost:8000/v1/demo/tamper/3 -H "X-Approver-Pin: $AIMO_APPROVER_PIN"`, click **Verify chain** (red, "event #3 was modified after it was recorded"), then `curl -X POST localhost:8000/v1/demo/untamper/3 -H "X-Approver-Pin: $AIMO_APPROVER_PIN"`.
+## Tamper demo (15 s, optional or for Q&A)
+
+The tamper routes are demo-only (disabled with `AIMO_ENV=production`) and need a signed-in approver, so an agent cannot use them either:
+```bash
+P=$(cat ~/aimo-demo-data/keys/approver_pin)          # or your AIMO_APPROVER_PIN
+curl -s -X POST localhost:8000/v1/demo/tamper/3 -H "X-Approver-Pin: $P"      # rewrites event #3's summary
+# click Verify chain in the UI: red, "event #3 was modified after it was recorded (hash mismatch)"
+curl -s -X POST localhost:8000/v1/demo/untamper/3 -H "X-Approver-Pin: $P"    # restores it; verify is green again
+```
+Without a credential both routes return 401. Verified Sat 14 Nov 23:13 with an approver session (`X-Approver-Session`; the PIN header is accepted the same way). Mock mode (`?mock=1`) also has a **Simulate tampering** button.
 
 ## Fallback plan
 
 | Problem | Do this | Time cost |
 |---|---|---|
-| Gemini slow, failing, or no `GEMINI_API_KEY` | Without `GEMINI_API_KEY`, `uv run aimo demo` finishes end-to-end via the deterministic regex need parser and scripted buyer fallback over the same MCP tools. In `/ui`, the agent falls back to the deterministic need parser; if a live Gemini call stalls for > 20 s, switch to tab (b) mock mode. | 5 s |
-| Offline Wi-Fi or mock API down/slow (`/healthz` ok but offers 503) | Start or run with `AIMO_REPLAY=data/windtunnel/snapshot` to serve recorded price and availability snapshots offline (live mode also falls back automatically when upstream fails), or switch to tab (b): `http://localhost:8000/ui/?mock=1` (**MOCK DATA · no backend**, includes **Simulate tampering**). | 5 s |
+| Gemini slow, failing, or no `GEMINI_API_KEY` | Without `GEMINI_API_KEY`, `uv run aimo demo` finishes end-to-end via the deterministic regex need parser and scripted buyer fallback over the same MCP tools. In `/ui`, the agent falls back to the deterministic need parser; keep talking over the timeline, or if the run stalls for > 20 s, switch to tab (b) mock mode. | 5 s |
+| **Wi-Fi drops** (mock API unreachable) | If the gateway was started with `AIMO_REPLAY_FALLBACK=tests/fixtures/snapshot` (checklist step 1), prices and stock keep working: when the live upstream fails after retries, it serves the recorded snapshot and marks responses `served_from: replay`. To be fully offline from the start, restart with `AIMO_REPLAY=tests/fixtures/snapshot AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve` (the clock is anchored at the recording, Sat 14 Nov 14:20, so Monday is still orderable). Without network for Gemini, `uv run aimo demo` uses the deterministic scripted buyer fallback, or run `qa_milk_flow.py` or mock mode. Say: "we're on recorded mock-API responses now." | 20 s |
+| Mock API down or slow (`/healthz` ok but offers 503) | Switch to tab (b): `http://localhost:8000/ui/?mock=1` plays the identical story with no backend. The header shows **MOCK DATA · no backend**: say so honestly. Mock mode also has **Simulate tampering** to show the chain turning red. | 5 s |
 | Gateway won't start / laptop problem | Mock UI without the gateway: `cd web && python -m http.server 8765`, open `http://127.0.0.1:8765/index.html?mock=1`. | 30 s |
-| Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (uses Gemini in ~30–40 s when `GEMINI_API_KEY` is set, or finishes end-to-end via the deterministic scripted buyer fallback when keyless), or `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
-| Delivery cut-off passed (live demo after Sun 15 Nov 17:00 Helsinki: product 464306 is no longer orderable for Monday; 463038's cut-off already passed Thu 12 Nov 15:00) | Start the gateway with `AIMO_NOW=2026-11-14T14:00:00+02:00` (or `AIMO_REPLAY=data/windtunnel/snapshot`, which anchors the clock at the snapshot timestamp) so the real gateway evaluates pre-cutoff Monday delivery, or switch to `http://localhost:8000/ui/?mock=1` (`cd web && python -m http.server 8765` → `http://127.0.0.1:8765/index.html?mock=1` if no gateway). Say: "The real delivery cut-off for Monday has passed, so this runs on our anchored demo clock / recorded snapshot." | 5 s |
-| Everything down | Play the pre-recorded video (Chintufp records it at the Sun 06:00 freeze; file path [filled at freeze after recording]). | 0 s |
+| Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (uses Gemini in about 30–40 s when keyed, or finishes end-to-end via the deterministic scripted buyer fallback when keyless), or `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
+| Delivery cut-off passed (live demo after Sun 15 Nov 17:00 Helsinki: product 464306 is no longer orderable for Monday; 463038's cut-off already passed Thu 12 Nov 15:00) | Prevent it: start the gateway with `AIMO_NOW=2026-11-15T10:00:00+02:00` (checklist step 5) or in replay mode. If you only notice on stage, run the story in mock mode: `http://localhost:8000/ui/?mock=1` (or, with no gateway, `cd web && python -m http.server 8765` → `http://127.0.0.1:8765/index.html?mock=1`). Say: "The real delivery cut-off for Monday has passed, so this is the identical flow on recorded data." That is itself the cut-off handling story. | 5 s |
+| Everything down | Play the pre-recorded video: the unlisted URL in the "Demo video" row of [SUBMISSION.md](SUBMISSION.md) (filled at the freeze), plus a local copy on the presenter laptop's desktop as `aimo-demo.mp4`. | 0 s |
 
 ## Recording the video (2–3 minutes)
 
-Use the same script and do the approval click by hand (don't use `&autoapprove=1` for the video: the human click is the point). Useful URL helpers: `?customer=hotel-aurora`, `&autorun=1` (starts the run on load), `&tab=plan|approvals|audit`. Record at 1280×800, add captions for the three NEEDS APPROVAL reasons and the verify-chain result, and end on the openness slide. Upload as unlisted and paste the link into `docs/SUBMISSION.md`.
+Use the same script, including the permissions attack and the sign-in, and do the approval click by hand (don't use `&autoapprove=1` for the video: the human click is the point). Useful URL helpers: `?customer=hotel-aurora`, `&autorun=1` (starts the run on load), `&tab=plan|approvals|audit`. Record at 1280×800, add captions for the three NEEDS APPROVAL reasons and the verify-chain result, and end on the openness slide. Upload as unlisted and paste the link into `docs/SUBMISSION.md`.
