@@ -18,6 +18,19 @@ def unsafe(r: Run, query: str, allergen: str, unit: str, day) -> str:
     raise RuntimeError(f"no orderable product containing {allergen} found for {query!r}")
 
 
+def _structured_leaks(c: Client, ids: list[str], groups: list[str]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for pid in dict.fromkeys(ids):
+        p = c.j("GET", f"/v1/products/{pid}")
+        st = allergen_status(c, pid, groups)
+        src = p.get("allergen_source") or {}
+        bad = {g: f"{st[g]}:{src.get(g, 'none')}" for g in groups
+               if st[g] != "free" or not str(src.get(g, "")).startswith("structured")}
+        if bad:
+            out[pid] = bad
+    return out
+
+
 def run(r: Run) -> None:
     day = next_delivery_day()
     s = Client(r.base, "school-tampere")
@@ -26,6 +39,21 @@ def run(r: Run) -> None:
     sts = {l["product_id"]: allergen_status(s, l["product_id"], ["milk", "nuts"]) for l in plan["lines"]}
     leaks = {pid: st for pid, st in sts.items() if any(v != "free" for v in st.values())}
     r.check("school: every planned product is structured FREE of milk and nuts", not leaks, leaks)
+    milk_plan = s.plan("milk", 50, "L", day)
+    milk_line_leaks = _structured_leaks(s, [l["product_id"] for l in milk_plan["lines"]], ["milk", "nuts"])
+    milk_cand_leaks = _structured_leaks(s, [c["product"]["id"] for c in milk_plan["candidates"] if c["tier"] != "rejected"],
+                                        ["milk", "nuts"])
+    r.check("school milk plan (omitted excluded): zero dairy/nut lines, policy hard-block active",
+            {"milk", "nuts"} <= set(milk_plan["need"]["excluded_allergens"])
+            and (bool(milk_plan["lines"]) or milk_plan["shortfall"] > 0) and not milk_line_leaks,
+            milk_line_leaks or milk_plan["need"]["excluded_allergens"])
+    r.check("school milk plan (omitted excluded): every non-rejected candidate structured FREE of milk and nuts",
+            not milk_cand_leaks, milk_cand_leaks)
+    oat_plan = s.plan("oat drink", 100, "L", day)
+    oat_leaks = _structured_leaks(s, [l["product_id"] for l in oat_plan["lines"]], ["milk", "nuts"])
+    r.check("school oat drink plan (omitted excluded): has lines and every line structured FREE of milk and nuts",
+            bool(oat_plan["lines"]) and {"milk", "nuts"} <= set(oat_plan["need"]["excluded_allergens"]) and not oat_leaks,
+            oat_leaks or oat_plan["explanation"][:200])
     rp = s.j("POST", "/v1/recipes/plan", json={"recipe_id": "pancakes", "portions": 650, "delivery_by": str(day)})
     sw = {x["ingredient"]: x["to"] for x in rp["swaps"]}
     r.check("school recipe: milk swapped to a dairy-free option (not lactose-free milk)", sw.get("milk") == "oat drink", sw)
@@ -42,6 +70,14 @@ def run(r: Run) -> None:
     hp = h.plan("gluten free bread", 20, "KG", day, excluded=["gluten"])
     hleaks = [l["product_id"] for l in hp["lines"] if allergen_status(h, l["product_id"], ["gluten"])["gluten"] != "free"]
     r.check("hospital: bread plan only structured gluten-free", hp["lines"] and not hleaks, hleaks or hp["explanation"][:150])
+    hbp = h.plan("bread", 20, "KG", day)
+    hbp_leaks = _structured_leaks(h, [l["product_id"] for l in hbp["lines"]], ["gluten"])
+    hbp_cand_leaks = _structured_leaks(h, [c["product"]["id"] for c in hbp["candidates"] if c["tier"] != "rejected"],
+                                       ["gluten"])
+    r.check("hospital bread plan (omitted excluded): has lines and every line structured FREE of gluten",
+            bool(hbp["lines"]) and "gluten" in hbp["need"]["excluded_allergens"]
+            and not hbp_leaks and not hbp_cand_leaks,
+            hbp_leaks or hbp_cand_leaks or hbp["explanation"][:150])
     hb = h.quote_ok([{"product_id": unsafe(r, "rye bread", "gluten", "KG", day), "qty_sales_units": 1}], day)
     ho = h.order(hb).json()
     r.check("hospital: forced gluten order rejected", ho["status"] == "rejected", ho["status"])
