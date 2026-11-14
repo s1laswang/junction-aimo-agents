@@ -11,7 +11,7 @@ ln -s ~/aimo-agents/data data && ln -s ~/aimo-agents/.env .env
 make demo
 ```
 
-`make demo` runs `setup`, executes the 8 scenarios against a throwaway database (`scen`), then resets `var/demo.db` and keeps a fresh server up (`stage`). `make stage` starts only the fresh server; `make run` starts without resetting `var/demo.db`. All `Makefile` targets: `demo`, `stage`, `run`, `test`, `unit`, `mcp`, `scenarios`, `scen`, `check`, `setup`. Set `PORT` to change the port (default `8080`). No LLM key is needed.
+`make demo` runs `setup`, executes the 8 scenarios against a throwaway database (`scen`), then resets `var/demo.db` and keeps a fresh server up (`stage`). `make stage` starts only the fresh server; `make run` starts without resetting `var/demo.db`. All `Makefile` targets: `demo`, `stage`, `run`, `test`, `unit`, `smoke`, `mcp`, `scenarios`, `scen`, `check`, `setup`. Set `PORT` to change the port (default `8080`). No LLM key is needed.
 
 Interfaces on `http://localhost:8080`:
 
@@ -41,18 +41,20 @@ Live run (2026-11-14) on the seeded hotel agent (`hotel-aurora`, key `demo-hotel
 
 ## Verification
 
-Run the unit suite, pre-stage readiness verifier, catalog precision benchmark, and dataset audit:
+Run the unit suite, pre-stage readiness verifier, 3-customer milk flow benchmark, catalog precision benchmark, and dataset audit:
 
 ```sh
 make unit
-.venv/bin/python scripts/smoke_demo.py
+make smoke
+.venv/bin/python -m pitch.measure_live --inprocess
 AIMO_EVAL=1 .venv/bin/python scripts/eval_precision.py
 .venv/bin/python pitch/measure_data.py
 ```
 
 Verified outputs on `data/`:
 
-- `scripts/smoke_demo.py`: `PASS (5/5 checks)` in-process (`/health`, discovery `agent-card.json` with 12 tools + `jwks.json` + `openapi.json`, all 5 UI views, streamable HTTP `/mcp` `initialize` + `tools/list` + `get_mandate`, and `parse.request` + hash-chain `verified.ok=True` + signed checkpoint JWS). Pass `--url http://localhost:8080` to verify a live server.
+- `make smoke` (`.venv/bin/python scripts/smoke_demo.py --inprocess`): `PASS (6/6 checks)` in-process (1. `/health`, 2. discovery `agent-card.json` with 12 tools + `jwks.json` + `openapi.json`, 3. all 5 UI views, 4. `/v1/mandate` 401/200 auth boundary, 5. streamable HTTP `/mcp` `initialize` + `tools/list` + `get_mandate`, and 6. `parse.request` + hash-chain `verified.ok=True` + signed checkpoint JWS). Pass `--url http://localhost:8080` to `scripts/smoke_demo.py` to verify a live server.
+- `pitch.measure_live --inprocess` (or `.venv/bin/python -m pitch.measure_live --url http://localhost:8080` against a live server): reproduces the 3-customer milk flow table (`hotel-aurora`, `hospital-tays`, `school-hervanta`: `auto 2, needs_approval 1, blocked 0` at `1,332.00 EUR` net / `1,512.00 EUR` gross on product `464119`; see [Measured numbers](pitch/NUMBERS.md)).
 - `scripts/eval_precision.py`: `40/40` top-1 match (`set1` `20/20`, `holdout` `10/10`, `holdout2` `10/10`).
 - `pitch/measure_data.py`: `17,546` products (`0` deleted, `349` categories, `4,178` declared lactose-free, `321` low-lactose, `3,049` gluten-free, `2,959` vegan, `9,436` with allergen info, `4,425` delivery-reliability rows, `11,033` CO2 rows).
 
