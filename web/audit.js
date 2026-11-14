@@ -87,7 +87,9 @@ function directOrder(e){
 var d=e.detail||{};if(d.order_id)return d.order_id;
 var s=e.subject||"";
 if(/^ord_/.test(s))return s;
-var m=/^order:(.+)$/.exec(s);return m?m[1]:null;
+var m=/^order:(.+)$/.exec(s);if(m)return m[1];
+if((/^order\.|^approval\./.test(e.action||""))&&s&&!/^q_|^quote:/.test(s))return s;
+return null;
 }
 function quoteOf(e){
 var d=e.detail||{};if(d.quote_id)return String(d.quote_id).replace(/^quote:/,"");
@@ -104,7 +106,10 @@ var o=directOrder(e);if(o)return o;
 var q=quoteOf(e);return (q&&state.q2o[q])||null;
 }
 
-window.aimoAudit={verify:verify,hashOf:hashOf,verifyCheckpoint:verifyCheckpoint,orderOf:orderOf,indexQuotes:indexQuotes};
+var EF=new Intl.NumberFormat("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
+function eur(v){var n=Number(v);return v==null||v===""||!Number.isFinite(n)?"-":EF.format(n)+" EUR"}
+
+window.aimoAudit={verify:verify,hashOf:hashOf,verifyCheckpoint:verifyCheckpoint,orderOf:orderOf,indexQuotes:indexQuotes,eur:eur};
 
 var MOCK_RAW=[
 ["hotel-aurora","agent:buyer-aurora","parse.request","hotel-aurora","2,500 l lactose-free milk for delivery Mon 16 Nov.",{text:"2500 litres lactose-free milk by Monday"}],
@@ -135,11 +140,48 @@ function plainText(evs){
 return evs.map(function(e){return "#"+e.seq+"  "+e.ts+"  "+e.actor+"  "+e.action+"\n    "+e.why+"\n    ref "+e.subject}).join("\n\n");
 }
 
-function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function short(h){return h?h.slice(0,8)+"\u2026"+h.slice(-4):"none"}
 var HF=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Helsinki",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 function tm(ts){var d=new Date(ts);return isNaN(d)?ts:HF.format(d)}
 function dt(ts){var d=new Date(ts);return isNaN(d)?"":d.toISOString().slice(0,10)}
+var ACT_TAG={
+"order.confirmed":["ok","confirmed"],
+"approval.approved":["ok","approved"],
+"order.pending_approval":["warn","needs approval"],
+"order.stockout":["warn","stock-out"],
+"order.expired":["stop","expired"],
+"order.blocked":["stop","blocked"],
+"order.rejected":["stop","rejected"],
+"approval.rejected":["stop","rejected"],
+"mandate_updated":["neutral","mandate"],
+"quote.issued":["neutral","signed"]
+};
+function actTag(a){var t=ACT_TAG[a];return t?' <span class="tag '+t[0]+'">'+t[1]+'</span>':""}
+var rseq=0,rtimer=null;
+
+function hashSeq(){
+var m=/^#e(\d+)$/.exec(location.hash||"");
+return m?Number(m[1]):0;
+}
+function focusSeq(seq){
+if(!seq)return false;
+var hit=state.events.filter(function(e){return e.seq===seq})[0];
+if(!hit)return false;
+if($("f-customer").value&&$("f-customer").value!==hit.customer)$("f-customer").value="";
+var fo=$("f-order").value.trim();
+if(fo&&orderOf(hit)!==fo){$("f-order").value="";clearTimeout(rtimer);rseq++;$("receipt").hidden=true}
+if($("f-actor").value&&hit.actor.split(":")[0]!==$("f-actor").value)$("f-actor").value="";
+if(state.agent&&hit.actor!=="agent:"+state.agent)state.agent="";
+if($("f-action").value&&hit.action!==$("f-action").value)$("f-action").value="";
+if(state.view==="text")state.view="ledger";
+state.open[seq]=true;
+return true;
+}
+function scrollSeq(seq){
+var el=seq&&$("e"+seq);
+if(el&&typeof el.scrollIntoView==="function")el.scrollIntoView({block:"center"});
+}
 
 function filtered(){
 var a=$("f-actor").value,x=$("f-action").value,c=$("f-customer").value,o=$("f-order").value.trim();
@@ -159,7 +201,7 @@ var b=$("badge"),n=state.events.length;
 if(state.off){b.className="badge idle";b.innerHTML=ICON.alert+"Not checked, "+aimo.offline().toLowerCase();return}
 if(state.bad===undefined||state.bad==="pending"){b.className="badge idle";b.textContent="Verifying chain";return}
 if(state.bad){b.className="badge stop";b.innerHTML=ICON.alert+'Chain broken at #'+state.bad.at+' <a href="#e'+state.bad.at+'" id="jump">Jump to #'+state.bad.at+'</a>';
-$("jump").addEventListener("click",function(){state.open[state.bad.at]=true;render();var el=$("e"+state.bad.at);if(el)el.scrollIntoView({block:"center"})});return}
+$("jump").addEventListener("click",function(){if(!focusSeq(state.bad.at))state.open[state.bad.at]=true;scope();render();scrollSeq(state.bad.at)});return}
 if(state.cpv&&state.cpv.ok===false){b.className="badge stop";b.innerHTML=ICON.alert+"Checkpoint signature invalid ("+esc(state.cpv.why||"bad signature")+")";return}
 var cp=state.cp&&state.cp.jws?", checkpoint #"+state.cp.seq+(state.cpv&&state.cpv.ok===true?" Ed25519 verified":" signed"):"";
 if(state.mode==="unknown"){b.className="badge idle";b.innerHTML=ICON.alert+"Chain check inconclusive in browser, "+n+" events";return}
@@ -189,7 +231,7 @@ if(state.off){aimo.offline(L);$("plain").hidden=true;L.hidden=false;legend();ret
 $("plain").hidden=state.view!=="text";L.hidden=state.view==="text";
 $("v-ledger").setAttribute("aria-pressed",state.view==="ledger");$("v-text").setAttribute("aria-pressed",state.view==="text");
 if(state.view==="text")scopedText(evs);
-if(!evs.length){L.innerHTML='<div class="empty">No audit events match these filters.</div>';return}
+if(!evs.length){L.innerHTML='<div class="empty">No audit events match these filters. <button type="button" class="btn btn-quiet" data-reset="1">Reset filters</button></div>';return}
 var groups=[],idx={};
 evs.forEach(function(e){var k=orderOf(e)||"";if(!(k in idx)){idx[k]=groups.length;groups.push({k:k,items:[]})}groups[idx[k]].items.push(e)});
 var byHash={};state.events.forEach(function(e){byHash[e.seq]=e});
@@ -200,7 +242,7 @@ g.items.map(function(e){
 var bad=state.bad&&state.bad!=="pending"&&state.bad.at===e.seq,open=!!state.open[e.seq],kind=e.actor.split(":")[0];
 var pe=byHash[e.seq-1];
 return '<div class="row'+(bad?" bad":"")+'" id="e'+e.seq+'" data-open="'+open+'">'+
-'<button type="button" class="line" aria-expanded="'+open+'" data-seq="'+e.seq+'"><span class="seq"><b>#'+e.seq+'</b></span><span class="ts">'+tm(e.ts)+'</span><span class="actor '+kind+'" title="'+esc(e.actor)+'">'+esc(e.actor)+'</span><span class="what"><span class="act">'+esc(e.action)+'</span><span class="why">'+esc(e.why)+'</span></span><span class="subj" title="'+esc(e.subject)+'">'+esc(e.subject)+'</span>'+ICON.chev+'</button>'+
+'<button type="button" class="line" aria-expanded="'+open+'" data-seq="'+e.seq+'"><span class="seq"><b>#'+e.seq+'</b></span><span class="ts">'+tm(e.ts)+'</span><span class="actor '+kind+'" title="'+esc(e.actor)+'">'+esc(e.actor)+'</span><span class="what"><span class="act">'+esc(e.action)+actTag(e.action)+'</span><span class="why">'+esc(e.why)+'</span></span><span class="subj" title="'+esc(e.subject)+'">'+esc(e.subject)+'</span>'+ICON.chev+'</button>'+
 '<div class="detail"><pre>'+esc(JSON.stringify(e.detail,null,2))+'</pre><div class="hashes"><span class="h'+(bad?" bad":"")+'" title="'+esc(e.prev_hash)+'">'+short(e.prev_hash)+'</span>'+ICON.link+'<span class="h'+(bad?" bad":"")+'" title="'+esc(e.hash)+'">'+short(e.hash)+'</span>'+(pe?'<span class="muted">follows #'+pe.seq+'</span>':'')+'</div></div></div>';
 }).join("")+'</div>';
 }).join("");
@@ -229,16 +271,17 @@ state.bad=null;state.mode="browser";state.srv=!!(sv&&sv.ok);
 if(sv&&sv.ok===false)state.bad={at:sv.bad_seq};
 else if(br){if(sv&&sv.ok)state.mode="gateway";else if(data)state.mode="unknown";else state.bad=br}
 state.live=!!data;
-updateCp();badge();scope();render();receipt();
+var hs=hashSeq(),jumped=focusSeq(hs);
+updateCp();badge();scope();render();
+if(jumped)scrollSeq(hs);
+receipt();
 }
 var MOCK_ORDERS={
 ord_7f3a:{order_id:"ord_7f3a",quote_id:"q_91c2",customer:"hotel-aurora",agent_id:"buyer-aurora",total_net:2800,status:"confirmed",delivery_date:"2026-11-16",decision:{outcome:"needs_approval",reasons:[{code:"ORDER_OVER_LIMIT",text:"Order total 2,800.00 EUR exceeds the 2,500.00 EUR per-order limit."}]},substitutions:[{original_id:"410008",substitute_id:"410112",reason:"Substitute for Valio lactose-free milk 1 l: Valio Eila lactose-free milk 1 l."}],lines:[]},
 ord_8b21:{order_id:"ord_8b21",quote_id:"q_8b20",customer:"hospital-tays",agent_id:"buyer-tays",total_net:296,status:"confirmed",delivery_date:"2026-11-16",decision:{outcome:"auto",reasons:[{code:"WITHIN_MANDATE",text:"Order total 296.00 EUR is within the 1,500.00 EUR per-order limit."}]},substitutions:[],lines:[]}
 };
 var TAG={confirmed:"ok",placed:"ok",approved:"ok",pending_approval:"warn",draft:"neutral",rejected:"stop",blocked:"stop",expired:"stop"};
-function eur(v){return Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+" EUR"}
 function row(k,v){return '<div class="rc-k">'+k+'</div><div class="rc-v">'+v+'</div>'}
-var rseq=0,rtimer=null;
 async function receipt(){
 var el=$("receipt"),id=$("f-order").value.trim(),my=++rseq;
 if(!id||state.off){el.hidden=true;return}
@@ -248,23 +291,59 @@ else if(MODE&&MOCK_ORDERS[id])o=MOCK_ORDERS[id];
 if(my!==rseq)return;
 if(!o){el.hidden=false;el.innerHTML='<div class="panel-head"><h2>Order receipt</h2></div><p class="muted">No order found for '+esc(id)+'.</p>';return}
 if(o.quote_id&&o.order_id&&!state.q2o[o.quote_id]){state.q2o[o.quote_id]=o.order_id;refilter()}
-var evs=state.events.filter(function(e){return orderOf(e)===id||e.subject===o.quote_id||(e.detail&&e.detail.quote_id===o.quote_id)});
+var evs=state.events.filter(function(e){return orderOf(e)===id||e.subject===id||e.subject===o.quote_id||(e.detail&&e.detail.quote_id===o.quote_id)});
 var ap=evs.filter(function(e){return e.actor.indexOf("human:")===0&&/^approval\./.test(e.action)}).pop()||evs.filter(function(e){return e.actor.indexOf("human:")===0&&/approv|reject/.test(e.action)}).pop();
+var so=evs.filter(function(e){return e.action==="order.stockout"}).pop();
+var ex=evs.filter(function(e){return e.action==="order.expired"}).pop();
 var red=evs.some(function(e){return /redeem/.test(e.action)||e.action==="place_order"||/^order\./.test(e.action)});
-var dec=o.decision||{};
+var dec=o.decision||{},reasons=dec.reasons||[];
+var soReason=reasons.filter(function(r){return r&&r.code==="STOCKOUT"})[0];
+var isExp=!!ex||o.status==="expired";
+var hasSo=!!(so||soReason);
 var out={auto:"Placed automatically within the mandate",needs_approval:"Needed human approval",blocked:"Blocked by policy"}[dec.outcome]||dec.outcome||"";
 var h='<div class="panel-head"><h2>Order receipt <span class="mono muted">'+esc(o.order_id)+'</span></h2><span class="tag '+(TAG[o.status]||"neutral")+'">'+esc(String(o.status).replace(/_/g," "))+'</span></div><div class="rc">';
 h+=row("Customer",esc(o.customer))+row("Buyer agent",'<span class="mono">'+esc(o.agent_id)+'</span>')+row("Total net",'<span class="mono">'+eur(o.total_net)+'</span>')+row("Delivery",o.delivery_date?'<span class="mono">'+esc(String(o.delivery_date).slice(0,10))+'</span>':'<span class="muted">not set</span>');
-h+=row("Decision",esc(out)+(dec.reasons&&dec.reasons.length?'<ul>'+dec.reasons.map(function(r){return '<li>'+esc(r.text||r.code)+'</li>'}).join("")+'</ul>':""));
+h+=row("Decision",esc(out)+(reasons.length?'<ul>'+reasons.map(function(r){var txt=r.text||r.code||"";return '<li>'+(r.code&&r.code!==txt?'<code>'+esc(r.code)+'</code> ':'')+esc(txt)+'</li>'}).join("")+'</ul>':""));
+if(hasSo){
+var soProd=so&&so.detail&&so.detail.product_id;
+var soWhy=(so&&so.why)||(soReason&&soReason.text)||"Stock dropped after placement; order reopened for recovery.";
+var soRec=o.status==="confirmed"||o.status==="placed"||o.status==="approved";
+h+=row("Stock-out",(soRec?'<span class="tag ok">recovered</span> ':'')+'<span class="tag warn">stock-out recovery</span>'+(soProd?' on product <span class="mono">'+esc(soProd)+'</span>':'')+(so&&so.ts?' at <span class="mono">'+esc(so.ts.slice(0,10)+" "+tm(so.ts)+" Helsinki")+'</span>':'')+(so&&so.seq?' <a class="mono" href="#e'+so.seq+'" data-seq-jump="'+so.seq+'">#'+so.seq+'</a>':'')+'<div class="muted small">'+esc(soWhy)+'</div>');
+}
+if(isExp){
+var vu=(ex&&ex.detail&&ex.detail.valid_until)||o.valid_until||"";
+var exWhy=(ex&&ex.why)||"The quote validity ended before the order was decided.";
+h+=row("Expiry",'<span class="tag stop">order.expired</span>'+(ex&&ex.ts?' at <span class="mono">'+esc(ex.ts.slice(0,10)+" "+tm(ex.ts)+" Helsinki")+'</span>':'')+(vu?' &middot; valid until <span class="mono">'+esc(String(vu).replace(/\.\d+Z$/,"Z"))+'</span>':'')+(ex&&ex.seq?' <a class="mono" href="#e'+ex.seq+'" data-seq-jump="'+ex.seq+'">#'+ex.seq+'</a>':'')+'<div class="muted small">'+esc(exWhy)+'</div>');
+}
 var apNote=ap&&((ap.detail&&ap.detail.note)||((ap.why&&!/^(approved|rejected) by /i.test(ap.why))?ap.why:""));
-h+=row("Approval",ap?esc(/reject/.test(ap.action)?"Rejected":"Approved")+" by <span class=\"mono\">"+esc(ap.actor.replace(/^human:/,""))+"</span> at <span class=\"mono\">"+esc(ap.ts.slice(0,10)+" "+tm(ap.ts)+" Helsinki")+"</span>"+(apNote?'<div class="muted small">'+esc(apNote)+'</div>':''):'<span class="muted">'+(dec.outcome==="needs_approval"?"Awaiting a human decision":"No human approval required")+'</span>');
+var reopened=hasSo&&ap&&so&&ap.seq<so.seq&&o.status==="pending_approval";
+var noApText=isExp&&dec.outcome==="needs_approval"?"Expired before human decision":(dec.outcome==="needs_approval"?"Awaiting a human decision":"No human approval required");
+h+=row("Approval",ap?esc(/reject/.test(ap.action)?"Rejected":"Approved")+" by <span class=\"mono\">"+esc(ap.actor.replace(/^human:/,""))+"</span> at <span class=\"mono\">"+esc(ap.ts.slice(0,10)+" "+tm(ap.ts)+" Helsinki")+"</span>"+(apNote?'<div class="muted small">'+esc(apNote)+'</div>':'')+(reopened?'<div class="muted small">Reopened after stock-out; awaiting human re-approval</div>':''):'<span class="muted">'+noApText+'</span>');
 var subs=o.substitutions||[];
 h+=row("Substitutions",subs.length?'<ul>'+subs.map(function(x){return '<li><span class="mono">'+esc(x.original_id)+'</span> &rarr; <span class="mono">'+esc(x.substitute_id)+'</span>: '+esc(x.reason)+'</li>'}).join("")+'</ul>':'<span class="muted">none</span>');
-h+=row("Quote",'<span class="mono">'+esc(o.quote_id)+'</span> '+(red?'<span class="tag ok">signature verified at placement</span>':'<span class="tag neutral">not yet redeemed</span>'));
+h+=row("Quote",'<span class="mono">'+esc(o.quote_id)+'</span> '+(red?'<span class="tag ok">signature verified at placement</span>':'<span class="tag neutral">not yet redeemed</span>')+(isExp?' <span class="tag stop">validity expired</span>':''));
 el.innerHTML=h+'</div>';el.hidden=false;
 }
 function scope(){var c=$("f-customer").value,o=$("f-order").value.trim(),v=filtered().length,n=state.events.length;$("scope").textContent=(c||"all customers")+(o?" / "+o:"")+" \u00b7 showing "+v+" of "+n+" events"}
 function refilter(){scope();render()}
+function resetFilters(){
+$("f-customer").value="";
+$("f-order").value="";
+$("f-actor").value="";
+$("f-action").value="";
+state.agent="";
+clearTimeout(rtimer);
+rseq++;
+$("receipt").hidden=true;
+var u=new URL(location.href||String(location));
+u.searchParams.delete("customer");
+u.searchParams.delete("order_id");
+u.searchParams.delete("actor");
+u.searchParams.delete("action");
+if(/^#e\d+$/.test(u.hash))u.hash="";
+history.replaceState(null,"",u);
+refilter();
+}
 function exportJson(){
 var b=new Blob([JSON.stringify(state.events,null,2)],{type:"application/json"}),a=document.createElement("a");
 a.href=URL.createObjectURL(b);a.download="audit-"+($("f-customer").value||"all")+".json";document.body.appendChild(a);a.click();a.remove();
@@ -281,8 +360,9 @@ if(!v||MODE)receipt();
 else rtimer=setTimeout(receipt,180);
 });
 $("f-order").addEventListener("change",function(){clearTimeout(rtimer);receipt()});
-["f-actor","f-action","f-customer"].forEach(function(i){$(i).addEventListener("change",function(){if(i==="f-actor")state.agent="";refilter()})});
-$("legend").addEventListener("click",function(e){var b=e.target.closest(".chip");if(!b)return;var id=b.dataset.id;if(b.getAttribute("aria-pressed")==="true"){state.agent="";$("f-actor").value=""}else{state.agent=id;$("f-actor").value="agent"}refilter()});
+["f-actor","f-action","f-customer"].forEach(function(i){$(i).addEventListener("change",function(){if(i==="f-actor")state.agent="";if(i==="f-customer"){var u=new URL(location.href||String(location));if(this.value)u.searchParams.set("customer",this.value);else u.searchParams.delete("customer");history.replaceState(null,"",u)}refilter()})});
+if($("f-reset"))$("f-reset").addEventListener("click",resetFilters);
+$("legend").addEventListener("click",function(e){var b=e.target&&e.target.closest&&e.target.closest(".chip");if(!b)return;var id=b.dataset.id;if(b.getAttribute("aria-pressed")==="true"){state.agent="";$("f-actor").value=""}else{state.agent=id;$("f-actor").value="agent"}refilter()});
 $("v-ledger").addEventListener("click",function(){state.view="ledger";render()});
 $("v-text").addEventListener("click",function(){state.view="text";render()});
 $("export").addEventListener("click",exportJson);
@@ -292,10 +372,12 @@ if(!state.cp||!state.cp.jws)return;
 var btn=this,done=function(){btn.textContent="Copied";setTimeout(function(){btn.textContent="Copy JWS"},1200)};
 if(typeof navigator!=="undefined"&&navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(state.cp.jws).then(done,done);else done();
 });
-$("ledger").addEventListener("click",function(e){var b=e.target.closest(".line");if(!b)return;var s=b.dataset.seq;state.open[s]=!state.open[s];var r=b.parentNode;r.dataset.open=!!state.open[s];b.setAttribute("aria-expanded",!!state.open[s])});
+$("receipt").addEventListener("click",function(e){var a=e.target&&e.target.closest&&e.target.closest("[data-seq-jump]");if(!a)return;var s=Number(a.getAttribute("data-seq-jump")||a.dataset.seqJump);if(focusSeq(s)){scope();render();scrollSeq(s)}});
+$("ledger").addEventListener("click",function(e){if(e.target&&e.target.closest&&e.target.closest("[data-reset]")){resetFilters();return}var b=e.target&&e.target.closest&&e.target.closest(".line");if(!b)return;var s=b.dataset.seq;state.open[s]=!state.open[s];var r=b.parentNode;r.dataset.open=!!state.open[s];b.setAttribute("aria-expanded",!!state.open[s])});
 $("f-customer").innerHTML='<option value="">all customers</option>'+aimo.CUSTOMERS.map(function(c){return '<option value="'+c+'">'+c+"</option>"}).join("");
 var qc=Q.get("customer");
 $("f-customer").value=Q.has("customer")?(aimo.CUSTOMERS.indexOf(qc)>=0?qc:""):(Q.get("order_id")?"":aimo.customer());
 window.addEventListener("customer",function(e){$("f-customer").value=e.detail;refilter()});
+window.addEventListener("hashchange",function(){var hs=hashSeq();if(focusSeq(hs)){scope();render();scrollSeq(hs);receipt()}});
 load();
 })();
