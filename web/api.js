@@ -41,7 +41,7 @@ export function createLiveApi(base) {
     customers: () => req("GET", "/v1/customers"),
     startRun: ({ text, customer_id, model, thinking }) =>
       // `thinking` is an optional extra field (UNVERIFIED: not yet in interfaces.md); model is documented.
-      req("POST", "/v1/agent/runs", { text, customer_id, model, thinking }, { "X-Customer-Id": customer_id }),
+      req("POST", "/v1/agent/runs", { text, customer_id, model, thinking: thinking ? String(thinking).toUpperCase() : undefined }, { "X-Customer-Id": customer_id }),
 
     /** Subscribe to the SSE AgentStep stream. Returns a close() function. */
     streamRun(runId, onStep, onEnd) {

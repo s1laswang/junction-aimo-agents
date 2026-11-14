@@ -15,7 +15,7 @@ const MODELS = [
   { id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen", hint: "reasoning" },
   { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", hint: "fast" },
 ];
-const THINKING = ["low", "medium", "high"];
+const THINKING = ["minimal", "low", "medium", "high"];
 const DEFAULT_REQ = {
   "hotel-aurora": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
   "school-tampere": "We need 150 litres of milk-free drink for school lunches in Tampere by Tuesday. Some pupils have milk and nut allergies.",
@@ -247,7 +247,7 @@ function onStep(step) {
   // `error` steps are non-fatal (a retry, a model fallback); only `final` ends the run.
 
   appendStep(step);
-  if (d.need || step.kind === "plan" || step.kind === "decision" || step.kind === "error") renderPlan();
+  if (d.need || ["plan", "decision", "error", "final"].includes(step.kind)) renderPlan();
   if (step.kind === "plan") setTab("plan");
   if (step.kind === "decision" || step.kind === "approval_wait" || step.kind === "order") {
     const oid = d.order_id || d.order?.order_id;
@@ -398,7 +398,7 @@ function needChips(need) {
   if (need.delivery_by) chips.push(chip("By", day(need.delivery_by)));
   (need.preferred_product_ids || []).forEach((p) => chips.push(chip("Usual", p)));
   const pr = need.preferences || {};
-  for (const [k, v] of Object.entries(pr)) if (v != null && typeof v !== "object" && k !== "usual_weekly_volume_l") chips.push(chip(k.replace(/_/g, " "), String(v)));
+  for (const [k, v] of Object.entries(pr)) if (v != null && typeof v !== "object" && !/^(usual_weekly_volume_l|parsed_by|standing_order|injection)/.test(k)) chips.push(chip(k.replace(/_/g, " "), String(v)));
   return h("div", { class: "chips" }, chips);
 }
 
