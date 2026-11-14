@@ -76,3 +76,6 @@ Standards cited: RFC 7515 (JWS), RFC 7517 (JWK), RFC 7638 (JWK thumbprint), RFC 
 - On top of that, `check_approval` still requires a human in the order customer's directory with an allowed role, bound to the quote hash.
 - Quotes and orders require explicit `X-Customer-Id` and `X-Agent-Id` (401 otherwise, no default identity). `GET /v1/approvals` is scoped to the caller's customer unless the approver credential is present. The demo tamper routes need the approver credential and are disabled when `AIMO_ENV=production`.
 - Regression tests: `tests/test_human_auth.py`, scenario s0 check "an agent naming a real human approver still cannot approve (403)", conformance A2, A3 and A6.
+- Brute force is capped: 5 wrong approver credentials within 10 min lock every credentialed route for 5 min (HTTP 429 approver_locked, Retry-After). Only the first refusals and the lock itself are audited, so guessing cannot flood the log. A generated credential is a random 12-character passphrase.
+- `GET /v1/customers` shows approver ids and emails only to a signed-in approver; agents see names and roles.
+- MCP: create_quote and place_order need identity (X-Customer-Id / X-Agent-Id on the MCP HTTP connection, or explicit AIMO_CUSTOMER_ID / AIMO_AGENT_ID for stdio). No default identity.
