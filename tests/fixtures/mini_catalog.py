@@ -704,7 +704,16 @@ class _ValioHandler(BaseHTTPRequestHandler):
 
 
 def start_mock_valio_server() -> tuple[str, ThreadingHTTPServer]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _ValioHandler)
+    held = []
+    try:
+        while True:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), _ValioHandler)
+            if "429" not in str(server.server_port) and "503" not in str(server.server_port):
+                break
+            held.append(server)
+    finally:
+        for s in held:
+            s.server_close()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return f"http://127.0.0.1:{server.server_port}", server

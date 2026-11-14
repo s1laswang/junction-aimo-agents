@@ -81,6 +81,8 @@ def test_all_scenarios_e2e(tmp_path, monkeypatch):
     try:
         monkeypatch.setenv("AIMO_DATA_DIR", str(data_dir))
         monkeypatch.setenv("AIMO_CACHE_DIR", str(cache_dir))
+        monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+        monkeypatch.setenv("AIMO_DRIFT_STATE", str(tmp_path / "drift.json"))
         monkeypatch.setenv("VALIO_API_BASE", valio_base)
         monkeypatch.setenv("VALIO_API_KEY", "mock-key")
         monkeypatch.setenv("LLM_BASE_URL", "")
