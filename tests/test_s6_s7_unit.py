@@ -1,12 +1,15 @@
 import json
+import os
 import sys
 from datetime import date
+from pathlib import Path
 
 import httpx
 import pytest
 
 from agents import drift
 from scenarios import s6_proactive_seller as s6
+from scenarios import s7_drift as s7
 from scenarios._common import KEYS
 
 
@@ -506,3 +509,478 @@ def test_watch_orders_empty_lines_and_closed_orders_do_not_place_replacement(tmp
     res = drift.watch_orders("hotel-aurora", "k", "http://mock", state_path=tmp_path / "drift.json", client=c)
     assert res == []
     assert calls == [("GET", "/v1/orders"), ("POST", "/v1/offers")]
+
+
+def _flag(pid, kind="price", why="price moved +6.0%", route="auto", fix=None):
+    return {
+        "product_id": pid,
+        "kind": kind,
+        "why": why,
+        "route": route,
+        "fix": fix if fix is not None else {"action": "requote"},
+    }
+
+
+def test_s7_import_does_not_parse_cli_or_run():
+    assert s7.base is None
+    assert s7.r is None
+
+
+def test_s7_happy_path_all_nine_checks_and_tempdir_cleanup():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": ["Peanuts"]},
+        "school-hervanta": {"exclude_allergens": ["Nuts", "Egg"]},
+    }
+    aurora_pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
+    seen_clients = []
+    check_calls = []
+    temp_dirs = []
+    violates_calls = []
+    sim_calls = []
+    clear_calls = []
+
+    def fake_check(cust, key, base, state_path=None):
+        assert state_path is not None and state_path.endswith("drift.json")
+        td = os.path.dirname(state_path)
+        assert os.path.isdir(td)
+        temp_dirs.append(td)
+        p = Path(state_path)
+        had_state = p.exists()
+        p.write_text(json.dumps({cust: {"ok": True}}), encoding="utf-8")
+        check_calls.append((cust, key, base, state_path, had_state))
+        if len(sim_calls) > len(clear_calls):
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [
+                    _flag(
+                        aurora_pid,
+                        kind="unavailable",
+                        why="not offered after stockout",
+                        route="auto",
+                        fix={"action": "substitute", "product_id": "sub-aurora-sim"},
+                    )
+                ],
+            }
+        if cust == "hotel-aurora":
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [
+                    _flag(
+                        "463982",
+                        kind="price",
+                        why="price moved +8.0%",
+                        route="approval",
+                        fix={"action": "substitute", "product_id": "sub-aurora"},
+                    ),
+                    _flag(
+                        "460884",
+                        kind="mandate",
+                        why="allergen added",
+                        route="approval",
+                        fix={"action": "remove_line"},
+                    ),
+                ],
+            }
+        return {
+            "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+            "flags": [
+                _flag(
+                    "460396",
+                    kind="qty_creep",
+                    why="qty grew +50%",
+                    route="approval",
+                    fix={"action": "confirm_qty", "quantity": 8},
+                ),
+                _flag(
+                    "461578",
+                    kind="unavailable",
+                    why="not offered",
+                    route="auto",
+                    fix={"action": "substitute", "product_id": "sub-school"},
+                ),
+            ],
+        }
+
+    def fake_violates(pid, excl):
+        violates_calls.append((pid, set(excl)))
+        return False
+
+    def fake_simulate(c, kind, **kw):
+        sim_calls.append((c.cust, kind, kw))
+
+    def fake_clear(c):
+        clear_calls.append(c.cust)
+
+    r = FakeRun()
+    s7.run_scenario(
+        "http://mock-gateway",
+        r,
+        client_cls=_make_client_cls(mandates, seen_clients),
+        check_fn=fake_check,
+        violates_fn=fake_violates,
+        simulate_fn=fake_simulate,
+        clear_fn=fake_clear,
+    )
+
+    assert seen_clients == [
+        ("http://mock-gateway", "hotel-aurora"),
+        ("http://mock-gateway", "school-hervanta"),
+        ("http://mock-gateway", "hotel-aurora"),
+    ]
+    assert [c[:3] for c in check_calls] == [
+        ("hotel-aurora", KEYS["hotel-aurora"], "http://mock-gateway"),
+        ("school-hervanta", KEYS["school-hervanta"], "http://mock-gateway"),
+        ("hotel-aurora", KEYS["hotel-aurora"], "http://mock-gateway"),
+        ("hotel-aurora", KEYS["hotel-aurora"], "http://mock-gateway"),
+    ]
+    assert [c[4] for c in check_calls] == [False, False, False, True]
+    assert check_calls[2][3] == check_calls[3][3]
+    assert len({c[3] for c in check_calls}) == 3
+    assert violates_calls == [
+        ("sub-aurora", {"peanuts"}),
+        ("sub-school", {"nuts", "egg"}),
+    ]
+    assert sim_calls == [
+        ("hotel-aurora", "stockout", {"product_id": aurora_pid, "available_amount": 0}),
+    ]
+    assert clear_calls == ["hotel-aurora"]
+    assert r.said == ["hotel-aurora: 2 flags", "school-hervanta: 2 flags"]
+    assert [label for label, _, _ in r.results] == [
+        "hotel-aurora standing order returned",
+        "hotel-aurora flags have a why and a route",
+        "hotel-aurora substitutes respect mandate allergens",
+        "hotel-aurora allergen flags never auto",
+        "school-hervanta standing order returned",
+        "school-hervanta flags have a why and a route",
+        "school-hervanta substitutes respect mandate allergens",
+        "school-hervanta allergen flags never auto",
+        "injected stock-out is flagged for that product",
+    ]
+    assert len(r.results) == 9
+    assert all(ok for _, ok, _ in r.results)
+    assert all(not os.path.exists(td) for td in temp_dirs)
+
+
+def test_s7_tempdirs_cleaned_up_when_run_scenario_raises():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": []},
+        "school-hervanta": {"exclude_allergens": []},
+    }
+    loop_dirs = []
+
+    def boom_in_loop(cust, key, base, state_path=None):
+        td = os.path.dirname(state_path)
+        assert os.path.isdir(td)
+        Path(state_path).write_text("{}", encoding="utf-8")
+        loop_dirs.append(td)
+        if cust == "school-hervanta":
+            raise RuntimeError("loop check boom")
+        return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": []}
+
+    with pytest.raises(RuntimeError, match="loop check boom"):
+        s7.run_scenario(
+            "http://mock",
+            FakeRun(),
+            client_cls=_make_client_cls(mandates),
+            check_fn=boom_in_loop,
+            violates_fn=lambda pid, excl: False,
+            simulate_fn=lambda c, kind, **kw: None,
+            clear_fn=lambda c: None,
+        )
+    assert len(loop_dirs) == 2
+    assert all(not os.path.exists(td) for td in loop_dirs)
+
+    sim_dirs = []
+    counts = {"sim": 0, "clear": 0}
+
+    def boom_after_simulate(cust, key, base, state_path=None):
+        td = os.path.dirname(state_path)
+        assert os.path.isdir(td)
+        Path(state_path).write_text("{}", encoding="utf-8")
+        sim_dirs.append(td)
+        if counts["sim"] > counts["clear"]:
+            raise RuntimeError("post-sim boom")
+        return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": []}
+
+    with pytest.raises(RuntimeError, match="post-sim boom"):
+        s7.run_scenario(
+            "http://mock",
+            FakeRun(),
+            client_cls=_make_client_cls(mandates),
+            check_fn=boom_after_simulate,
+            violates_fn=lambda pid, excl: False,
+            simulate_fn=lambda c, kind, **kw: counts.__setitem__("sim", counts["sim"] + 1),
+            clear_fn=lambda c: counts.__setitem__("clear", counts["clear"] + 1),
+        )
+    assert counts == {"sim": 1, "clear": 1}
+    assert len(set(sim_dirs)) == 3
+    assert all(not os.path.exists(td) for td in sim_dirs)
+
+    sim_raise_dirs = []
+    clear_after_sim_err = []
+
+    def record_check(cust, key, base, state_path=None):
+        td = os.path.dirname(state_path)
+        Path(state_path).write_text("{}", encoding="utf-8")
+        sim_raise_dirs.append(td)
+        return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": []}
+
+    def boom_simulate(c, kind, **kw):
+        raise RuntimeError("simulate endpoint failed")
+
+    with pytest.raises(RuntimeError, match="simulate endpoint failed"):
+        s7.run_scenario(
+            "http://mock",
+            FakeRun(),
+            client_cls=_make_client_cls(mandates),
+            check_fn=record_check,
+            violates_fn=lambda pid, excl: False,
+            simulate_fn=boom_simulate,
+            clear_fn=lambda c: clear_after_sim_err.append(c.cust),
+        )
+    assert clear_after_sim_err == ["hotel-aurora"]
+    assert len(sim_raise_dirs) == 3
+    assert all(not os.path.exists(td) for td in sim_raise_dirs)
+
+
+def test_s7_empty_standing_order_caught():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": []},
+        "school-hervanta": {"exclude_allergens": []},
+    }
+    aurora_pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
+    calls = {"n": 0}
+
+    def fake_check(cust, key, base, state_path=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"standing_order": {"lines": []}, "flags": []}
+        if calls["n"] == 4:
+            return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": [_flag(aurora_pid)]}
+        return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": []}
+
+    r = FakeRun()
+    s7.run_scenario(
+        "http://mock",
+        r,
+        client_cls=_make_client_cls(mandates),
+        check_fn=fake_check,
+        violates_fn=lambda pid, excl: False,
+        simulate_fn=lambda c, kind, **kw: None,
+        clear_fn=lambda c: None,
+    )
+    by_label = {label: ok for label, ok, _ in r.results}
+    assert by_label["hotel-aurora standing order returned"] is False
+    assert by_label["school-hervanta standing order returned"] is True
+
+
+def test_s7_missing_why_or_invalid_route_caught():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": []},
+        "school-hervanta": {"exclude_allergens": []},
+    }
+    aurora_pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
+    calls = {"n": 0}
+
+    def fake_check(cust, key, base, state_path=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [_flag("463982", why="", route="auto")],
+            }
+        if calls["n"] == 2:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [_flag("460396", why="valid reason", route="manual_review")],
+            }
+        return {
+            "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+            "flags": [_flag(aurora_pid)],
+        }
+
+    r = FakeRun()
+    s7.run_scenario(
+        "http://mock",
+        r,
+        client_cls=_make_client_cls(mandates),
+        check_fn=fake_check,
+        violates_fn=lambda pid, excl: False,
+        simulate_fn=lambda c, kind, **kw: None,
+        clear_fn=lambda c: None,
+    )
+    by_label = {label: ok for label, ok, _ in r.results}
+    assert by_label["hotel-aurora flags have a why and a route"] is False
+    assert by_label["school-hervanta flags have a why and a route"] is False
+    assert by_label["injected stock-out is flagged for that product"] is True
+
+
+def test_s7_substitute_violating_allergens_caught():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": ["Peanuts"]},
+        "school-hervanta": {"exclude_allergens": ["Nuts"]},
+    }
+    aurora_pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
+    calls = {"n": 0}
+
+    def fake_check(cust, key, base, state_path=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [
+                    _flag("463982", fix={"action": "substitute", "product_id": "safe-sub"}),
+                ],
+            }
+        if calls["n"] == 2:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [
+                    _flag("460396", fix={"action": "substitute", "product_id": "nutty-sub"}),
+                ],
+            }
+        return {
+            "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+            "flags": [_flag(aurora_pid)],
+        }
+
+    r = FakeRun()
+    s7.run_scenario(
+        "http://mock",
+        r,
+        client_cls=_make_client_cls(mandates),
+        check_fn=fake_check,
+        violates_fn=lambda pid, excl: pid == "nutty-sub" and "nuts" in excl,
+        simulate_fn=lambda c, kind, **kw: None,
+        clear_fn=lambda c: None,
+    )
+    by_label = {label: ok for label, ok, _ in r.results}
+    assert by_label["hotel-aurora substitutes respect mandate allergens"] is True
+    assert by_label["school-hervanta substitutes respect mandate allergens"] is False
+
+
+def test_s7_mandate_flag_with_auto_route_caught():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": ["egg"]},
+        "school-hervanta": {"exclude_allergens": ["nuts"]},
+    }
+    aurora_pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
+    calls = {"n": 0}
+
+    def fake_check(cust, key, base, state_path=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [_flag("463982", kind="mandate", why="contains egg", route="auto")],
+            }
+        if calls["n"] == 2:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [_flag("460396", kind="mandate", why="contains nuts", route="approval")],
+            }
+        return {
+            "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+            "flags": [_flag(aurora_pid)],
+        }
+
+    r = FakeRun()
+    s7.run_scenario(
+        "http://mock",
+        r,
+        client_cls=_make_client_cls(mandates),
+        check_fn=fake_check,
+        violates_fn=lambda pid, excl: False,
+        simulate_fn=lambda c, kind, **kw: None,
+        clear_fn=lambda c: None,
+    )
+    by_label = {label: ok for label, ok, _ in r.results}
+    assert by_label["hotel-aurora flags have a why and a route"] is True
+    assert by_label["hotel-aurora allergen flags never auto"] is False
+    assert by_label["school-hervanta allergen flags never auto"] is True
+
+
+def test_s7_unflagged_stockout_caught():
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": []},
+        "school-hervanta": {"exclude_allergens": []},
+    }
+    calls = {"n": 0}
+
+    def fake_check(cust, key, base, state_path=None):
+        calls["n"] += 1
+        if calls["n"] == 4:
+            return {
+                "standing_order": {"lines": drift.SEEDS[cust]["lines"]},
+                "flags": [_flag("unrelated-product", kind="price", why="price moved", route="auto")],
+            }
+        return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": []}
+
+    r = FakeRun()
+    s7.run_scenario(
+        "http://mock",
+        r,
+        client_cls=_make_client_cls(mandates),
+        check_fn=fake_check,
+        violates_fn=lambda pid, excl: False,
+        simulate_fn=lambda c, kind, **kw: None,
+        clear_fn=lambda c: None,
+    )
+    assert len(r.results) == 9
+    assert all(ok for _, ok, _ in r.results[:8])
+    assert r.results[8][:2] == ("injected stock-out is flagged for that product", False)
+
+
+def test_s7_go_wiring_and_dynamic_module_defaults(monkeypatch):
+    mandates = {
+        "hotel-aurora": {"exclude_allergens": ["peanuts"]},
+        "school-hervanta": {"exclude_allergens": ["nuts"]},
+    }
+    aurora_pid = drift.SEEDS["hotel-aurora"]["lines"][0]["product_id"]
+    check_calls = []
+    temp_dirs = []
+    counts = {"sim": 0, "clear": 0}
+
+    def fake_check(cust, key, base, state_path=None):
+        check_calls.append((cust, key, base))
+        temp_dirs.append(os.path.dirname(state_path))
+        flags = [_flag(aurora_pid)] if counts["sim"] > counts["clear"] else []
+        return {"standing_order": {"lines": drift.SEEDS[cust]["lines"]}, "flags": flags}
+
+    r1 = FakeRun()
+    monkeypatch.setattr(s7, "base", "http://mock-go")
+    monkeypatch.setattr(s7, "r", r1)
+    monkeypatch.setattr(s7, "Client", _make_client_cls(mandates))
+    monkeypatch.setattr(drift, "check", fake_check)
+    monkeypatch.setattr(s7, "violates", lambda pid, excl: False)
+    monkeypatch.setattr(s7, "simulate", lambda c, kind, **kw: counts.__setitem__("sim", counts["sim"] + 1))
+    monkeypatch.setattr(s7, "clear_simulation", lambda c: counts.__setitem__("clear", counts["clear"] + 1))
+
+    s7.go()
+    assert len(check_calls) == 4
+    assert all(b == "http://mock-go" for _, _, b in check_calls)
+    assert counts == {"sim": 1, "clear": 1}
+    assert len(r1.results) == 9
+    assert all(ok for _, ok, _ in r1.results)
+    assert all(not os.path.exists(td) for td in temp_dirs)
+
+    created_runs = []
+
+    def fake_run_factory(name, base_url):
+        fr = FakeRun()
+        created_runs.append((name, base_url, fr))
+        return fr
+
+    monkeypatch.setattr(s7, "base", None)
+    monkeypatch.setattr(s7, "r", None)
+    monkeypatch.setattr(s7, "parse_base", lambda: "http://parsed-cli")
+    monkeypatch.setattr(s7, "Run", fake_run_factory)
+
+    s7.go()
+    assert len(created_runs) == 1
+    assert created_runs[0][:2] == ("s7_drift", "http://parsed-cli")
+    assert len(created_runs[0][2].results) == 9
+    assert all(ok for _, ok, _ in created_runs[0][2].results)
+    assert [b for _, _, b in check_calls[4:]] == ["http://parsed-cli"] * 4
+    assert counts == {"sim": 2, "clear": 2}
+    assert all(not os.path.exists(td) for td in temp_dirs)
