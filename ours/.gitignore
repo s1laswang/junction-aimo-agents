@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+data
+var/
+.DS_Store
+.venv
+var-demo.log
+var-scen.log
