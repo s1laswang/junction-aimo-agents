@@ -13,12 +13,22 @@ SWAPS = _DATA["swaps"]
 
 _UNITS = {"g": ("kg", 1000), "ml": ("L", 1000), "pcs": ("pcs", 1)}
 _COVERS = r"(?:guests?|people|persons?|covers?|portions?|pax|hengelle|henkilölle|henkilolle|hengen|henkeä|annosta|annos)"
+_DAIRY_EXCL = {"milk", "dairy", "maito"}
+_LACTOSE_EXCL = _DAIRY_EXCL | {"lactose", "laktoosi"}
+_GLUTEN_EXCL = {"gluten", "wheat", "barley", "rye", "oats", "gluteeni", "vehnä"}
+
+
+def _excl(c):
+    return {a.strip().lower() for a in c.exclude_allergens} if c else set()
 
 
 def _triggered(trigger, c):
+    excl = _excl(c)
     if trigger == "lactose":
-        return bool(c.lactose_free) or any(a in ("milk", "lactose") for a in c.exclude_allergens)
-    return bool(c.gluten_free) or "gluten" in c.exclude_allergens
+        return bool(c and c.lactose_free) or bool(excl & _LACTOSE_EXCL)
+    if trigger == "gluten":
+        return bool(c and c.gluten_free) or bool(excl & _GLUTEN_EXCL)
+    return False
 
 
 def _rule(ingredient):
@@ -32,19 +42,30 @@ def recipe_swaps(ingredient, constraints):
     r = _rule(ingredient)
     if not r or not _triggered(r["trigger"], constraints):
         return []
-    return [dict(o) for o in r["options"]]
+    opts = [dict(o) for o in r["options"]]
+    if r["trigger"] == "lactose" and (_excl(constraints) & _DAIRY_EXCL):
+        opts = [o for o in opts if "dairy free" in o["why"]] or opts
+    return opts
 
 
 def _dishes_in(text):
     t = text.lower()
-    found = []
-    for d in DISHES:
-        for a in sorted(d["aliases"], key=len, reverse=True):
-            m = re.search(r"(?:(\d+)\s*(?:x\s*|portions? of\s*|annosta\s*)?)?\b" + re.escape(a), t)
-            if m:
-                found.append((d, int(m.group(1)) if m.group(1) else None))
-                break
-    return found
+    pairs = sorted(
+        ((a, i, d) for i, d in enumerate(DISHES) for a in {*d["aliases"], d["en"], d["fi"]}),
+        key=lambda x: (-len(x[0]), x[1]),
+    )
+    spans, picked = [], {}
+    for a, i, d in pairs:
+        if i in picked:
+            continue
+        for m in re.finditer(r"(?:(\d+)\s*(?:x\s*|portions? of\s*|annosta\s*)?)?\b" + re.escape(a), t):
+            s, e = m.end() - len(a), m.end()
+            if any(s < pe and e > ps for ps, pe in spans):
+                continue
+            spans.append((m.start(), e))
+            picked[i] = (d, int(m.group(1)) if m.group(1) else None)
+            break
+    return [picked[i] for i in sorted(picked)]
 
 
 def _default_covers(text):
@@ -77,7 +98,7 @@ def menu_to_need(text, customer, deliver_by=None, today=None, stock=None, constr
             continue
         items.append(NeedItem(
             query=q,
-            quantity=math.ceil(qty * 100) / 100,
+            quantity=math.ceil(round(qty * 100, 9)) / 100,
             unit=out_unit,
             constraints=c.model_copy() if swapped else Constraint(exclude_allergens=list(c.exclude_allergens)),
         ))
