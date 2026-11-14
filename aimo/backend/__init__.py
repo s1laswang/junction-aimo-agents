@@ -51,4 +51,11 @@ def get_offers(
     return _go(product_ids, requested_date, customer_id=customer_id, quantities=quantities)
 
 
-__all__ = ["BackendClient", "get_client", "set_client", "get_offers"]
+def now():
+    """The gateway clock (real, or the simulated demo clock: AIMO_NOW / X-Aimo-Now / replay). Timezone-aware."""
+    from aimo.backend.clock import now as _now
+
+    return _now()
+
+
+__all__ = ["BackendClient", "get_client", "set_client", "get_offers", "now"]
