@@ -1,0 +1,48 @@
+# Gateway report
+
+Branch `team/gateway`. Last updated Sat 14 Nov, around 15:00 Helsinki. **M1 gateway slice: DONE (verified live).**
+
+## Status
+| Item | State |
+|---|---|
+| `aimo/backend/client.py` + `__init__.py`: ValioClient, cache, retry, chunking, faults, `get_offers` | done, verified live and in tests |
+| `scripts/fetch_data.py` (+ `aimo fetch-data`, auto on `aimo serve`) | done. Redirect logic verified by re-downloading the 56 KB reliability CSV (byte-identical) |
+| `aimo/backend/orders.py`: SQLite quotes, orders, approvals, Peppol AP/CA/RE | done, verified |
+| `aimo/gateway/app.py`: every `/v1/*` endpoint in interfaces.md, `/.well-known/otap.json` and `jwks.json`, `/healthz`, `/ui` static, buyer router hook | done, verified live |
+| `aimo/gateway/mcp_server.py`: MCP `valio-aimo-trusted-trade`, 9 tools, `/mcp` (streamable HTTP) + stdio | done. tools/list and calls verified over HTTP and stdio |
+| `aimo/cli.py`: `aimo serve / demo / mcp / fetch-data / mcp-check` | done (`demo` delegates to `aimo.buyer.run_demo:main`, which has not landed yet) |
+| `tests/test_gateway.py`: 13 offline tests | pass, both on this branch and with `team/trust` trial-merged |
+
+## How to run
+```bash
+uv run aimo serve --port 8000          # http://localhost:8000/docs, /mcp, /.well-known/otap.json
+uv run aimo mcp-check                  # list MCP tools, call search_products + get_offers
+uv run aimo mcp                        # MCP over stdio (Claude Desktop / Gemini client)
+uv run --extra dev pytest -q tests/test_gateway.py
+```
+M1 curl walkthrough (headers `X-Customer-Id: hotel-aurora`, `X-Agent-Id: buyer-1`):
+1. `POST /v1/offers {"product_ids":["463038","464306","469363"],"requested_date":"2026-11-16"}`: 463038 has `cutoff_passed=true, available=false`. 464306 is available at €1.01. 469363 shows `limited_stock` (384).
+2. `POST /v1/quotes {"delivery_date":"2026-11-16","lines":[{"product_id":"464306","qty_sales_units":1000,"tier":"best"}]}` returns a quote at €1,010.00 net with `quote_hash` and an `expires_at` 15 minutes out. 463038 returns 409 `lines_unavailable`.
+3. `POST /v1/orders {"quote_id","quote_hash"}` returns `pending_approval` (needs procurement_manager).
+4. `POST /v1/approvals/{order_id}/decision {"decision":"approve","approver":"anna@hotel-aurora.example","approver_role":"procurement_manager","quote_hash":...}` returns `placed`, `response_code: AP`. A wrong hash returns 409.
+5. `GET /v1/audit/report/{order_id}` and `GET /v1/audit/verify`.
+
+## Verified vs untested
+- **Verified live against the mock API:** the offers merge, the cut-off on Terminal 463038, partial stock on 469363, prices (464306 at €1.01/ST, 463038 at €31.31/KI and €1.57/L), and that upstream accepts our customer ids (e.g. `hotel-aurora`). Also the whole M1 flow over HTTP and quote plus order over MCP HTTP, plus the per-header faults (stockout, price_shock, error_rate → 503 with Retry-After, partial at placement → CA), order idempotency and the manifest.
+- **Verified with `team/trust` trial-merged locally (not committed):** quotes are signed (EdDSA JWS), `trust.evaluate` gives needs_approval for 1,000 × 464306, `check_approval` refuses the wrong hash, the signed audit chain verifies, and JWKS is served. The gateway uses `trust.log_quote/log_decision/log_order`, so trust's `period_spend` rule sees `order.placed` events.
+- **Untested:** 429/5xx retry against the real upstream (tested only with a mock transport), `aimo serve` with catalog_store present, and buyer `/v1/agent/runs` mounting (the router has not landed).
+
+## Fallbacks (while other modules are missing)
+`/healthz` → `integrations` shows the live vs fallback state for each piece. Catalog falls back to a name-token search over the product JSON. Trust falls back to an unsigned sha256 quote_hash (`kid=unsigned-fallback`), €500/€5,000 thresholds and an unsigned hash-chained audit in `gw_audit_fallback`. `/v1/plan` returns 501 until `aimo.catalog.plan_need` lands.
+
+## Interface additions (also appended to docs/interfaces.md)
+- **Optional model fields:** `Offer.provenance`, `Quote.provenance`, `Quote.availability_snapshot`, `Order.provenance`. These are 4 lines appended to `aimo/models.py`, so the CEO should please review them.
+- `DecisionRequest.approver_role` (optional).
+- `aimo.gateway.service.<mcp_tool_name>(..., identity=...)` gives the same JSON as MCP (for the buyer's InProcessTransport).
+- The 409/503 error shapes and the issue vocabulary.
+
+## Notes / decisions for Silas or the CEO
+- **Quote refusal is strict.** Any unavailable line, or a qty above stock, returns 409 with the per-line reasons, so the agent must re-plan. The alternative is dropping lines silently, which I rejected.
+- **MCP DNS-rebinding protection is off by default,** so it works behind tunnels. Set `AIMO_MCP_ALLOWED_HOSTS` to enable it.
+- **`uv.lock` is untracked.** Please decide whether to commit it on main.
+- **Approvals are not exposed as an MCP tool,** on purpose: an agent cannot approve its own order.
