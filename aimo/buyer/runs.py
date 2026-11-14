@@ -187,20 +187,70 @@ _RUN_BODY = {"requestBody": {"content": {
 
 
 @router.post("/runs", openapi_extra=_RUN_BODY)
-async def create_run(request: Request) -> dict:
+async def create_run(request: Request):
     """Start a buyer-agent run. JSON (RunRequest, optional image_b64) or multipart/form-data with an
     `image` file (photo of a handwritten order, menu or invoice) plus text/customer_id fields."""
+    from fastapi.responses import JSONResponse
+
+    from aimo.gateway.auth import check_agent_key, is_known_customer
+
+    hdr_cust = (request.headers.get("x-customer-id") or "").strip()
     image = None
     if request.headers.get("content-type", "").startswith("multipart/form-data"):
         form = await request.form()
         fields = {k: v for k, v in form.items() if isinstance(v, str)}
+        raw_cust = (fields.get("customer_id") or "").strip()
         up = form.get("image")
         if up is not None and not isinstance(up, str):
             image = (await up.read(), up.content_type or "image/png")
+        if not hdr_cust and not raw_cust:
+            return JSONResponse(
+                {"error": "identity_required", "message": "POST /v1/agent/runs requires X-Customer-Id or customer_id."},
+                status_code=401,
+            )
+        if hdr_cust and raw_cust and hdr_cust != raw_cust:
+            return JSONResponse(
+                {"error": "customer_mismatch", "message": "X-Customer-Id disagrees with body customer_id."},
+                status_code=403,
+            )
+        eff_cust = hdr_cust or raw_cust
+        fields["customer_id"] = eff_cust
         fields.setdefault("text", "")
         req = RunRequest.model_validate(fields)
     else:
-        req = RunRequest.model_validate(await request.json())
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(422, "invalid JSON body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(422, "JSON object body required")
+        raw_val = payload.get("customer_id")
+        raw_cust = str(raw_val).strip() if raw_val is not None else ""
+        if not hdr_cust and not raw_cust:
+            return JSONResponse(
+                {"error": "identity_required", "message": "POST /v1/agent/runs requires X-Customer-Id or customer_id."},
+                status_code=401,
+            )
+        if hdr_cust and raw_cust and hdr_cust != raw_cust:
+            return JSONResponse(
+                {"error": "customer_mismatch", "message": "X-Customer-Id disagrees with body customer_id."},
+                status_code=403,
+            )
+        eff_cust = hdr_cust or raw_cust
+        req = RunRequest.model_validate({**payload, "customer_id": eff_cust})
+    if getattr(registry.start, "__func__", None) is RunRegistry.start and req.transport != "fake":
+        if not is_known_customer(eff_cust):
+            return JSONResponse(
+                {"error": "unknown_customer", "message": f"unknown customer {eff_cust!r}"},
+                status_code=403,
+            )
+    try:
+        check_agent_key(eff_cust, request.headers.get("x-agent-key"))
+    except Exception as exc:
+        return JSONResponse(
+            {"error": getattr(exc, "code", "invalid_agent_key"), "message": getattr(exc, "message", str(exc))},
+            status_code=getattr(exc, "status", 403),
+        )
     if req.image_b64:
         image = (base64.b64decode(req.image_b64), req.image_mime or "image/png")
     if not req.text and image is None:

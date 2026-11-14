@@ -168,6 +168,8 @@ def mandate_for(ident: Identity) -> Mandate:
             continue
         except KeyError:
             raise ServiceError(403, "unknown_customer", f"no mandate for customer {ident.customer_id!r}")
+    if ident.customer_id not in {c["customer_id"] for c in FALLBACK_CUSTOMERS}:
+        raise ServiceError(403, "unknown_customer", f"no mandate for customer {ident.customer_id!r}")
     return Mandate(customer_id=ident.customer_id, agent_id=ident.agent_id, policy_id=ident.customer_id)
 
 
@@ -496,6 +498,10 @@ def _upstream(e: UpstreamError) -> ServiceError:
 
 def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
                quantities: dict[str, float] | None = None) -> tuple[list[Offer], dict[str, Any]]:
+    if customer_id is not None:
+        from aimo.gateway.auth import require_known_customer
+
+        customer_id = require_known_customer(customer_id)
     ids = [str(p).strip() for p in product_ids if str(p).strip()]
     if not ids:
         raise ServiceError(400, "no_products", "product_ids must contain at least one id")
@@ -510,7 +516,14 @@ def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str 
 
 
 def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, **_: Any) -> Plan:
-    need = _as_need(need, resolve_identity(identity, None, customer_id))
+    from aimo.gateway.auth import require_known_customer
+
+    ident = resolve_identity(identity, None, customer_id)
+    need = _as_need(need, ident)
+    if need is not None:
+        if getattr(ident, "authenticated", {}).get("customer") and need.customer_id != ident.customer_id:
+            claim_identity(ident, need.customer_id, None)
+        require_known_customer(need.customer_id)
     cat = _catalog()
     if cat is None or not hasattr(cat, "plan_need"):
         raise ServiceError(501, "plan_unavailable", "planner (aimo.catalog.plan_need) is not available yet")
@@ -762,9 +775,16 @@ def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
 
 
 def _submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
+    from aimo.gateway.auth import require_known_customer
+
+    q_opt = store.get_quote(quote_id)
+    if q_opt is not None and q_opt.customer_id != ident.customer_id:
+        audit(ident.actor, "order.refused", quote_id,
+              f"{ident.full_agent_id} tried to submit quote {quote_id} of customer {q_opt.customer_id}; refused (wrong customer).",
+              {"reason": "customer_mismatch", "quote_customer": q_opt.customer_id}, related_ids=[quote_id])
+        raise ServiceError(403, "customer_mismatch", "this quote belongs to another customer")
+    require_known_customer(ident.customer_id)
     quote = get_quote(quote_id)
-    # Only the agent that obtained the quote may submit it. Checked before ANY order row exists, so a
-    # refused caller can never create the per-quote idempotency record and block the real buyer.
     if quote.customer_id != ident.customer_id:
         audit(ident.actor, "order.refused", quote_id,
               f"{ident.full_agent_id} tried to submit quote {quote_id} of customer {quote.customer_id}; refused (wrong customer).",
