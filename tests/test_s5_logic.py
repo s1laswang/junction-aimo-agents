@@ -13,8 +13,8 @@ class FakeResp:
         return self._body
 
 
-def _item(allergen_code=None, deleted=False):
-    vals = [{"id": allergen_code, "unit": "CONTAINS"}] if allergen_code else []
+def _item(allergen_code=None, deleted=False, unit="CONTAINS"):
+    vals = [{"id": allergen_code, "unit": unit}] if allergen_code else []
     return {
         "deleted": deleted,
         "synkkaData": {"classifications": [{"name": "allergen", "values": vals}]},
@@ -136,3 +136,25 @@ def test_s5_caps_quote_attempts_at_15():
     assert c.ordered_quotes == []
     by_label = {label: ok for label, ok, _ in r.results}
     assert by_label["found a violating product in data"] is False
+
+
+def test_s5_handles_null_synkka_and_may_contain_traces():
+    db = {
+        "safe_milk": {"deleted": False, "synkkaData": None},
+        "null_classes": {"deleted": False, "synkkaData": {"classifications": None}},
+        "null_values": {"deleted": False, "synkkaData": {"classifications": [{"name": "allergen", "values": None}]}},
+        "trace_unpriced": _item("AP", unit="MAY_CONTAIN"),
+        "trace_priced": _item("AN", unit="MAY_CONTAIN"),
+    }
+    c = FakeClient(
+        {
+            "trace_unpriced": (409, {"code": "UNPRICED", "text": "No price"}),
+            "trace_priced": (200, {"quote_id": "q_trace", "jws": "h.p.s"}),
+        }
+    )
+    r = Run("s5_allergen_safe", "http://test")
+    run_scenario(c, r, day=date(2026, 11, 16), db_fn=lambda: db)
+
+    assert c.quote_calls == [("trace_unpriced", "2026-11-16"), ("trace_priced", "2026-11-16")]
+    assert c.ordered_quotes == [{"quote_id": "q_trace", "jws": "h.p.s"}]
+    assert all(ok for _, ok, _ in r.results), r.results

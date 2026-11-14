@@ -8,21 +8,27 @@ r = Run("s5_allergen_safe", base)
 _ORIG_VIOLATES = violates
 
 
-def _item_violates(pid, db, excl):
+def _item_violates(pid, db, excl, excl_codes=None):
     if violates is not _ORIG_VIOLATES:
         return violates(pid, excl)
-    item = db.get(pid) or db.get(str(pid))
+    banned = excl_codes if excl_codes is not None else excluded_codes(excl)
+    item = db.get(pid) if isinstance(db, dict) and pid in db else (db.get(str(pid)) if isinstance(db, dict) else None)
     if isinstance(item, dict) and "synkkaData" in item:
+        synkka = item.get("synkkaData") or {}
         codes = {
             v["id"]
-            for cl in item["synkkaData"].get("classifications", [])
-            if cl.get("name") == "allergen"
-            for v in cl.get("values", [])
-            if v.get("unit") == "CONTAINS"
+            for cl in (synkka.get("classifications") or [])
+            if isinstance(cl, dict) and cl.get("name") == "allergen"
+            for v in (cl.get("values") or [])
+            if isinstance(v, dict) and v.get("id") and v.get("unit") in ("CONTAINS", "MAY_CONTAIN")
         }
-        return bool(codes & excluded_codes(excl))
+        return bool(codes & banned)
     if isinstance(item, dict) and "allergens" in item:
-        return bool(excluded_codes(item["allergens"]) & excluded_codes(excl))
+        cleaned = [
+            str(a).split(":", 1)[1] if str(a).lower().startswith(("may:", "may_contain:")) else str(a)
+            for a in (item.get("allergens") or [])
+        ]
+        return bool(excluded_codes(cleaned) & banned)
     try:
         return violates(pid, excl)
     except FileNotFoundError:
@@ -33,6 +39,7 @@ def run_scenario(c, r, day=None, db_fn=product_db):
     day = day or next_monday()
     m = c.j("GET", "/v1/mandate")
     excl = set(m["exclude_allergens"])
+    excl_codes = excluded_codes(excl)
     r.say(f"hospital-tays excludes {sorted(excl)}")
     r.check("mandate excludes allergens", len(excl) > 0)
     need = c.parse(f"We need 100 litres of lactose-free milk and 50 kg of bread by {day}", "hospital-tays")
@@ -40,9 +47,9 @@ def run_scenario(c, r, day=None, db_fn=product_db):
     seen = [o["product_id"] for it in offers["items"] for o in it["offers"]]
     r.check("offers returned", len(seen) > 0)
     db = db_fn()
-    leaks = [p for p in seen if _item_violates(p, db, excl)]
+    leaks = [p for p in seen if _item_violates(p, db, excl, excl_codes)]
     r.check("no offer contains an excluded allergen", not leaks, str(leaks[:5]))
-    candidates = [p for p, v in db.items() if not v.get("deleted") and _item_violates(p, db, excl)]
+    candidates = [p for p, v in db.items() if isinstance(v, dict) and not v.get("deleted") and _item_violates(p, db, excl, excl_codes)]
     bad, q = None, None
     for pid in candidates[:15]:
         try:
