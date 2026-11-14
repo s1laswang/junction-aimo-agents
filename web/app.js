@@ -8,6 +8,10 @@ import { createLiveApi } from "./api.js";
 
 const params = new URLSearchParams(location.search);
 const MOCK = params.get("mock") === "1";
+// Presenter mode (&present=1): ~15% larger type, dev-only JSON expanders hidden.
+if (params.get("present") === "1") document.documentElement.classList.add("present");
+// In presenter mode, press "j" to show or hide the JSON expanders.
+document.addEventListener("keydown", (e) => { if (e.key === "j" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) document.documentElement.classList.toggle("show-json"); });
 const $ = (id) => document.getElementById(id);
 
 const MODELS = [
@@ -18,7 +22,7 @@ const MODELS = [
 const THINKING = ["minimal", "low", "medium", "high"];
 const DEFAULT_REQ = {
   "hotel-aurora": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
-  "school-tampere": "We need 150 litres of milk-free drink for school lunches in Tampere by Tuesday. Some pupils have milk and nut allergies.",
+  "school-tampere": "We need 120 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies.",
   "hospital-meilahti": "We need 40 kg of gluten-free bread for the Meilahti wards by Wednesday.",
 };
 const TIER_ORDER = ["preferred", "best", "better", "good"];
@@ -62,6 +66,7 @@ async function boot() {
   renderAudit();
   setInterval(tick, 1000);
   await loadCustomers();
+  api.demoAvailable?.().then((ok) => { S.demoTamper = !!ok; renderAudit(); }).catch(() => {});
   if (params.get("customer") && S.customers.find((c) => c.id === params.get("customer"))) selectCustomer(params.get("customer"));
   refreshApprovals();
   // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
@@ -659,6 +664,8 @@ function renderApprovals() {
 
   const it = selectedItem();
   if (it) parts.push(approvalDetail(it));
+  // The decision bar sticks to the bottom of the pane so Approve is always reachable on a 720p projector.
+  if (it && it.order.status === "pending_approval" && it.quote) parts.push(decisionForm(it.order, it.quote));
   mount(v, parts);
   tick();
 }
@@ -673,7 +680,6 @@ function approvalDetail(it) {
   if (dec) parts.push(verdictBanner(dec));
   if (q) parts.push(quoteCard(q, pending));
   else parts.push(h("div", { class: "exc warn" }, h("b", null, "!"), h("div", null, "The signed quote for this order could not be loaded. Approval is disabled until it can be checked.")));
-  if (pending && q) parts.push(decisionForm(o, q));
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "16px" } }, parts);
 }
 
@@ -728,17 +734,21 @@ function decisionForm(o, q) {
   const cust = S.customers.find((c) => c.id === o.customer_id);
   const dir = cust?.approvers || [];
   const needRole = (o.decision || {}).approver_role;
-  if (!S.approver) S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || "";
+  // The approver must come from THIS order's customer directory: reset when switching orders or customers.
+  if (S.approverFor !== o.order_id || (dir.length && !dir.some((a) => a.id === S.approver))) {
+    S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || (dir.length ? "" : S.approver);
+    S.approverFor = o.order_id;
+  }
   const approver = dir.length
     ? h("select", { class: "input", id: "approver", disabled: busy, onchange: (e) => (S.approver = e.target.value) },
         dir.map((a) => h("option", { value: a.id, selected: a.id === S.approver }, `${a.name || a.id} · ${roleLabel(a.role)}`)))
     : h("input", { class: "input", id: "approver", value: S.approver, placeholder: "name@company", oninput: (e) => (S.approver = e.target.value), disabled: busy });
-  const note = h("textarea", { class: "input", id: "note", rows: 2, placeholder: "Optional, stored in the audit trail", oninput: (e) => (S.note = e.target.value), disabled: busy });
+  const note = h("input", { class: "input", id: "note", placeholder: "Optional, stored in the audit trail", oninput: (e) => (S.note = e.target.value), disabled: busy });
   note.value = S.note;
   const expired = new Date(q.expires_at) < new Date();
-  return h("div", { class: "card" },
-    h("div", { class: "card-head" }, h("h3", null, `Decision as ${role}`)),
+  return h("div", { class: "card decide-sticky" },
     h("div", { class: "card-body decide" },
+      h("h3", { style: { gridColumn: "1 / -1" } }, `Decision as ${role}`),
       h("div", { class: "field" }, h("label", { for: "approver" }, "Approver"), approver),
       h("div", { class: "field" }, h("label", { for: "note" }, "Note"), note),
       S.decideError ? h("div", { class: "inline-error", style: { gridColumn: "1 / -1" } }, S.decideError) : null,
@@ -772,9 +782,15 @@ async function decide(o, q, decision) {
   }
 }
 
-function approverName(customerId, id) {
-  const a = (S.customers.find((c) => c.id === customerId)?.approvers || []).find((x) => x.id === id);
-  return a ? `${a.name} (${roleLabel(a.role)}, ${a.id})` : id;
+function approverName(customerId, raw, roleField) {
+  // Old shape: "anna@x.example (procurement_manager)"; new shape: plain id + Order.approver_role.
+  const m = String(raw || "").match(/^(.*?)\s*\(([^()]+)\)\s*$/);
+  const id = m ? m[1] : raw;
+  const role = roleField || (m ? m[2] : null);
+  const a = (S.customers.find((c) => c.id === customerId)?.approvers || []).find((x) => x.id === id || x.name === id);
+  const r = role || a?.role;
+  if (a) return `${a.name} (${roleLabel(r)}, ${a.id})`;
+  return r ? `${id} (${roleLabel(r)})` : id;
 }
 
 function orderResponse(o, q) {
@@ -786,7 +802,7 @@ function orderResponse(o, q) {
       statusPill(o.status),
       o.response_code ? h("span", { class: `resp-code ${o.response_code}`, title: "Peppol BIS order response code" }, o.response_code) : null),
     h("div", { class: "card-body sm" },
-      o.approved_by ? h("div", null, `${o.status === "rejected" ? "Rejected" : "Approved"} by `, h("strong", null, approverName(o.customer_id, o.approved_by)), ` · ${dayTime(o.updated_at)}`, o.approval_note ? ` · “${o.approval_note}”` : "") : h("div", { class: "muted" }, o.status === "placed" ? "Placed automatically within the mandate." : ""),
+      o.approved_by ? h("div", null, `${o.status === "rejected" ? "Rejected" : "Approved"} by `, h("strong", null, approverName(o.customer_id, o.approved_by, o.approver_role)), ` · ${dayTime(o.updated_at)}`, o.approval_note ? ` · “${o.approval_note}”` : "") : h("div", { class: "muted" }, o.status === "placed" ? "Placed automatically within the mandate." : ""),
       !placed && o.status === "rejected" ? h("div", { class: "muted" }, "Nothing was sent to the warehouse. The agent was told the order was rejected.") : null),
     (o.response_lines || []).length ? h("table", { class: "t" },
       h("thead", null, h("tr", null, h("th", null, "Code"), h("th", null, "Product"), h("th", { class: "n" }, "Confirmed"), h("th", null, "Note"))),
@@ -843,6 +859,36 @@ async function verifyChain() {
   catch (e) { S.audit.verify = { ok: false, error: e.message }; }
   S.audit.verifying = false;
   renderAudit();
+  const b = S.audit.verify && !S.audit.verify.ok && S.audit.verify.broken_at;
+  if (b) requestAnimationFrame(() => document.getElementById(`ev-${b}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+}
+
+// Demo tamper: edit the human approval event in the stored ledger, verify (red), restore, verify (green).
+// Live uses POST /v1/demo/tamper/{seq} and /v1/demo/untamper/{seq} (404 when AIMO_ENV=production).
+async function tamperToggle() {
+  const A = S.audit;
+  A.tamperBusy = true; A.tamperError = null;
+  renderAudit();
+  try {
+    if (A.tampered == null) {
+      const evs = A.events;
+      const target = evs.find((e) => actorKind(e.actor) === "human" && /approv/.test(e.action)) || evs.find((e) => /approv|policy/.test(e.action)) || evs[Math.floor(evs.length / 2)];
+      if (!target) throw new Error("no audit events to tamper with yet");
+      await api.tamper(target.seq);
+      A.tampered = target.seq;
+    } else {
+      await api.untamper(A.tampered);
+      A.tampered = null;
+    }
+    A.tamperBusy = false;
+    await loadAudit(true);
+    await verifyChain();
+  } catch (e) {
+    A.tamperBusy = false;
+    if (e.status === 404 && A.tampered == null) { S.demoTamper = false; A.tamperError = "Tamper demo is disabled on this gateway (production mode)."; }
+    else A.tamperError = e.message;
+    renderAudit();
+  }
 }
 
 async function evidencePack() {
@@ -893,7 +939,10 @@ function renderAudit() {
       ? h("span", { class: "verify-result ok" }, `✓ Chain intact · ${num(vr.checked, 0)} events, hashes and signatures checked`)
       : h("span", { class: "verify-result bad" }, vr.error ? `✕ Verification failed: ${vr.error}` : `✕ Chain broken at event #${vr.broken_at} (${num(vr.checked, 0)} checked)`)) : h("span", { class: "muted sm" }, "Recomputes every hash and checks every link and signature on the server."),
     h("span", { class: "grow" }),
-    MOCK && api.tamper ? h("button", { class: "btn btn-quiet btn-sm", title: "Mock only: edit one stored event to show tamper detection", onclick: async () => { await api.tamper(); S.audit.verify = null; loadAudit(); } }, "Simulate tampering") : null,
+    S.demoTamper && A.events.length ? h("button", { class: `btn btn-sm ${A.tampered != null ? "btn-ok" : "btn-bad"}`, disabled: A.tamperBusy,
+      title: "Demo only: alter one stored audit event, then verify the chain", onclick: tamperToggle },
+      A.tamperBusy ? h("span", { class: "spinner" }) : null, A.tampered != null ? `Restore event #${A.tampered}` : "Simulate tampering") : null,
+    A.tamperError ? h("span", { class: "inline-error small" }, A.tamperError) : null,
     h("button", { class: "btn btn-sm", onclick: openReport, disabled: !subjects.length }, "Readable report"),
     h("button", { class: "btn btn-sm btn-primary", onclick: evidencePack, disabled: !A.events.length }, "Download evidence pack")));
 
@@ -912,14 +961,14 @@ function renderAudit() {
       const linked = prev && e.prev_hash === prev.hash;
       const kind = actorKind(e.actor);
       const glyph = { agent: "A", human: "H", system: "S" }[kind];
-      const hd = h("details", { class: "json" }, h("summary", null, "Hash, link and signature"),
+      const hd = h("details", { class: "json keep" }, h("summary", null, "Hash, link and signature"),
         h("div", { class: "chain-hashes" },
           h("b", null, "hash"), h("span", null, e.hash),
           h("b", null, "prev_hash"), h("span", null, e.prev_hash, linked ? h("span", { style: { color: "var(--ok)" } }, "  ✓ matches #" + prev.seq) : ""),
           h("b", null, "signature"), h("span", null, String(e.signature || "").slice(0, 96) + (String(e.signature || "").length > 96 ? "…" : "")),
           h("b", null, "kid"), h("span", null, e.kid)),
         Object.keys(e.data || {}).length ? jsonDetails("Event data", e.data) : null);
-      return h("li", { class: `chain-ev ${linked ? "linked" : ""}` },
+      return h("li", { class: `chain-ev ${linked ? "linked" : ""}`, id: `ev-${e.seq}` },
         h("div", { class: "chain-time", title: full(e.ts) }, time(e.ts), h("div", { class: "faint" }, `#${e.seq}`)),
         h("div", { class: "chain-rail" }, h("span", { class: `chain-node ${kind}`, title: kind }, glyph)),
         h("div", { class: `chain-card ${vr && !vr.ok && vr.broken_at === e.seq ? "broken" : ""}` },

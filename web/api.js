@@ -79,6 +79,15 @@ export function createLiveApi(base) {
     report: (subjectId) => req("GET", `/v1/audit/report/${encodeURIComponent(subjectId)}`),
     reportUrl: (subjectId) => url(`/v1/audit/report/${encodeURIComponent(subjectId)}`),
     jwks: () => req("GET", "/.well-known/jwks.json"),
+    // Demo-only tamper routes (gateway returns 404 when AIMO_ENV=production). Shown only if listed in the OpenAPI.
+    async demoAvailable() {
+      try {
+        const spec = await req("GET", "/openapi.json");
+        return Object.keys(spec.paths || {}).some((p) => p.startsWith("/v1/demo/tamper"));
+      } catch { return false; }
+    },
+    tamper: (seq) => req("POST", `/v1/demo/tamper/${encodeURIComponent(seq)}`),
+    untamper: (seq) => req("POST", `/v1/demo/untamper/${encodeURIComponent(seq)}`),
     otap: () => req("GET", "/.well-known/otap.json"),
   };
 }

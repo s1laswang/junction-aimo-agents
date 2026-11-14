@@ -44,7 +44,7 @@ const CUSTOMERS = [
       "Auto-approve up to €300; any substitution needs the Kitchen Manager",
       "Allergen data unknown: the line is rejected",
     ],
-    default_request: "We need 150 litres of milk-free drink for school lunches in Tampere by Tuesday. Some pupils have milk and nut allergies.",
+    default_request: "We need 120 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies.",
   },
   {
     customer_id: "hospital-meilahti", name: "Meilahti hospital catering", segment: "Hospital",
@@ -55,7 +55,7 @@ const CUSTOMERS = [
       "The Dietitian approves any substitution",
       "Allergen data unknown: needs Dietitian approval",
     ],
-    default_request: "We need 40 kg of gluten-free bread for the Meilahti wards by Wednesday.",
+    default_request: "We need 40 kg of gluten-free bread and 2 kg of fresh dill for the Meilahti wards by Wednesday.",
   },
 ];
 
@@ -156,14 +156,14 @@ function hotelDecision() {
 }
 
 // ------------------------------------------------------------------ school fixtures (ILLUSTRATIVE prices/stock)
-const TUE = "2026-11-17";
+const TUE = "2026-11-18";
 function schoolScenario(text) {
   const base = { category: "oat drinks", content_unit: "L", content_amount: 1, sales_unit: "ST", co2_kg_per_kg: null, delivery_reliability: null, claims: [] };
   const f = NOW_ISO();
-  const off = (id, price, amt) => ({ product_id: id, requested_date: TUE, available: true, available_amount: amt, logistic_model: "Stock", closing_time: "2026-11-16T12:00:00Z", sales_unit: "ST", unit_price: price, comparison_price: price, comparison_unit: "L", currency: "EUR", fetched_at: f, issues: [] });
+  const off = (id, price, amt) => ({ product_id: id, requested_date: TUE, available: true, available_amount: amt, logistic_model: "Stock", closing_time: "2026-11-17T12:00:00Z", sales_unit: "ST", unit_price: price, comparison_price: price, comparison_unit: "L", currency: "EUR", fetched_at: f, issues: [] });
   const need = {
     raw_text: text, customer_id: "school-tampere", product_query: "oat drink (milk-free)", required_claims: [],
-    excluded_allergens: ["milk", "nuts"], quantity: 150, unit: "L", delivery_by: TUE, preferred_product_ids: [], preferences: { use: "school lunch drink" },
+    excluded_allergens: ["milk", "nuts"], quantity: 120, unit: "L", delivery_by: TUE, preferred_product_ids: [], preferences: { use: "school lunch drink" },
   };
   const P = {
     "468465": { ...base, id: "468465", name: "Oddlygood® oat drink 1l UHT gluten free", brand: "Oddlygood" },
@@ -174,23 +174,74 @@ function schoolScenario(text) {
     "472598": { ...base, id: "472598", name: "Fazer Aito Oat Drink Barista 1L UHT", brand: "Fazer Aito" },
   };
   const candidates = [
-    { product: P["468465"], offer: off("468465", 1.65, 900), tier: "best", rank_score: 0.9, reasons: ["Milk and nuts: structured FREE_FROM data", "Plain oat drink suits a school lunch", "Covers all 150 L"], flags: [] },
+    { product: P["468465"], offer: off("468465", 1.65, 900), tier: "best", rank_score: 0.9, reasons: ["Milk and nuts: structured FREE_FROM data", "Plain oat drink suits a school lunch", "Covers all 120 L"], flags: [] },
     { product: P["472833"], offer: off("472833", 1.79, 600), tier: "better", rank_score: 0.74, reasons: ["Milk and nuts: structured FREE_FROM data", "€0.14/L more than the best option"], flags: [] },
     { product: P["472598"], offer: off("472598", 1.95, 300), tier: "good", rank_score: 0.4, reasons: ["Barista product: higher price per litre", "Supplier marketing text contained instructions to AI agents; the text was ignored"], flags: ["injection_flagged"] },
     { product: P["464306"], offer: off("464306", 1.01, 4200), tier: "rejected", rank_score: 0, reasons: ["Contains milk"], flags: ["allergen_contains"] },
     { product: P["471424"], offer: off("471424", 2.1, 120), tier: "rejected", rank_score: 0, reasons: ["Contains nuts (hazelnut)"], flags: ["allergen_contains"] },
     { product: P["470863"], offer: off("470863", 1.59, 800), tier: "rejected", rank_score: 0, reasons: ["Allergen data missing for nuts: treated as unknown, never safe"], flags: ["allergen_unknown"] },
   ];
-  const lines = [{ product_id: "468465", product_name: P["468465"].name, tier: "best", qty_sales_units: 150, sales_unit: "ST", covered_amount: 150, unit_price: 1.65, line_total: 247.5, reasons: candidates[0].reasons.slice(0, 1), flags: [] }];
-  const plan = { need, lines, candidates, covered_amount: 150, shortfall: 0, total_net: 247.5, explanation: "Three oat drinks are milk- and nut-safe by structured data. The cheapest safe option covers all 150 L. One lactose-free milk was dropped because it contains milk, one barista drink because it contains hazelnut, and one oat drink because its nut data is missing." };
+  const lines = [{ product_id: "468465", product_name: P["468465"].name, tier: "best", qty_sales_units: 120, sales_unit: "ST", covered_amount: 120, unit_price: 1.65, line_total: 198, reasons: candidates[0].reasons.slice(0, 1), flags: [] }];
+  const plan = { need, lines, candidates, covered_amount: 120, shortfall: 0, total_net: 198, explanation: "Three oat drinks are milk- and nut-safe by structured data. The cheapest safe option covers all 120 L. One lactose-free milk was dropped because it contains milk, one barista drink because it contains hazelnut, and one oat drink because its nut data is missing." };
   const decision = {
     outcome: "auto_approve", approver_role: null, policy_id: "school-tampere", policy_version: "2026-11-14.1",
     hits: [
-      { rule_id: "spend.auto_limit", outcome: "allow", message: "The order total €247.50 is within the €300 auto-approve limit." },
+      { rule_id: "spend.auto_limit", outcome: "allow", message: "The order total €198.00 is within the €300 auto-approve limit." },
       { rule_id: "allergen.hard_block", outcome: "allow", message: "Every ordered line is structured FREE_FROM milk and nuts." },
       { rule_id: "allergen.unknown", outcome: "allow", message: "No ordered line has unknown allergen data (1 candidate with unknown data was excluded before quoting)." },
       { rule_id: "substitution", outcome: "allow", message: "No standing preference for this item, so this is not a substitution." },
       { rule_id: "injection.screen", outcome: "allow", message: "Supplier text flagged as prompt injection (472598) was ignored and did not influence the order." },
+    ],
+  };
+  return { need, plan, decision, P };
+}
+
+// ------------------------------------------------------------------ hospital fixtures
+// Ids, names, pack sizes, CO2 and the allergen statuses are real catalog data (aimo.catalog over the product JSON):
+// 465773 says "Gluten-Free" in its name but its structured allergen data says CONTAINS gluten; 472147 MAY CONTAIN;
+// 460395 (fresh dill) has no allergen data at all. Prices, stock and the 473328 stock-out are ILLUSTRATIVE.
+const WED = "2026-11-18";
+function hospitalScenario(text) {
+  const f = NOW_ISO();
+  const off = (id, unit, price, amt, perKg, x = {}) => ({ product_id: id, requested_date: WED, available: amt !== 0, available_amount: amt, logistic_model: "Stock", closing_time: "2026-11-17T10:00:00Z", sales_unit: unit, unit_price: price, comparison_price: perKg, comparison_unit: "KG", currency: "EUR", fetched_at: f, issues: [], ...x });
+  const P = {
+    "473328": { id: "473328", name: "Schär Vital dark sliced bread 350g gluten-free", brand: "Schär", sales_unit: "ST", content_amount: 0.35, content_unit: "KG", claims: ["FREE_FROM_GLUTEN", "FREE_FROM_LACTOSE"], co2_kg_per_kg: null, delivery_reliability: null },
+    "461765": { id: "461765", name: "Moilas Gluten-free Dark Bread 600g sliced frozen", brand: "Moilas", sales_unit: "KI", content_amount: 4.8, content_unit: "KG", claims: ["FREE_FROM_GLUTEN", "FREE_FROM_LACTOSE", "FREE_FROM_WHEAT"], co2_kg_per_kg: 1.44, delivery_reliability: null },
+    "466567": { id: "466567", name: "RF Gluten free Slice of countrybread 50 x 35 g, 1,75 kg", brand: "RF", sales_unit: "KI", content_amount: 1.75, content_unit: "KG", claims: ["FREE_FROM_GLUTEN", "FREE_FROM_EGGS", "VEGAN"], co2_kg_per_kg: 1.44, delivery_reliability: null },
+    "472434": { id: "472434", name: "RF Gluten-free Pita bread 80 g x 5 pcs x 6 = 2,4 kg", brand: "RF", sales_unit: "KI", content_amount: 2.4, content_unit: "KG", claims: ["FREE_FROM_GLUTEN", "VEGAN"], co2_kg_per_kg: 1.44, delivery_reliability: null },
+    "465773": { id: "465773", name: "Fazer Seed bread Gluten-Free 3pcs 165g", brand: "Fazer", sales_unit: "BAG", content_amount: 0.165, content_unit: "KG", claims: ["FREE_FROM_GLUTEN"], co2_kg_per_kg: 1.16, delivery_reliability: null },
+    "472147": { id: "472147", name: "Oululainen Reissumies Gluten-Free 3pcs 210g, buckwheat bread", brand: "Oululainen", sales_unit: "BAG", content_amount: 0.21, content_unit: "KG", claims: ["FREE_FROM_GLUTEN"], co2_kg_per_kg: 1.02, delivery_reliability: null },
+    "460395": { id: "460395", name: "TAMSIN 100G DILL BUNCH FINLAND", brand: "Tamsin", sales_unit: "ST", content_amount: 0.1, content_unit: "KG", claims: [], co2_kg_per_kg: 0.38, delivery_reliability: null },
+  };
+  const need = {
+    raw_text: text, customer_id: "hospital-meilahti", product_query: "gluten-free sliced bread", required_claims: ["FREE_FROM_GLUTEN"],
+    excluded_allergens: ["gluten"], quantity: 40, unit: "KG", delivery_by: WED, preferred_product_ids: ["473328"],
+    preferences: { extra_item: "2 kg fresh dill", diet: "coeliac wards" },
+  };
+  const candidates = [
+    { product: P["461765"], offer: off("461765", "KI", 38.4, 25, 8.0), tier: "best", rank_score: 0.88, reasons: ["Gluten: structured FREE_FROM data", "Sliced dark bread like the usual Schär loaf; frozen 8 × 600 g case", "Covers all 40 kg with 9 cases (43.2 kg)"], flags: ["outside_preference"] },
+    { product: P["466567"], offer: off("466567", "KI", 19.6, 30, 11.2), tier: "better", rank_score: 0.7, reasons: ["Gluten: free (from the product's claim)", "Individually sliced 35 g portions, 40% dearer per kg"], flags: ["outside_preference"] },
+    { product: P["472434"], offer: off("472434", "KI", 22.8, 12, 9.5), tier: "good", rank_score: 0.45, reasons: ["Gluten: free (from the product's claim)", "Pita, not sliced bread: only 12 cases (28.8 kg)"], flags: ["outside_preference", "partial_stock"] },
+    { product: P["473328"], offer: off("473328", "ST", 4.9, 0, 14.0, { issues: ["out_of_stock"] }), tier: "rejected", rank_score: 0, reasons: ["Your usual item is out of stock for Wed 18 Nov"], flags: ["out_of_stock"] },
+    { product: P["465773"], offer: off("465773", "BAG", 3.2, 200, 19.39), tier: "rejected", rank_score: 0, reasons: ["Contains gluten: the structured allergen data says CONTAINS, although the name says “Gluten-Free”"], flags: ["allergen_contains"] },
+    { product: P["472147"], offer: off("472147", "BAG", 3.4, 150, 16.19), tier: "rejected", rank_score: 0, reasons: ["May contain gluten (structured allergen data)"], flags: ["allergen_may_contain"] },
+  ];
+  const lines = [
+    { product_id: "461765", product_name: P["461765"].name, tier: "best", qty_sales_units: 9, sales_unit: "KI", covered_amount: 43.2, unit_price: 38.4, line_total: 345.6, reasons: candidates[0].reasons.slice(0, 2), flags: ["outside_preference"] },
+    { product_id: "460395", product_name: P["460395"].name, tier: "best", qty_sales_units: 20, sales_unit: "ST", covered_amount: 0, unit_price: 1.95, line_total: 39.0, reasons: ["Second item in the request: 2 kg fresh dill", "No allergen data: gluten status unknown"], flags: ["allergen_unknown"] },
+  ];
+  const plan = {
+    need, lines, candidates, covered_amount: 43.2, shortfall: 0, total_net: 384.6,
+    explanation: "The usual Schär sliced bread is out of stock for Wednesday. Moilas gluten-free dark bread (frozen, 8 × 600 g) is gluten-free by structured data and covers 40 kg with 9 cases. Two products that call themselves gluten-free were dropped: Fazer Seed bread's allergen data says it contains gluten, and Reissumies may contain gluten. The fresh dill has no allergen data, so it is marked unknown, never safe.",
+  };
+  const decision = {
+    outcome: "needs_approval", approver_role: "dietitian", policy_id: "hospital-meilahti", policy_version: "1.0.0",
+    hits: [
+      { rule_id: "substitution:461765", outcome: "needs_approval", message: "Moilas gluten-free dark bread (461765) replaces the usual Schär loaf (473328). The Dietitian approves every substitution on coeliac wards." },
+      { rule_id: "allergens:460395", outcome: "needs_approval", message: "Fresh dill (460395) has no allergen data, so its gluten status is unknown. A Dietitian must confirm it is safe for gluten-free diets." },
+      { rule_id: "allergens:461765", outcome: "allow", message: "The bread line is FREE_FROM gluten in the structured allergen data." },
+      { rule_id: "spend", outcome: "allow", message: "The order total €384.60 is within the €1,000 auto-approve limit." },
+      { rule_id: "delivery", outcome: "allow", message: "Both lines can be delivered by Wed 18 Nov (cut-off Tue 17 Nov 12:00)." },
     ],
   };
   return { need, plan, decision, P };
@@ -228,6 +279,7 @@ export async function createMockApi() {
   }
 
   const quotes = new Map();
+  const tampered = new Map(); // seq -> original summary
   const orders = new Map(); // order_id -> {order, quote, decision, run}
   const runs = new Map();   // run_id -> {emit, customer_id, ...}
 
@@ -334,13 +386,15 @@ export async function createMockApi() {
       await sleep(400);
       step("approval_wait", "Waiting for the Procurement Manager to approve", { order_id: order.order_id, approver_role: "procurement_manager" });
       run.awaiting = order.order_id;
+      run.deliveryLabel = "Mon 16 Nov";
+      run.finalSummary = (q) => `1,000 L Valio Eila lactose-free semi-skimmed milk (1 L cartons) confirmed for Mon 16 Nov at €1,010.00 net, approved by the Procurement Manager against signed quote ${q.quote_id}.`;
       return;
     }
 
     if (customer_id === "school-tampere") {
       const { need, plan, decision, P } = schoolScenario(text);
       step("thought", "Parsed the request into a structured need", { need });
-      await audit(agent, "need.parsed", run_id, "Parsed the request: 150 L milk-free drink, excluded allergens milk and nuts, delivery Tue 17 Nov.", { need });
+      await audit(agent, "need.parsed", run_id, "Parsed the request: 120 L milk-free drink, excluded allergens milk and nuts, delivery Wed 18 Nov.", { need });
       await sleep(500);
       await tool("search_products", { query: "oat drink", limit: 20 }, 131, () => ({ summary: "18 plant-based drinks found; 6 shortlisted", result: Object.values(P).map(({ id, name }) => ({ id, name })) }));
       await tool("get_offers", { product_ids: Object.keys(P), requested_date: TUE }, 540, () => ({ summary: "Live price and availability for 6 products", result: plan.candidates.map((c) => c.offer) }));
@@ -359,15 +413,15 @@ export async function createMockApi() {
       });
       await audit("system:trust", "injection.flagged", run_id, "Prompt injection in supplier text for 472598 was flagged and ignored.", { product_id: "472598" });
       await sleep(700);
-      await tool("plan_need", { need }, 262, () => ({ summary: "1 line covers 150 L for €247.50", result: { lines: plan.lines, total_net: plan.total_net } }));
-      step("plan", "Plan ready: 150 × Oddlygood oat drink 1 l (best tier)", { plan });
-      await audit(agent, "plan.created", run_id, "Planned 150 L as 150 × 468465 (best tier). 3 candidates were rejected for allergen reasons.", {});
+      await tool("plan_need", { need }, 262, () => ({ summary: "1 line covers 120 L for €198.00", result: { lines: plan.lines, total_net: plan.total_net } }));
+      step("plan", "Plan ready: 120 × Oddlygood oat drink 1 l (best tier)", { plan });
+      await audit(agent, "plan.created", run_id, "Planned 120 L as 120 × 468465 (best tier). 3 candidates were rejected for allergen reasons.", {});
       await sleep(700);
       let quote;
-      await tool("create_quote", { delivery_date: TUE, lines: [{ product_id: "468465", qty_sales_units: 150, tier: "best" }] }, 88, async () => {
+      await tool("create_quote", { delivery_date: TUE, lines: [{ product_id: "468465", qty_sales_units: 120, tier: "best" }] }, 88, async () => {
         quote = await makeQuote(customer_id, plan);
-        await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id} for €247.50 net.`, { quote_hash: quote.quote_hash, run_id });
-        return { summary: `Signed quote ${quote.quote_id}, €247.50`, result: { quote_id: quote.quote_id, quote_hash: quote.quote_hash } };
+        await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id} for €198.00 net.`, { quote_hash: quote.quote_hash, run_id });
+        return { summary: `Signed quote ${quote.quote_id}, €198.00`, result: { quote_id: quote.quote_id, quote_hash: quote.quote_hash } };
       });
       step("quote", `Signed quote ${quote.quote_id}`, { quote });
       await sleep(500);
@@ -375,7 +429,7 @@ export async function createMockApi() {
       await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 70, async () => {
         order = newOrder(quote, decision, "placed");
         order.response_code = "AP";
-        order.response_lines = [{ product_id: "468465", code: "AP", qty_confirmed: 150, note: "Accepted for delivery Tue 17 Nov" }];
+        order.response_lines = [{ product_id: "468465", code: "AP", qty_confirmed: 120, note: "Accepted for delivery Wed 18 Nov" }];
         orders.set(order.order_id, { order, quote, decision, run });
         await audit("system:trust", "policy.evaluated", order.order_id, "Policy school-tampere: auto-approved (within €300, all lines allergen-safe).", { outcome: "auto_approve" });
         await audit("system:gateway", "order.placed", order.order_id, `Order ${order.order_id} placed. Order response AP: all lines accepted.`, { response_code: "AP", run_id, quote_id: quote.quote_id });
@@ -384,11 +438,60 @@ export async function createMockApi() {
       step("decision", "Policy verdict: auto-approved", { decision, order });
       await sleep(300);
       step("order", `Order ${order.order_id} placed: accepted (AP)`, { order });
-      step("final", "Done: placed", { order_id: order.order_id, status: "placed", summary: "150 L of Oddlygood oat drink ordered for Tue 17 Nov, auto-approved within the school's €300 limit. Three unsafe candidates and one prompt injection were caught on the way." });
+      step("final", "Done: placed", { order_id: order.order_id, status: "placed", summary: "120 L of Oddlygood oat drink ordered for Wed 18 Nov, auto-approved within the school's €300 limit. Three unsafe candidates and one prompt injection were caught on the way." });
       return;
     }
 
-    step("error", "No mock script for this customer", { message: "Mock mode scripts hotel-aurora and school-tampere. Use the live gateway for hospital-meilahti." });
+    if (customer_id === "hospital-meilahti") {
+      const { need, plan, decision, P } = hospitalScenario(text);
+      step("thought", "Parsed the request into a structured need", { need, text: "Two items: 40 kg gluten-free bread and 2 kg fresh dill. Gluten is a hard exclusion for coeliac wards." });
+      await audit(agent, "need.parsed", run_id, "Parsed the request: 40 kg gluten-free bread plus 2 kg fresh dill, excluded allergen gluten, delivery Wed 18 Nov.", { need });
+      await sleep(500);
+      await tool("search_products", { query: "gluten free bread", claims: ["FREE_FROM_GLUTEN"], limit: 20 }, 156, () => ({ summary: "14 gluten-free breads found; 6 sliced or bulk packs shortlisted", result: Object.values(P).filter((x) => x.id !== "460395").map(({ id, name }) => ({ id, name })) }));
+      await tool("search_products", { query: "fresh dill", limit: 5 }, 98, () => ({ summary: "3 dill products found", result: [{ id: "460395", name: P["460395"].name }] }));
+      await tool("get_offers", { product_ids: [...Object.keys(P)], requested_date: WED }, 588, () => ({
+        summary: "Live price and availability for 7 products",
+        exceptions: [{ code: "out_of_stock", product_id: "473328", message: "Your usual Schär Vital dark sliced bread (473328) is out of stock for Wed 18 Nov." }],
+        result: plan.candidates.map((c) => c.offer),
+      }));
+      step("thought", "Checked allergens against the gluten block", {
+        text: "A “gluten-free” name is not evidence. Only structured allergen data counts; missing data is unknown.",
+        exceptions: [
+          { code: "allergen_contains", product_id: "465773", message: "Fazer Seed bread “Gluten-Free” (465773): the structured allergen data says CONTAINS gluten. Dropped." },
+          { code: "allergen_may_contain", product_id: "472147", message: "Reissumies Gluten-Free (472147): may contain gluten. Dropped." },
+          { code: "allergen_unknown", product_id: "460395", message: "Fresh dill (460395) has no allergen data. Kept, but flagged unknown for the Dietitian." },
+        ],
+      });
+      await sleep(700);
+      await tool("plan_need", { need }, 301, () => ({ summary: "2 lines: 9 cases of bread (43.2 kg) + 20 dill bunches, €384.60", result: { lines: plan.lines, total_net: plan.total_net } }));
+      step("plan", "Plan ready: 9 × Moilas gluten-free bread + 20 × dill", { plan });
+      await audit(agent, "plan.created", run_id, "Planned 9 × 461765 (43.2 kg, best tier) and 20 × 460395 dill. 3 candidates were rejected: out of stock, contains gluten, may contain gluten.", {});
+      await sleep(700);
+      let quote;
+      await tool("create_quote", { delivery_date: WED, lines: [{ product_id: "461765", qty_sales_units: 9, tier: "best" }, { product_id: "460395", qty_sales_units: 20 }] }, 92, async () => {
+        quote = await makeQuote(customer_id, plan);
+        await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id} for €384.60 net, price locked for 15 minutes.`, { quote_hash: quote.quote_hash, run_id });
+        return { summary: `Signed quote ${quote.quote_id}, €384.60`, result: { quote_id: quote.quote_id, quote_hash: quote.quote_hash } };
+      });
+      step("quote", `Signed quote ${quote.quote_id}`, { quote });
+      await sleep(500);
+      let order;
+      await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 71, async () => {
+        order = newOrder(quote, decision, "pending_approval");
+        orders.set(order.order_id, { order, quote, decision, run });
+        await audit("system:trust", "policy.evaluated", order.order_id, "Policy hospital-meilahti v1.0.0: needs approval by the Dietitian (substitution of the usual bread; dill has unknown allergen data).", { outcome: decision.outcome });
+        await audit("system:gateway", "order.pending_approval", order.order_id, `Order ${order.order_id} is held for the Dietitian.`, { quote_id: quote.quote_id, run_id });
+        return { summary: `Order ${order.order_id} held: needs approval`, result: { order_id: order.order_id, status: order.status } };
+      });
+      step("decision", "Policy verdict: needs approval by the Dietitian", { decision, order });
+      await sleep(400);
+      step("approval_wait", "Waiting for the Dietitian to approve", { order_id: order.order_id, approver_role: "dietitian" });
+      run.deliveryLabel = "Wed 18 Nov";
+      run.finalSummary = (q) => `9 cases of Moilas gluten-free dark bread (43.2 kg) and 20 bunches of dill confirmed for Wed 18 Nov at €384.60 net, approved by the Dietitian against signed quote ${q.quote_id}.`;
+      return;
+    }
+
+    step("error", "No mock script for this customer", { message: "Mock mode scripts hotel-aurora, school-tampere and hospital-meilahti." });
     step("final", "Run ended", { status: "error", summary: "Nothing was ordered." });
   }
 
@@ -432,13 +535,14 @@ export async function createMockApi() {
       const roleText = (rec.decision.approver_role || "approver").replace(/_/g, " ");
       order.updated_at = iso();
       order.approved_by = approver;
+      order.approver_role = rec.decision.approver_role || null;
       order.approval_note = note || null;
       if (decision === "approve") {
         await audit(who, "order.approved", orderId, `${approver} (${roleText}) approved order ${orderId} for quote ${quote.quote_id}, bound to hash ${quote.quote_hash.slice(7, 19)}…${note ? ` Note: “${note}”` : ""}`, { quote_hash });
         order.status = "placed";
         order.response_code = "AP";
-        order.response_lines = quote.lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: `Accepted for delivery ${quote.delivery_date === MON ? "Mon 16 Nov" : quote.delivery_date}` }));
-        await audit("system:gateway", "order.placed", orderId, `Order ${orderId} placed in the order backend. Order response AP: ${quote.lines.length} line accepted, ${quote.lines[0].qty_sales_units} units confirmed.`, { response_code: "AP" });
+        order.response_lines = quote.lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: `Accepted for delivery ${run?.deliveryLabel || quote.delivery_date}` }));
+        await audit("system:gateway", "order.placed", orderId, `Order ${orderId} placed in the order backend. Order response AP: ${quote.lines.length} line(s) accepted in full.`, { response_code: "AP" });
       } else {
         await audit(who, "order.rejected", orderId, `${approver} rejected order ${orderId}.${note ? ` Note: “${note}”` : ""} Nothing was sent to the warehouse.`, { quote_hash });
         order.status = "rejected";
@@ -449,7 +553,7 @@ export async function createMockApi() {
         setTimeout(() => {
           if (order.status === "placed") {
             s("order", `Order ${orderId} placed: accepted (AP)`, { order: structuredClone(order) });
-            s("final", "Done: placed", { order_id: orderId, status: "placed", summary: "1,000 L Valio Eila lactose-free semi-skimmed milk (1 L cartons) confirmed for Mon 16 Nov at €1,010.00 net, approved by the Procurement Manager against signed quote " + quote.quote_id + "." });
+            s("final", "Done: placed", { order_id: orderId, status: "placed", summary: run.finalSummary ? run.finalSummary(quote) : `Order ${orderId} placed.` });
           } else {
             s("final", "Done: rejected", { order_id: orderId, status: "rejected", summary: "The approver rejected the order. Nothing was sent to the warehouse." });
           }
@@ -483,7 +587,22 @@ export async function createMockApi() {
     reportUrl: null,
     async jwks() { return { keys: publicJwk ? [publicJwk] : [] }; },
     async otap() { return { name: "valio-aimo-trusted-trade", version: "mock", mcp: "/mcp", jwks: "/.well-known/jwks.json" }; },
-    /** Demo helper: tamper with one ledger entry so "Verify chain" turns red. */
-    async tamper() { await chain; if (ledger.length > 2) ledger[Math.floor(ledger.length / 2)].summary += " (edited)"; },
+    /** Demo helpers mirroring POST /v1/demo/tamper/{seq} and /v1/demo/untamper/{seq}. */
+    demoAvailable: async () => true,
+    async tamper(seq) {
+      await chain;
+      const e = ledger.find((x) => x.seq === seq);
+      if (!e) throw Object.assign(new Error("404 no such event"), { status: 404 });
+      if (!tampered.has(seq)) tampered.set(seq, e.summary);
+      e.summary = e.summary.replace(/€[\d,]+\.\d\d/, "€9,999.00");
+      if (e.summary === tampered.get(seq)) e.summary += " (edited)";
+      return { ok: true, seq };
+    },
+    async untamper(seq) {
+      await chain;
+      const e = ledger.find((x) => x.seq === seq);
+      if (e && tampered.has(seq)) { e.summary = tampered.get(seq); tampered.delete(seq); }
+      return { ok: true, seq };
+    },
   };
 }
