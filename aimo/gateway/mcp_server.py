@@ -178,6 +178,11 @@ def build_mcp() -> MCPServer:
         (spend limits, approver roles, substitution and allergen rules)."""
         return _call(ctx, service.list_policies)
 
+    try:  # recipes, drift, proactive seller tools (ported from Momin's junction26-valio)
+        from aimo.gateway.extras import register_mcp_tools
+        register_mcp_tools(mcp)
+    except ImportError:  # pragma: no cover
+        pass
     return mcp
 
 

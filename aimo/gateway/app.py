@@ -270,6 +270,11 @@ def create_app(with_mcp: bool = True) -> FastAPI:
         return JSONResponse(e.to_dict(), status_code=e.status, headers=headers)
 
     app.include_router(build_router())
+    try:  # recipes, drift, proactive seller (ported from Momin's junction26-valio)
+        from aimo.gateway.extras import router as extras_router
+        app.include_router(extras_router)
+    except ImportError as e:  # pragma: no cover
+        log.warning("extras router not mounted: %s", e)
 
     # Buyer's agent runs (/v1/agent/runs) if present.
     try:

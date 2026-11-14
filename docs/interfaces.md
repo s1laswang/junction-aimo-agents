@@ -146,3 +146,20 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
 - **Identity:** headers (MCP session / in-process `identity`) win. A body `customer_id` / `agent_id` that disagrees -> **403 `customer_mismatch` / `agent_mismatch`** (quotes and offers). Without the header the body value is used (demo convenience).
 - **Scope at quote time:** agents whose mandate lacks `quote:create` (e.g. unregistered `mallory`) get **403 `scope_missing`**; the refusal is audited as `request.refused`.
 - **Live re-fetch:** quotes and order placement call the mock API with `fresh=True` (bypass the 5-minute cache, refresh it); `provenance.served_from="live"`, `fresh_requested=true`. Search/offers browsing stays cached. `BackendClient.price/availability` accept optional `fresh=`.
+
+## Port additions (landed Sat ~19:00, from team/port; ported from Momin's junction26-valio, see docs/reports/port.md and docs/SCENARIOS.md)
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| GET | `/v1/recipes` | | `[{id, name, name_fi, aliases, ingredients[{query, per_portion, unit}], note}]` |
+| POST | `/v1/recipes/plan` | `{recipe_id? , text?, portions?, delivery_by?, customer_id?, excluded_allergens[], lactose_free, gluten_free, include_candidates}` | `{recipe, customer_id, delivery_by, excluded_allergens, swaps[], ingredients[{ingredient, query, quantity, unit, swap, need, plan}], uncovered[], total_net_estimate, summary, quote_request{customer_id, delivery_date, lines[]}, provenance}`. Errors: 404 `recipe_not_found`, 400 `portions_required`, 503 upstream. |
+| GET | `/v1/drift/{customer_id}` | `rebaseline?` | `{customer_id, delivery_date, standing_order, flags[{product_id, kind: price\|volume\|availability\|allergen, change_pct, message, route: auto\|approval, before?, after?, fix, product_name}], summary, provenance}`. 404 `no_standing_order`. |
+| POST | `/v1/proposals` | `{customer_id, product_id?, qty_sales_units?, replaces_product_id?, delivery_date?, note}` + `X-Agent-Id: valio-aimo/<agent>` | proposal `{proposal_id, seller_id, kind: cheaper_equivalent\|seller_pick, status, product, replaces, qty_sales_units, offer, why[], estimated_saving_eur, policy_preview{binding:false, outcome, approver_role, hits}, seller_can_order:false, quote_request}`. 404 `no_better_offer` / `unknown_customer`, 409 `not_orderable`. |
+| GET | `/v1/proposals` | `customer_id?, status?` | proposals, newest first |
+| GET | `/v1/proposals/{id}` | | proposal |
+| POST | `/v1/proposals/{id}/accept` | buyer headers | `{proposal, quote, order}`. 403 `seller_cannot_order` / `customer_mismatch`, 409 `not_open`. |
+| POST | `/v1/proposals/{id}/decline` | `{reason}` | proposal |
+
+MCP tools: `list_recipes()`, `plan_recipe(recipe_id?, portions?, delivery_by?, text?, excluded_allergens?)`, `check_standing_order_drift(customer_id?)`, `propose_offer(customer_id, product_id?, qty_sales_units?, replaces_product_id?, delivery_date?, note?)`. The buyer accepts a proposal over MCP with `create_quote(proposal.quote_request…)` + `place_order`.
+
+Audit actions: `drift.checked`, `proposal.created`, `proposal.accepted`, `proposal.declined`, `proposal.accept_refused`.
+
