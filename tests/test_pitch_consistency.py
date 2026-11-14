@@ -14,7 +14,7 @@ from aimo.api import ParseResponse
 from aimo.app import app
 from aimo.models import Order, Quote
 from pitch.measure_data import _resolve_data_dir
-from scripts.smoke_demo import EXPECTED_TOOLS
+from scripts.smoke_demo import CHECKS as SMOKE_CHECKS, EXPECTED_TOOLS
 from tests.test_pitch_numbers import EXPECTED_MEASURED
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -525,6 +525,8 @@ def test_catalog_headline_count_matches_docs_offline():
     products_count = EXPECTED_MEASURED["products"]
     formatted_count = f"{products_count:,}"
     assert formatted_count == "17,546"
+    lactose_free_count = f"{EXPECTED_MEASURED['lactose_free_claim']:,}"
+    assert lactose_free_count == "4,178"
 
     for rel in (
         "CONTRACT.md",
@@ -537,12 +539,27 @@ def test_catalog_headline_count_matches_docs_offline():
         text = (ROOT / rel).read_text(encoding="utf-8")
         assert formatted_count in text, f"{formatted_count} missing from {rel}"
 
+    for rel in (
+        "docs/ASSUMPTIONS.md",
+        "README.md",
+        "pitch/NUMBERS.md",
+        "pitch/PITCH.md",
+        "pitch/DECK.md",
+    ):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert lactose_free_count in text, f"{lactose_free_count} missing from {rel}"
+
     for rel in ("CONTRACT.md", "docs/ASSUMPTIONS.md"):
         text = (ROOT / rel).read_text(encoding="utf-8")
         matches = PRODUCT_JSON_COUNT_RE.findall(text)
         assert matches, f"Product JSON item count line missing from {rel}"
         for raw_num in matches:
             assert int(raw_num.replace(",", "")) == products_count, rel
+
+    makefile_text = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "smoke:" in makefile_text
+    assert "scripts/smoke_demo.py" in makefile_text
+    assert len(SMOKE_CHECKS) == 6
 
 
 def test_catalog_headline_count_matches_contract_and_assumptions(measured_catalog_count):

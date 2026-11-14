@@ -146,6 +146,25 @@ def test_units_for_zero_missing_and_fallback_data(tmp_path, monkeypatch):
         assert units_for(make_product(pid="mass_case", sales_unit="KI", size=None), 3, "kg") == 2.0
         assert units_for(make_product(pid="incomplete", sales_unit="KI", size=None), 5, "l") is None
         assert units_for(make_product(pid="bad_unit", sales_unit="KI", size=None), 5, "kg") is None
+
+    dir_b = tmp_path / "dir_b"
+    dir_b.mkdir()
+    sample_b = [
+        {
+            "id": "vol_case",
+            "salesUnit": "KI",
+            "units": [{"unitId": "KI", "sizeInBaseUnits": 8}],
+            "synkkaData": {"unitConversions": [{"volume": {"value": 1.0, "unit": "l"}}]},
+        }
+    ]
+    (dir_b / "valio_aimo_junction26_product_data.json").write_text(json.dumps(sample_b))
+    with monkeypatch.context() as m:
+        m.setenv("AIMO_DATA_DIR", str(dir_b))
+        assert units_for(make_product(pid="vol_case", sales_unit="KI", size=None), 24, "l") == 3.0
+        assert units_for(make_product(pid="mass_case", sales_unit="KI", size=None), 3, "kg") is None
+    with monkeypatch.context() as m:
+        m.setenv("AIMO_DATA_DIR", str(tmp_path / "missing_again"))
+        assert units_for(make_product(pid="vol_case", sales_unit="KI", size=None), 24, "l") is None
     alloc_mod._data.cache_clear()
 
 
