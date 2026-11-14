@@ -1,0 +1,15 @@
+# Never bake secrets or local state into the image (pass .env with --env-file at run time).
+.env
+.env.*
+!.env.example
+data/
+keys/
+*.pem
+*.sqlite
+*.sqlite-journal
+.venv/
+.git/
+.claude/
+node_modules/
+__pycache__/
+.pytest_cache/
