@@ -2,6 +2,32 @@
 
 Owner: buyer engineer (Claude). Branch `team/buyer`. Updated Sat 14 Nov 15:15 Helsinki (round 2).
 
+## Round 3 (stopped early: usage limit), state at Sat 15:20
+Done and pushed:
+- **Token trim:** `compact_for_model()` in agent.py controls what the model sees of each tool result.
+  - A plan is reduced to its chosen lines plus the top 3 candidates per tier, with each reason cut to 110 characters.
+  - Search, offers, product, quote and order results are cut to the fields the agent decides on.
+  - The full results still go to the AgentStep stream for the UI.
+- **Cost accounting:** `aimo/buyer/costs.py` prices the ledger rows, using the playbook prices and a 10% rate for cached tokens.
+  - `aimo demo --montage --baseline-pid 33508` now writes, into docs/demo-montage.md, a cost-per-order and escalation table that compares the run against the round 2 montage.
+- **Approval polling:** after round 2 the gateway reports `approved` before `placed`, so the approval wait polls a few more times until the order is placed.
+- 36 tests pass.
+
+Measured from the ledger:
+| Run | Input tokens per hero run | Cached | Cost per run | Cost per order | Escalation |
+|---|---|---|---|---|---|
+| Round 2 montage (pid 33508, 6 runs, 5 orders) | 99,373 avg (hero 87,184) | 46% | $0.0685 | $0.0822 | 6/6 runs, 6/36 agent steps (17%) |
+| After trim, one hero run (Sat 15:16) | 44,771 | 39% | $0.0355 | $0.0355 | 1/1 runs, 1/6 steps |
+
+Left to do (not reached):
+- **Get hero input under the 30k target** (it is ~45k now). Three planned cuts:
+  - (a) Shorten the MCP tool descriptions in the function declarations. They are about 2k tokens and are repeated on every step.
+  - (b) End the loop once the order reaches a final status. The last agent turn (~9k input) only restates what buyer.summary writes anyway.
+  - (c) Shrink the facts sent to buyer.explain and buyer.summary (~2.3k each).
+- **Re-run the montage after the trim** with `--baseline-pid 33508`. All 6 must PASS, and docs/demo-montage.md needs the after-trim cost row.
+  - The montage verdicts still expect status `placed`. The new approval polling should make the order reach that status, but this is not verified in a montage yet.
+- **Catalog workaround:** catalog's reference_spec fix is on main, so `PLANNER_PREF_KEYS` filtering can be reverted, or kept as defence in depth.
+
 ## Round 2 (Sat afternoon)
 - **Montage:** `uv run aimo demo --montage` runs happy, stockout, school-allergen, injection, drift and event in sequence, with HTTP auto-approval by the policy's named approvers.
   It prints a verdict per scenario plus the Gemini calls and tokens from the ledger, and writes `docs/demo-montage.md`. That file holds the results table; every number in it comes from the run.

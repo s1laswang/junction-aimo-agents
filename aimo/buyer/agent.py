@@ -588,6 +588,12 @@ class BuyerAgent:
             except Exception as e:  # noqa: BLE001
                 self.emit("error", f"get_order_status failed ({type(e).__name__}); still waiting", error=str(e)[:200])
                 continue
+            if isinstance(cur, dict) and cur.get("status") == "approved":
+                # gateway round 2: approved -> placement follows; give it a few polls to reach placed
+                self._approved_polls = getattr(self, "_approved_polls", 0) + 1
+                if self._approved_polls < 5:
+                    continue
+                break
             if isinstance(cur, dict) and cur.get("status") != "pending_approval":
                 break
         else:
