@@ -11,6 +11,11 @@ from aimo import audit, mandates
 
 DAY = (date.today() + timedelta(days=(7 - date.today().weekday()) % 7 or 7)).isoformat()
 ADMIN = {"X-Admin-Key": "demo-admin"}
+needs_live = pytest.mark.skipif(
+    not os.path.exists(os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json"))
+    or (not os.environ.get("VALIO_API_BASE") and not os.path.exists("var/cache")),
+    reason="needs live data and Valio API or cache",
+)
 
 
 @pytest.fixture()
@@ -44,18 +49,21 @@ def risky(codes, unit):
                 return p["id"]
 
 
+@needs_live
 def test_hospital_blocked_contains(c):
     o = order(c, "demo-hospital-tays", risky({"AP"}, "CONTAINS"), 1)
     assert o["status"] == "blocked" and o["decision"]["outcome"] == "blocked"
     assert "ALLERGEN_CONFLICT" in [r["code"] for r in o["decision"]["reasons"]]
 
 
+@needs_live
 def test_hospital_blocked_traces(c):
     o = order(c, "demo-hospital-tays", risky({"AP", "AN"}, "MAY_CONTAIN"), 1)
     assert o["status"] == "blocked"
     assert any("traces" in r["text"] for r in o["decision"]["reasons"])
 
 
+@needs_live
 def test_school_week_limit(c):
     outs = [order(c, "demo-school-hervanta", "464073", 350) for _ in range(7)]
     codes = [[r["code"] for r in o["decision"]["reasons"]] for o in outs]
@@ -66,6 +74,7 @@ def test_school_week_limit(c):
     assert spent + outs[hit]["total_net"] > mandates.get("school-hervanta").per_week_eur >= spent
 
 
+@needs_live
 def test_admin_edit_flips_milk(c):
     pid, key = "464073", "demo-hotel-aurora"
     assert order(c, key, pid, 1000)["decision"]["outcome"] == "auto"
@@ -83,6 +92,7 @@ def test_reseed_keeps_edits_and_adds_missing(tmp_path, monkeypatch):
     assert mandates.get("hotel-aurora").per_order_eur == 7.0 and len(mandates.all()) == 3
 
 
+@needs_live
 def test_substitution_live(c):
     o = order(c, "demo-hospital-tays", "464073", 10, sub_for="464201")
     assert o["status"] == "pending_approval" and o["substitutions"]
