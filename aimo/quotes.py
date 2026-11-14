@@ -1,6 +1,8 @@
+import contextlib
 import json
 import os
 import sys
+import threading
 import urllib.request
 import uuid
 import warnings
@@ -17,6 +19,7 @@ warnings.filterwarnings("ignore", message="EdDSA is deprecated")
 
 HELSINKI = ZoneInfo("Europe/Helsinki")
 ALGS = ["EdDSA"]
+_LOCK = threading.RLock()
 
 
 class QuoteError(Exception):
@@ -77,7 +80,7 @@ def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, cu
     payload = _canon(quote.model_dump(mode="json", exclude={"jws"}))
     token = jws.serialize_compact({"alg": "EdDSA", "kid": keys.kid()}, payload.encode(), keys.signing_key(), algorithms=ALGS)
     quote.jws = token
-    with _db() as con:
+    with _LOCK, contextlib.closing(_db()) as con, con:
         con.execute(
             "INSERT INTO quotes (quote_id, customer, agent_id, valid_until, payload, jws) VALUES (?,?,?,?,?,?)",
             (quote.quote_id, customer, agent_id, quote.valid_until.isoformat(), payload, token),
@@ -92,7 +95,7 @@ def issue(customer, agent_id, lines, delivery_date, valid_until, total_gross, cu
 
 
 def get(quote_id):
-    with _db() as con:
+    with contextlib.closing(_db()) as con:
         row = con.execute("SELECT payload, jws FROM quotes WHERE quote_id=?", (quote_id,)).fetchone()
     return Quote(**json.loads(row[0]), jws=row[1]) if row else None
 
@@ -116,23 +119,24 @@ def verify(token, jwks=None):
 
 
 def redeem(quote_id, token, customer, agent_id):
-    with _db() as con:
-        if not con.execute("SELECT 1 FROM quotes WHERE quote_id=?", (quote_id,)).fetchone():
-            raise QuoteError("UNKNOWN_QUOTE", f"No quote {quote_id}.")
-    quote = verify(token)
-    if quote.quote_id != quote_id:
-        raise QuoteError("QUOTE_MISMATCH", "Signed quote does not match the quote id.")
-    if quote.customer != customer or quote.agent_id != agent_id:
-        raise QuoteError("WRONG_AGENT", "Quote was issued to a different agent.")
-    now = datetime.now(timezone.utc)
-    if now >= quote.valid_until:
-        raise QuoteError("QUOTE_EXPIRED", f"Quote expired at {quote.valid_until.isoformat()}.")
-    with _db() as con:
-        n = con.execute(
-            "UPDATE quotes SET used_at=? WHERE quote_id=? AND used_at IS NULL", (now.isoformat(), quote_id)
-        ).rowcount
-    if not n:
-        raise QuoteError("QUOTE_USED", "Quote was already used.")
+    with _LOCK:
+        with contextlib.closing(_db()) as con:
+            if not con.execute("SELECT 1 FROM quotes WHERE quote_id=?", (quote_id,)).fetchone():
+                raise QuoteError("UNKNOWN_QUOTE", f"No quote {quote_id}.")
+        quote = verify(token)
+        if quote.quote_id != quote_id:
+            raise QuoteError("QUOTE_MISMATCH", "Signed quote does not match the quote id.")
+        if quote.customer != customer or quote.agent_id != agent_id:
+            raise QuoteError("WRONG_AGENT", "Quote was issued to a different agent.")
+        now = datetime.now(timezone.utc)
+        if now >= quote.valid_until:
+            raise QuoteError("QUOTE_EXPIRED", f"Quote expired at {quote.valid_until.isoformat()}.")
+        with contextlib.closing(_db()) as con, con:
+            n = con.execute(
+                "UPDATE quotes SET used_at=? WHERE quote_id=? AND used_at IS NULL", (now.isoformat(), quote_id)
+            ).rowcount
+        if not n:
+            raise QuoteError("QUOTE_USED", "Quote was already used.")
     _audit("quote.redeemed", quote, f"Quote {quote_id} redeemed for {quote.total_net:,.2f} {quote.currency} net ({quote.total_gross:,.2f} {quote.currency} with VAT).")
     return quote
 
