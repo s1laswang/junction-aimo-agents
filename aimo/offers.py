@@ -248,6 +248,9 @@ def price_lines(customer: str, delivery_date: date, lines: list[QuoteRequestLine
         pr = prices.get(l.product_id)
         if not pr or pr.get("error") or not pr.get("catalogPrice"):
             raise QuoteError("INVALID_QUOTE", f"No price available for product {l.product_id}.")
+        a = avail.get(l.product_id) or {}
+        if (str(l.product_id) in _overrides and (_overrides[str(l.product_id)].available_amount or 0) < l.quantity) or a.get("salesBlock"):
+            raise QuoteError("OUT_OF_STOCK", f"Insufficient stock for product {l.product_id}.")
         net = pr["catalogPrice"]["value"]
         gross += l.quantity * (pr.get("priceWithTax") or {}).get("value", net)
         p = _catalog_get(catalog, l.product_id)
@@ -260,7 +263,6 @@ def price_lines(customer: str, delivery_date: date, lines: list[QuoteRequestLine
             line_total_net=round(l.quantity * net, 2),
             substitute_for=l.substitute_for,
         ))
-        a = avail.get(l.product_id) or {}
         if a.get("closingTime"):
             sl = (a.get("scheduleLines") or [{}])[0]
             closes.append(cutoff(a["closingTime"], sl.get("availableDate"), delivery_date))
