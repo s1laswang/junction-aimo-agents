@@ -17,7 +17,7 @@ from starlette.routing import Route
 from aimo import config
 from aimo.backend.client import reset_request_faults, set_request_faults
 from aimo.backend import clock
-from aimo.gateway import human_auth, service
+from aimo.gateway import auth, human_auth, service
 from aimo.gateway.schemas import DecisionRequest, OffersRequest, OrderRequest, QuoteRequest
 from aimo.models import Need, Offer, Order, Plan, Product, ProductSummary, Quote
 
@@ -56,7 +56,9 @@ TAGS = [
 ]
 
 ERR = {
-    400: {"description": "Bad request"}, 403: {"description": "Identity or mandate problem"},
+    400: {"description": "Bad request"},
+    401: {"description": "Identity or credential required"},
+    403: {"description": "Identity or mandate problem"},
     404: {"description": "Not found"},
     409: {"description": "Conflict: unavailable lines, quote hash mismatch, expired quote (re-quote needed)"},
     503: {"description": "Upstream Valio Aimo API unavailable (retry after detail.retry_after seconds)"},
@@ -208,58 +210,111 @@ def build_router() -> APIRouter:
                 "offline": config.OFFLINE, "clock": clock.describe(), "replay": _replay_info(),
                 "upstream": _upstream_state(), "breakers": _breakers()}
 
-    # ---------------------------------------------------------- catalog
-    @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary])
+    @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary], responses=ERR)
     def search_products(
         q: str = Query(..., description="Free text (English or Finnish)", examples=["lactose free milk"]),
         claims: Optional[str] = Query(None, description="Comma-separated required claims", examples=["FREE_FROM_LACTOSE"]),
         category: Optional[str] = Query(None, description="Category code, e.g. 10400"),
         content_unit: Optional[str] = Query(None, description="L | KG | PCS"),
         limit: int = Query(20, ge=1, le=100),
+        customer_id: Optional[str] = Query(None, description="Customer id (defaults to X-Customer-Id)"),
+        x_customer_id: Optional[str] = Header(None),
+        x_agent_key: Optional[str] = Header(None),
     ):
+        auth.resolve_customer_identity(x_customer_id=x_customer_id, body_customer_id=customer_id, x_agent_key=x_agent_key)
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
-        # dump each item as its own type: injected-text faults return Product (with marketing_text)
         return JSONResponse([p.model_dump(mode="json") for p in res])
 
     @r.get("/v1/products/{product_id}", tags=["catalog"], summary="Product details", response_model=Product, responses=ERR)
-    def get_product(product_id: str):
+    def get_product(
+        product_id: str,
+        x_customer_id: Optional[str] = Header(None),
+        x_agent_key: Optional[str] = Header(None),
+    ):
         """Supplier fields such as `marketing_text` are UNTRUSTED: screen before showing them to an LLM."""
+        if x_customer_id and x_customer_id.strip():
+            cid = auth.require_known_customer(x_customer_id)
+            auth.check_agent_key(cid, x_agent_key)
         return service.get_product(product_id)
 
-    # ---------------------------------------------------------- offers / plan
     @r.post("/v1/offers", tags=["offers"], summary="Live price + availability", response_model=list[Offer], responses=ERR)
-    def offers(body: OffersRequest, ident: service.Identity = Depends(identity)):
+    def offers(
+        body: OffersRequest,
+        x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1"),
+        x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora"),
+        x_agent_key: Optional[str] = Header(None),
+    ):
         """Merged `/api/price` + `/api/availability` from the Valio Aimo API. `cutoff_passed` is true when the
         product's order closing time is already past (it cannot make the requested date). Provenance is in
         each offer's `provenance` and in the `X-Aimo-*` response headers."""
-        who = _with_body_claims(ident, body.customer_id, None)
+        who = auth.resolve_customer_identity(
+            x_customer_id=x_customer_id,
+            body_customer_id=body.customer_id,
+            x_agent_id=x_agent_id,
+            x_agent_key=x_agent_key,
+        )
         res, meta = service.fetch_offers(body.product_ids, body.requested_date, who.customer_id)
         return JSONResponse([o.model_dump(mode="json") for o in res], headers=_prov_headers(meta))
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
-    def plan(need: Need):
-        return service.plan_need(need)
+    def plan(
+        need: Need,
+        x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1"),
+        x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora"),
+        x_agent_key: Optional[str] = Header(None),
+    ):
+        who = auth.resolve_customer_identity(
+            x_customer_id=x_customer_id,
+            body_customer_id=need.customer_id,
+            x_agent_id=x_agent_id,
+            x_agent_key=x_agent_key,
+        )
+        return service.plan_need(need.model_copy(update={"customer_id": who.customer_id}), identity=who)
 
-    # ---------------------------------------------------------- quotes
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
-    def create_quote(body: QuoteRequest, ident: service.Identity = Depends(strict_identity)):
+    def create_quote(
+        body: QuoteRequest,
+        x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1 (required)"),
+        x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora (required)"),
+        x_agent_key: Optional[str] = Header(None),
+    ):
         """Re-fetches live offers, refuses lines that are unavailable / past cut-off / short of stock (409 with
         per-line reasons), computes totals, signs the quote (quote_hash + JWS) and fixes the price until
         `expires_at`."""
-        who = _with_body_claims(ident, body.customer_id, body.agent_id)
+        who = auth.resolve_customer_identity(
+            x_customer_id=x_customer_id,
+            body_customer_id=body.customer_id,
+            x_agent_id=x_agent_id,
+            body_agent_id=body.agent_id,
+            x_agent_key=x_agent_key,
+            require_headers=True,
+        )
         return service.make_quote(who, body.delivery_date, [l.model_dump() for l in body.lines], body.need)
 
     @r.get("/v1/quotes/{quote_id}", tags=["quotes"], summary="Get a quote", response_model=Quote, responses=ERR)
     def get_quote(quote_id: str):
         return service.get_quote(quote_id)
 
-    # ---------------------------------------------------------- orders
     @r.post("/v1/orders", tags=["orders"], summary="Place an order for a signed quote", response_model=Order, responses=ERR)
-    def place_order(body: OrderRequest, ident: service.Identity = Depends(strict_identity)):
+    def place_order(
+        body: OrderRequest,
+        x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1 (required)"),
+        x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora (required)"),
+        x_agent_key: Optional[str] = Header(None),
+    ):
         """Verifies quote hash, signature and expiry, then evaluates the customer's policy:
         `placed` (auto-approved, with Peppol-style response), `pending_approval` or `rejected`. Idempotent per quote."""
-        return service.submit_order(ident, body.quote_id, body.quote_hash)
+        who = auth.resolve_customer_identity(
+            x_customer_id=x_customer_id,
+            body_customer_id=getattr(body, "customer_id", None),
+            x_agent_id=x_agent_id,
+            body_agent_id=getattr(body, "agent_id", None),
+            x_agent_key=x_agent_key,
+            require_headers=True,
+            defer_unknown_customer=True,
+        )
+        return service.submit_order(who, body.quote_id, body.quote_hash)
 
     @r.get("/v1/orders/{order_id}", tags=["orders"], summary="Order status", response_model=Order, responses=ERR)
     def get_order(order_id: str):
@@ -275,24 +330,26 @@ def build_router() -> APIRouter:
         o = service.get_order(order_id)
         return PlainTextResponse(order_response_xml(o, service.get_quote(o.quote_id)), media_type="application/xml")
 
-    # ---------------------------------------------------------- approvals
-    @r.get("/v1/approvals", tags=["approvals"], summary="Approval inbox")
+    @r.get("/v1/approvals", tags=["approvals"], summary="Approval inbox", responses=ERR)
     def approvals(
         status: Optional[str] = Query("pending", description="pending | placed | rejected | expired | all"),
         customer_id: Optional[str] = Query(None),
         x_customer_id: Optional[str] = Header(None),
+        x_agent_key: Optional[str] = Header(None),
         cred: HumanCred = Depends(human_cred),
     ) -> list[dict[str, Any]]:
         """Orders with their exact quote and policy decision: `[{order, quote, decision, expired, approvals}]`.
         A signed-in human approver sees the inbox; an agent sees only its own customer's orders."""
         if _is_human(cred):
             return service.list_approvals(status, customer_id)
-        if not x_customer_id:
+        if not x_customer_id or not x_customer_id.strip():
             raise service.ServiceError(401, "identity_required",
                                        "Send X-Customer-Id (agents) or X-Approver-Pin (human approvers).")
-        if customer_id and customer_id != x_customer_id:
+        cid = auth.require_known_customer(x_customer_id)
+        auth.check_agent_key(cid, x_agent_key)
+        if customer_id and customer_id.strip() and customer_id.strip() != cid:
             raise service.ServiceError(403, "customer_mismatch", "you can only list your own customer's orders")
-        return service.list_approvals(status, x_customer_id)
+        return service.list_approvals(status, cid)
 
     @r.post("/v1/approvals/{order_id}/decision", tags=["approvals"], summary="Approve or reject (humans only)",
             response_model=Order, responses=ERR)
@@ -374,13 +431,21 @@ def build_router() -> APIRouter:
                                        "Name a human from a customer's approver directory, e.g. anna@hotel-aurora.example.")
         return human_auth.issue_session(canonical)
 
-    # ---------------------------------------------------------- customers
-    @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)")
-    def learned(customer_id: str, x_customer_id: Optional[str] = Header(None)) -> dict[str, Any]:
+    @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)",
+           responses=ERR)
+    def learned(
+        customer_id: str,
+        x_customer_id: Optional[str] = Header(None),
+        x_agent_key: Optional[str] = Header(None),
+    ) -> dict[str, Any]:
         """Swaps a human approved with `remember: true`. Visible only to the customer itself (403 otherwise)."""
-        if x_customer_id and x_customer_id != customer_id:
-            raise service.ServiceError(403, "customer_mismatch", "you can only read your own customer's learned approvals")
-        return service.learned_for(customer_id)
+        cid = auth.require_known_customer(customer_id)
+        if x_customer_id and x_customer_id.strip():
+            xcid = auth.require_known_customer(x_customer_id)
+            if xcid != cid:
+                raise service.ServiceError(403, "customer_mismatch", "you can only read your own customer's learned approvals")
+        auth.check_agent_key(cid, x_agent_key)
+        return service.learned_for(cid)
 
     @r.get("/v1/customers", tags=["customers"], summary="Demo customers and policy summaries")
     def customers(cred: HumanCred = Depends(human_cred)) -> list[dict[str, Any]]:
@@ -436,6 +501,8 @@ def create_app(with_mcp: bool = True) -> FastAPI:
         return JSONResponse(e.to_dict(), status_code=e.status, headers=headers)
 
     app.include_router(build_router())
+    try: from aimo.voice.routes import router as _voice; app.include_router(_voice)  # noqa: E702 S5 voice approval
+    except Exception as e: log.warning("voice router not mounted: %s", e)  # noqa: BLE001
     try:  # recipes, drift, proactive seller (ported from Momin's junction26-valio)
         from aimo.gateway.extras import router as extras_router
         app.include_router(extras_router)

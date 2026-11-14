@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from aimo.catalog.screening_bridge import screen_reason
 from aimo.models import Need, Offer, Product
 
 log = logging.getLogger("aimo.gateway.verify")
@@ -159,12 +160,17 @@ def verify_lines(
             if any((p.allergens.get(g) is None or getattr(p.allergens.get(g), "value", p.allergens.get(g)) == "unknown")
                    for g in excluded):
                 flags.append("allergen_unknown")
+        injection_screen: dict[str, Any] | None = None
         if p is not None:
             sc = screen(p)
+            injection_screen = {"suspicious": bool(sc.get("suspicious")), "reasons": list(sc.get("reasons") or [])}
             if sc.get("suspicious"):
                 flags.append("supplier_text_injection_suspected")
                 if "injected:inject_text" in (p.labels or []):
                     flags.append("injected:inject_text")
+                sr = screen_reason(sc)
+                if sr and sr not in reasons:
+                    reasons.append(sr)
         out[pid] = {"tier": tier, "flags": list(dict.fromkeys(flags)), "reasons": reasons, "method": method,
-                    "reference": reference}
+                    "reference": reference, "injection_screen": injection_screen}
     return out

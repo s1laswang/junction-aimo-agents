@@ -106,6 +106,7 @@ class Candidate(BaseModel):
     rank_score: float = 0.0
     reasons: list[str] = []                   # human-readable, shown in UI and audit
     flags: list[str] = []                     # "allergen_unknown", "outside_preference", "cutoff_passed"
+    injection_screen: Optional[dict[str, Any]] = None
 
 
 class PlanLine(BaseModel):
@@ -119,6 +120,7 @@ class PlanLine(BaseModel):
     line_total: float
     reasons: list[str] = []
     flags: list[str] = []
+    injection_screen: Optional[dict[str, Any]] = None
 
 
 class Plan(BaseModel):

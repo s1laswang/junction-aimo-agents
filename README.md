@@ -15,15 +15,16 @@ Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" chall
 |---|---|---|
 | Python 3.11+ | runtime (`requires-python = ">=3.11"`) | system package or uv-managed |
 | [uv](https://docs.astral.sh/uv/) | one-command runner and lockfile installer | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Network | first-run download of the challenge product JSON from the Valio mock API | — |
+| Network | first-run download of the challenge product JSON from the Valio mock API | none |
 
-Environment variables (names only; copy `.env.example` to `.env` and fill them in — never commit `.env`):
+Environment variables (names only; copy `.env.example` to `.env` and fill them in; never commit `.env`):
 
 | Variable | Required for | If missing |
 |---|---|---|
-| `AIMO_API_KEY` | `aimo serve` / `aimo fetch-data` downloading `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs). Needed for the live catalog, catalog-backed pytest cases, `qa_milk_flow.py`, and the conformance suite's catalog-backed checks. | Download is skipped with a warning. `aimo serve` still starts (UI / docs / `/.well-known`). Tests that need the product JSON skip. |
-| `AIMO_PORTAL_URL`, `AIMO_PORTAL_PASSWORD` | portal login to obtain a mock-API key if you do not already have `AIMO_API_KEY` | leave blank if you already have a key |
-| `GEMINI_API_KEY` | `uv run aimo demo` (Gemini buyer), embeddings / allergen hints, wind-tunnel live runs | Keyless path: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (still needs the product data + a running gateway). `aimo serve --no-build` skips Gemini catalog builds. |
+| `AIMO_API_KEY` (alias: `VALIO_API_KEY`) | `aimo serve` / `aimo fetch-data` downloading `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs). Needed for the live catalog, catalog-backed pytest cases, `qa_milk_flow.py`, and the conformance suite's catalog-backed checks. | Download is skipped with a warning. `aimo serve` still starts (UI / docs / `/.well-known`). Tests that need the product JSON skip. |
+| `AIMO_PORTAL_URL` (alias: `VALIO_API_BASE`), `AIMO_PORTAL_PASSWORD` | mock API base URL (default `https://junction26.valioaimo.fi/`) and portal login to obtain a mock-API key if you do not already have `AIMO_API_KEY` | defaults to the challenge URL; leave password blank if you already have a key |
+| `GEMINI_API_KEY` (alias: `GOOGLE_API_KEY`) | live Gemini buyer in `uv run aimo demo`, embeddings / allergen hints, wind-tunnel live runs | `uv run aimo demo` still finishes end-to-end via the deterministic regex parser and scripted buyer fallback (and `make accept` runs it when keyless); `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` runs the REST milk flow (needs the product data + a running gateway); `aimo serve --no-build` skips Gemini catalog builds. |
+| `AIMO_APPROVER_PIN` | human approver credential (`X-Approver-Pin`) for `/v1/approvals/{id}/decision`, `/v1/auth/approver-session`, and demo tamper routes | Generated once as a random 12-character passphrase in `data/keys/approver_pin` (mode `0600`); never returned by any API route or MCP tool. |
 
 Do not put real values in the README. A judge machine with none of these variables set can still run `make accept`, which will SKIP key-gated steps and must not crash.
 
@@ -66,14 +67,14 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **263 passed, 7 skipped, 2 xfailed** (Sat 14 Nov 23:00). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (8/8 with the live mock API). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **591 passed, 7 skipped, 2 xfailed** (600 tests in `tests/`). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8** with the live mock API). Conformance suite: `uv run python -m conformance` (**44/44** checks on both Valio Aimo and `toywholesaler`, and offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
 
 ## What it is: five pillars
 
 1. **An open door for any agent.** One gateway, two equal surfaces: an **MCP server** (`/mcp`, plus stdio) and an **OpenAPI 3.1** REST API (`/v1`), discoverable from `/.well-known/otap.json`. Every tool calls the live Valio Aimo challenge mock price and availability API (batched up to 1,000 ids, cached 5 minutes, retried with backoff).
 2. **Lookup that understands food.** 17,546 products from the challenge's synthetic catalog, with Finnish, Swedish and English names, hybrid full-text plus **gemini-embedding-2** search, content-per-sales-unit parsing (€/L and €/kg), and a **good-better-best** substitution ranking that explains every rank. Allergens are tri-state (contains / free / unknown): **unknown is never safe**, and Gemini-inferred allergens can only block, never clear.
 3. **Guardrails the customer owns.** A versioned YAML policy per customer (hotel, school kitchen, hospital): spend thresholds, weekly budget, category scope, substitution tiers, allergen hard blocks, cut-off and delivery checks, standing-order drift and prompt-injection screening. Every rule returns a plain-language reason, and the strictest wins (reject > needs approval > auto).
-4. **Signed quotes and human approval bound to the hash.** Quotes are fixed-price for 15 minutes and signed with Ed25519 (JWS, RFC 7515/8037). A named approver in the right role approves *that exact* quote hash; a changed price or an expired lock invalidates the approval. Only a signed-in human can approve. Decisions need the approver credential (`X-Approver-Pin`, which no API route or MCP tool ever returns; production: the customer's SSO), any request carrying agent identity gets 403, even if it names a real approver, and the approver must be in the order customer's directory with an allowed role. MCP has no approval tool at all. Quotes and orders need an explicit caller identity (no defaults), and the inbox is scoped to the caller's customer. The gateway computes each line's substitution tier itself instead of trusting the agent.
+4. **Signed quotes and human approval bound to the hash.** Quotes are fixed-price for 15 minutes and signed with Ed25519 (JWS, RFC 7515/8037). A named approver in the right role approves *that exact* quote hash; a changed price or an expired lock invalidates the approval. Only a signed-in human can approve. Decisions need a signed per-approver session token (`POST /v1/auth/approver-session` -> `X-Approver-Session`, stored by `/ui` instead of the PIN) or the approver credential (`X-Approver-Pin`, which no API route or MCP tool ever returns; brute-force guesses trigger a per-client 429 `approver_locked` lockout while existing sessions keep working; production: the customer's SSO). Any request carrying agent identity gets 403 `agent_cannot_approve`, even if it names a real approver, and the approver must be in the order customer's directory with an allowed role. MCP has no approval tool at all. Quotes and orders need an explicit caller identity (no defaults), and the inbox is scoped to the caller's customer. The gateway computes each line's substitution tier itself instead of trusting the agent.
 5. **An audit trail anyone can check.** Every request, quote, policy decision, approval and order is an event in an append-only, hash-chained, signed log, rendered as readable sentences. `GET /v1/audit/verify` recomputes every hash and signature; the evidence pack lets a third party verify offline.
 
 The reference client is a **Gemini buyer agent** (function calling over our MCP tools, structured-output need parsing, thinking-level escalation for substitution decisions). A **wind tunnel** of Gemini-generated synthetic customers measures it against a naive agent with direct API access. Details: [docs/GEMINI.md](docs/GEMINI.md).
@@ -183,8 +184,9 @@ curl -s -X POST http://localhost:8000/v1/quotes "${H[@]}" \
 # 5. Order: returns status pending_approval with every rule's reason
 curl -s -X POST http://localhost:8000/v1/orders "${H[@]}" -d '{"quote_id":"Q-...","quote_hash":"..."}'
 
-# 6. Human approval, bound to the hash (a wrong hash returns 409 quote_hash_mismatch)
-curl -s -X POST http://localhost:8000/v1/approvals/ORD-.../decision "${H[@]}" \
+# 6. Human approval, bound to the hash (no X-Agent-Id, or 403 agent_cannot_approve; /ui exchanges the PIN at POST /v1/auth/approver-session for X-Approver-Session, with per-client 429 approver_locked on wrong guesses; wrong hash returns 409 quote_hash_mismatch)
+curl -s -X POST http://localhost:8000/v1/approvals/ORD-.../decision \
+  -H "Content-Type: application/json" -H "X-Approver-Pin: $AIMO_APPROVER_PIN" \
   -d '{"decision":"approve","approver":"anna@hotel-aurora.example","approver_role":"procurement_manager","quote_hash":"..."}'
 
 # 7. Audit: readable story, and chain verification
@@ -205,7 +207,7 @@ Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULT
 | **Peppol BIS Advanced Ordering 3.0** | Partial. Order Response Advanced (T116, UBL 2.3) export at `GET /v1/orders/{id}/peppol-order-response.xml`, with samples in `docs/peppol/`. Validated against the UBL 2.3 XSD and the PEPPOL-T116 rules, **not** the full Peppol schematron. Party IDs are placeholders. Order, Order Change and Cancellation are not done, and nothing is connected to a Peppol access point. |
 | **GS1 GTIN** | Used for product identity. |
 | **AP2 / ACP / UCP** | **Aligned, not implemented.** The quote-hash approval is AP2-style (policy ≈ open mandate, approved quote hash ≈ closed checkout mandate). AP2 v0.2 wants an ECDSA-signed checkout JWT, and our quotes are Ed25519. ACP is consumer and card checkout. UCP's B2B procurement council has no spec yet. |
-| **`otap/0.1`** | Ours: discovery, tools, signed quotes, approvals and audit. It is published with a conformance suite (`uv run python -m conformance`) that two different wholesalers pass. It is not a standard yet. Next homes: GS1 Finland, OpenPeppol / State Treasury, UCP B2B. |
+| **`otap/0.1`** | Ours: discovery, tools, signed quotes, approvals and audit. It is published with a conformance suite (`uv run python -m conformance`, 44/44 checks) that two different wholesalers pass. It is not a standard yet. Next homes: GS1 Finland, OpenPeppol / State Treasury, UCP B2B. |
 
 ## Production next steps
 
@@ -243,12 +245,15 @@ Pilot KPIs:
 | `aimo/backend/` | Valio mock API client (cache, retry, chunking, fault injection), SQLite catalog store, order store with Peppol AP/CA/RE |
 | `aimo/catalog/` | Search (FTS5 trigram + gemini-embedding-2, RRF), units, allergens (GS1 to EU14), good-better-best, `plan_need`, Gemini allergen and recipe checks |
 | `aimo/trust/` | Policy engine and YAML policies, Ed25519 JWS signing, approvals, hash-chained signed audit, injection screening |
-| `aimo/buyer/` | Gemini buyer agent, need parsing, tool transports (MCP / in-process / fake), terminal demo, `POST /v1/agent/runs` + SSE |
+| `aimo/buyer/` | Gemini buyer agent + deterministic regex parser and scripted keyless fallback, tool transports (MCP / in-process / fake), terminal demo, `POST /v1/agent/runs` + SSE |
+| `conformance/` | External `otap/0.1` conformance suite (`python -m conformance`, 44/44 checks across discovery, JWKS, OpenAPI, MCP, signed quotes, approvals, Peppol and audit) |
+| `toywholesaler/` | Second synthetic wholesaler (*Nordic Bakery Supply*) passing the same 44/44 conformance suite |
+| `scenarios/` | End-to-end HTTP acceptance scenarios `s0`..`s7` (`python -m scenarios.run_all`, 8/8) |
 | `web/` | No-build approval UI served at `/ui`, with `?mock=1` offline mode |
-| `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline *(landing)* |
+| `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | Offline tests for gateway, catalog, trust and buyer |
-| `docs/` | [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
+| `tests/` | 600 pytest cases across gateway, catalog, trust, buyer, openness and scenarios |
+| `docs/` | [OPENNESS](docs/OPENNESS.md), [COMBINE](docs/COMBINE.md), [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
 

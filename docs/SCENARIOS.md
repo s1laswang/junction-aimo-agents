@@ -37,11 +37,11 @@ uv run pytest -q tests/test_scenarios_momin.py      # offline unit tests (fake o
 ## Openness: conformance suite and a second wholesaler
 Besides s0–s7, which test *our* behaviour, the conformance suite tests *the profile*. Any wholesaler gateway can be checked from the outside with the suite's own crypto checks. See [docs/OPENNESS.md](OPENNESS.md).
 ```bash
-uv run python -m conformance --base http://127.0.0.1:8000                        # Valio Aimo gateway: 43/43 PASS
-uv run uvicorn toywholesaler.app:app --port 8820                                 # Nordic Bakery Supply (synthetic, offline)
-uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"    # 43/43 PASS
-uv run pytest -q tests/test_openness.py                                          # the same, offline, in pytest
-python -I scripts/verify_quote.py quote.json https://<gateway>/.well-known/jwks.json   # offline verifier
+AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8000                        # Valio Aimo gateway: 44/44 PASS
+uv run uvicorn toywholesaler.app:app --port 8820                                                                  # Nordic Bakery Supply (synthetic, offline)
+AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"    # 44/44 PASS
+uv run pytest -q tests/test_openness.py                                                                           # all 44 checks, offline, in pytest
+python -I scripts/verify_quote.py quote.json https://<gateway>/.well-known/jwks.json                             # offline verifier
 ```
 | | Check group | Valio Aimo | Nordic Bakery Supply |
 |---|---|---|---|
@@ -49,7 +49,7 @@ python -I scripts/verify_quote.py quote.json https://<gateway>/.well-known/jwks.
 | M1–M4 | MCP tools/list, profile tools, input schemas with required arguments and descriptions, no approval tool | PASS | PASS |
 | T1–T3, Q1–Q7 | search, offers with provenance, signed quote verified independently against JWKS, hash binding, tamper detection, EdDSA header, price lock | PASS | PASS |
 | O1–O7, P1 | wrong hash gets 409, intruder agent gets 403, other customer gets 403, policy decision with plain-language hits, intruder can't consume the quote, idempotent, Peppol AP/CA/RE | PASS | PASS |
-| A0–A5, P2 | escalation to approval, inbox, an agent can't approve, the buyer agent's own id can't approve, approval bound to the hash (409), human approval leads to placed with Peppol codes | PASS | PASS |
+| A0–A6, P2 | escalation to approval, inbox, an agent can't approve (403), the buyer agent's own id can't approve (403), missing approver credential gets 401, approval bound to the hash (409), human approval leads to placed with Peppol codes | PASS | PASS |
 | U1–U5 | /v1/audit/verify, signed readable trail, each event re-hashed and its signature verified, agent and human/system actors, full chain from genesis | PASS | PASS |
 
 The Gemini buyer agent's run against Nordic Bakery Supply, with no code changes (only `--base-url` / `AIMO_MCP_URL` differ), is in [docs/openness/buyer-run-nordic-bakery.log](openness/buyer-run-nordic-bakery.log).

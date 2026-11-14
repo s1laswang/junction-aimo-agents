@@ -148,7 +148,8 @@ def _confirm(con, delivery_date, o):
     _save(con, o)
     con.execute("update orders set confirmation=? where order_id=?", (json.dumps(conf), o.order_id))
     con.commit()
-    audit.record(o.customer, "system", "order.confirmed", o.order_id, f"Confirmed for delivery {date.fromisoformat(delivery_date).strftime('%a %-d %b')} (simulated fulfilment, Valio has no order API).", {"order_id": o.order_id, "quote_id": o.quote_id, **conf})
+    dd = date.fromisoformat(delivery_date)
+    audit.record(o.customer, "system", "order.confirmed", o.order_id, f"Confirmed for delivery {dd.strftime('%a')} {dd.day} {dd.strftime('%b')} (simulated fulfilment, Valio has no order API).", {"order_id": o.order_id, "quote_id": o.quote_id, **conf})
     return o
 
 

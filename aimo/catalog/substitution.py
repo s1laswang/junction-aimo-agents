@@ -22,14 +22,41 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Optional
 
 from aimo.catalog import units as U
 from aimo.catalog.allergens import blocking, effective_excluded_allergens, normalize_allergens
+from aimo.catalog.screening_bridge import screen_product_row, screen_reason
 from aimo.catalog.textsearch import summary_from_row
 from aimo.models import Candidate, Need, Offer
 
 TIER_ORDER = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
+MAX_NEED_QUANTITY = 1_000_000.0
+VALID_UNITS = ("L", "KG", "PCS")
+
+
+def validate_need(need: Need) -> None:
+    if need is None:
+        raise ValueError("need is required")
+    qty = getattr(need, "quantity", None)
+    if isinstance(qty, bool) or not isinstance(qty, (int, float)):
+        raise ValueError("need.quantity must be a finite number greater than 0")
+    if isinstance(qty, float) and not math.isfinite(qty):
+        raise ValueError("need.quantity must be a finite number greater than 0")
+    if qty <= 0:
+        raise ValueError("need.quantity must be greater than 0")
+    if qty > MAX_NEED_QUANTITY:
+        raise ValueError("need.quantity must be at most 1000000")
+    query = getattr(need, "product_query", None)
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("need.product_query must be a non-empty string")
+    unit = getattr(need, "unit", None)
+    if not isinstance(unit, str) or unit not in VALID_UNITS:
+        raise ValueError("need.unit must be one of L, KG, PCS")
+    delivery_by = getattr(need, "delivery_by", None)
+    if not isinstance(delivery_by, date) or isinstance(delivery_by, datetime):
+        raise ValueError("need.delivery_by must be a date")
 
 # product-type markers: candidates must carry the same set as the reference product
 TYPE_MARKERS: dict[str, list[str]] = {
@@ -236,6 +263,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                      rows: dict[str, dict[str, Any]] | None = None, relevance: dict[str, float] | None = None,
                      inferred_allergens: dict[str, dict[str, str]] | None = None) -> list[Candidate]:
     """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates()."""
+    validate_need(need)
     caller_excl = normalize_allergens(need.excluded_allergens)
     excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
     if rows is not None and rows and caller_excl and all("allergen_source" not in d for d in rows.values()):
@@ -285,6 +313,19 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             summary.content_amount, summary.content_unit = content, cunit if cunit in ("L", "KG", "PCS") else None
         if cnote:
             flags.append("content_from_price")
+        sc = screen_product_row(pid, d)
+        screen_out: dict[str, Any] = {
+            "suspicious": sc["suspicious"],
+            "reasons": sc["reasons"],
+            "layers": sc["layers"],
+        }
+        if sc["injected"]:
+            screen_out["injected"] = True
+        if sc["suspicious"]:
+            flags.append("supplier_text_injection_suspected")
+            if sc["injected"]:
+                flags.append("injected:inject_text")
+                summary.labels = list(dict.fromkeys([*summary.labels, "injected:inject_text"]))
         # ---- hard filters
         missing = [c for c in need.required_claims if c not in (d.get("claims") or [])]
         if missing:
@@ -385,7 +426,8 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         scratch.append(dict(pid=pid, d=d, offer=offer, content=content, cunit=cunit, cnote=cnote, reasons=reasons,
                             flags=flags, reject=reject, tier=tier, tier_if_ok=tier_if_ok, summary=summary,
                             same_brand=same_brand, same_fat=same_fat, same_org=same_org, same_cat=same_cat,
-                            coverage=coverage, spec_source=spec.source, type_note=type_note))
+                            coverage=coverage, spec_source=spec.source, type_note=type_note,
+                            injection_screen=screen_out, screen_raw=sc))
 
     # ---- scores (relative within the eligible set)
     eligible = [x for x in scratch if x["tier"] != "rejected"]
@@ -435,7 +477,8 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         elif sum(1 for c in out if c.tier != "rejected") >= limit:
             continue
         out.append(Candidate(product=x["summary"], offer=x["offer"], tier=x["tier"], rank_score=x["score"],
-                             reasons=x["reasons"], flags=sorted(set(x["flags"]))))
+                             reasons=x["reasons"], flags=sorted(set(x["flags"])),
+                             injection_screen=x["injection_screen"]))
     return out
 
 
@@ -503,4 +546,7 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
                      if "partial_stock" in x["flags"] else f"{offer.available_amount:g} {d.get('sales_unit')} in stock")
     if x["cnote"]:
         r.append(x["cnote"])
+    sr = screen_reason(x.get("screen_raw"))
+    if sr:
+        r.append(sr)
     return r
