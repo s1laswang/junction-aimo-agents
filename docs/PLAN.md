@@ -3,17 +3,24 @@
 Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:00 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
 
 ## Questions for Silas
-1. **Where is Momin's Aimo code?** We found no Aimo repo under github.com/Momin010 (the visible repos are polaron, OpenRocket-AI-MCP, MowisAI, blender-copilot and others), and he is not a collaborator on s1laswang/junction-aimo-agents yet. Please send us the repo or branch link, or ask him to push to a `momin/*` branch here. Until then we build behind the adapter seams in "Merging Momin's work" below. When his code arrives, we merge it in and don't duplicate it.
+1. **Momin's code: which one becomes the submission?** It's answered by FLEET-CONTEXT.md: Momin's `junction26-valio` (branch `dev`) lives on freighter at `~/momin/fleet/repos/junction26-valio.git`. It has a gateway (MCP + REST, signed quotes, mandates, approvals, audit), and the fleet's `valio` team is working on it. I'm cloning it read-only for a side-by-side diff, which is blocked right now because freighter SSH keeps timing out from the venue Wi-Fi, so the clone retries in the background.
+   - **Provisional recommendation, until the diff is done:** keep **junction-aimo-agents as the submission**. It's on GitHub, it runs end to end with live Gemini plus UI plus 90 tests, and it's already wired to the real mock API. Bring in what Momin's repo does better, scenario by scenario, through the existing seams.
+   - **Proposal for you to approve:** point the fleet's `valio` team at junction-aimo-agents, with a `fr8/valio/*` branch per scenario, so 40 Gemini agents add scenarios, tests and docs on top of ours, instead of a parallel gateway. I won't touch the fleet's board, repos, jobs or branches without your OK.
 2. **Live demo hosting.** By default the demo runs on a laptop with one command, and we also record a backup video. Do you want a public URL for judges, such as Cloud Run? That needs your GCP project. If you don't answer, we go local plus video.
 3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
 4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
 
 Everything else is decided below. Change it here if you disagree.
 
-## Status (Sat 15:55)
-- On main and verified live: gateway (REST /v1, MCP /mcp, otap.json, fault injection), trust (policies, signed quotes, signed hash-chained audit), catalog (hybrid FTS + gemini-embedding-2 search, allergen tri-state, good-better-best, plan_need). 1,000 L milk: plan €1,010 → signed quote → needs_approval → approve → placed AP → audit verified. 63 tests pass.
-- In progress: Gemini buyer agent, approval UI, wind tunnel, pitch/docs.
-- FR8 freighter: SSH flaky (timed out 14:10–15:50), reachable again at 15:55. Repo cloned at ~/junction-aimo-agents, data dir /data/silas/junction-aimo-agents.
+## Status (Sat 17:00)
+- **M1 and M2 are met early.** Everything is on main: gateway, trust, catalog, the Gemini buyer agent and the approval UI. The full browser flow works live: Run agent (Gemini over MCP), plan (cut-off reject, then best 464306), signed quote checked in the browser against JWKS, needs approval (3 rules), Approve, order placed AP, audit chain verified (15 events). 90 tests pass.
+- **Round 2 in progress:**
+  - gateway: actor id fix, injected-text fault, demo tamper routes, fresh-checkout setup;
+  - catalog: allergen text no longer misleads product-type inference (school scenario);
+  - frontend: live tamper button, hospital story, presenter mode;
+  - wind tunnel: scenarios and numbers;
+  - pitch: README, DEMO, GEMINI, SUBMISSION.
+- **FR8 freighter:** SSH is flaky, and /data/silas is missing (see Questions). We use ~/junction-aimo-agents-data.
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.

@@ -52,14 +52,50 @@ IMPLIED_CLAIMS = {"lactose free": "FREE_FROM_LACTOSE", "gluten free": "FREE_FROM
                   "organic": "ORGANIC"}
 # product-type modifiers: if a name carries one the query did not ask for, it is probably a
 # different product (milk -> milk coffee drink / milk chocolate / cheese). Soft penalty only.
-VARIANT_MARKERS = ["coffee", "kahvi", "latte", "mocca", "mocha", "cappuccino", "chocolate", "suklaa", "cocoa",
+VARIANT_MARKERS = ["mozzarella", "filata", "coffee", "kahvi", "latte", "mocca", "mocha", "cappuccino", "chocolate", "suklaa", "cocoa",
                    "kaakao", "flavour", "flavor", "maku", "vanilla", "vanilja", "mint", "strawberry", "mansikka",
                    "banana", "cheese", "juusto", "yoghurt", "yogurt", "jogurtti", "curdled", "rahka", "quark", "sour",
                    "piimä", "ice cream", "jäätelö", "pudding", "vanukas", "porridge", "puuro", "soup", "keitto",
                    "sauce", "kastike", "cake", "kakku", "pie", "piirakka", "bread", "leipä", "powder", "jauhe",
                    "dessert", "jälkiruoka", "smoothie", "protein", "proteiini", "cream", "kerma", "butter", "voi "]
 STOP = {"of", "the", "a", "an", "and", "for", "with", "ja", "och", "litres", "liters", "litre", "liter", "l", "kg",
-        "pcs", "some", "need", "we", "by"}
+        "pcs", "some", "need", "we", "by", "at", "to", "on", "in", "please", "order", "deliver", "delivered",
+        "delivery", "our", "us", "is", "are", "have", "has", "several", "many", "kilos", "kilo", "kilograms",
+        "units", "pieces", "school", "schools", "pupils", "pupil", "students", "children", "kids", "lunch",
+        "dinner", "breakfast", "kitchen", "hotel", "hospital", "patients", "guests", "staff", "event",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "today", "tomorrow",
+        "next", "week", "this", "morning", "evening", "maanantai", "tiistai", "keskiviikko", "torstai",
+        "perjantai", "lauantai", "sunnuntai", "huomenna", "wednesday's", "monday's"}
+
+# Allergen words. Exclusion mentions of these ("milk allergy", "no nuts", "dairy-free") must never
+# become search concepts or product-type hints: safety is enforced by Need.excluded_allergens.
+# gluten/lactose "-free" are NOT stripped: they are positive claims that appear in product names.
+_ALLERGEN_WORDS = (r"(?:cow'?s\s+)?milk|dairy|nuts?|tree\s+nuts?|peanuts?|eggs?|soy|soya|fish|shellfish|sesame|"
+                   r"celery|mustard|lupin|crustaceans?|molluscs?|sulphites?|sulfites?|wheat|maito|pähkinä\w*|"
+                   r"kananmuna|muna|soija|kala|seesami|selleri|sinappi")
+_ALLERGEN_LIST = rf"(?:{_ALLERGEN_WORDS})(?:\s*(?:,|and|or|&|ja|tai)\s*(?:{_ALLERGEN_WORDS}))*"
+_EXCLUSION_PATTERNS = [
+    # whole clauses that talk about allergies / intolerances
+    re.compile(r"\b(?:for|with)?\s*(?:coeliacs?|celiacs?|keliaakik\w*)\s*(?:patients?|pupils?|guests?|diet|ruokavalio\w*)?", re.I),
+    re.compile(r"[^,.;:!?()]*\b(?:allerg\w*|intoleran\w*|allergia\w*|anaphyla\w*)\b[^,.;:!?()]*", re.I),
+    re.compile(rf"\b(?:no|without|free\s+from|free\s+of|not|zero|ei|ilman)\s+{_ALLERGEN_LIST}\b", re.I),
+    re.compile(rf"\b{_ALLERGEN_LIST}\s*-?\s*free\b", re.I),
+    re.compile(r"\b(?:maidoton|maidottomat?|pähkinätön|pähkinättömät?|munaton|kananmunaton|soijaton|mjölkfri|nötfri)\b", re.I),
+]
+
+
+def clean_query(q: str) -> str:
+    """Remove allergen-exclusion mentions so they never feed search or product-type inference.
+
+    'oat drink, pupils have milk and nut allergies' -> 'oat drink'
+    'milk-free oat drink' -> 'oat drink';  'lactose-free milk' -> unchanged
+    """
+    s = q or ""
+    for pat in _EXCLUSION_PATTERNS:
+        s = pat.sub(" ", s)
+    if not re.search(r"\w", s):   # the whole text was an allergy clause: drop only the allergy words
+        s = re.sub(rf"\b(?:{_ALLERGEN_WORDS}|allerg\w*|intoleran\w*|have|has)\b", " ", q or "", flags=re.I)
+    return re.sub(r"\s+", " ", re.sub(r"\s*[,;]\s*(?=[,;]|$)", "", s)).strip(" ,;.-")
 
 _SURFACE_TO_CONCEPT: dict[str, str] = {}
 for _c, _forms in SYNONYMS.items():
@@ -70,7 +106,7 @@ _SURFACES_BY_LEN = sorted(_SURFACE_TO_CONCEPT, key=len, reverse=True)
 
 def parse_query(q: str) -> list[tuple[str, list[str]]]:
     """'lactose-free milk' -> [('lactose free', [...forms]), ('milk', ['milk','maito','mjölk'])]."""
-    s = " " + re.sub(r"[^\w\-%,.]+", " ", (q or "").lower()) + " "
+    s = " " + re.sub(r"[^\w\-%,.']+", " ", clean_query(q).lower()) + " "
     concepts: list[tuple[str, list[str]]] = []
     for surf in _SURFACES_BY_LEN:
         pat = re.compile(r"(?<![\w])" + re.escape(surf) + r"(?![\w])")
@@ -80,7 +116,9 @@ def parse_query(q: str) -> list[tuple[str, list[str]]]:
                 concepts.append((c, SYNONYMS[c]))
             s = pat.sub(" ", s)
     for w in s.split():
-        w = w.strip("-.,")
+        w = w.strip("-.,'")
+        if w.endswith("'s"):
+            w = w[:-2]
         if len(w) < 3 or w in STOP or re.fullmatch(r"[\d.,%]+", w):
             continue
         concepts.append((w, [w]))
@@ -133,8 +171,12 @@ def get_rows(ids: list[str]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _filter_sql(claims: list[str], category: Optional[str], content_unit: Optional[str]) -> tuple[str, list]:
+def _filter_sql(claims: list[str], category: Optional[str], content_unit: Optional[str],
+                free_of: Optional[list[str]] = None) -> tuple[str, list]:
     where, args = [], []
+    for g in free_of or []:   # structured 'free' only (unknown never counts as safe)
+        if re.fullmatch(r"[a-z]+", g):
+            where.append(f"json_extract(p.allergens, '$.{g}') = 'free'")
     for c in claims or []:
         where.append("p.id in (select id from claims where claim = ?)")
         args.append(c)
@@ -148,7 +190,8 @@ def _filter_sql(claims: list[str], category: Optional[str], content_unit: Option
 
 
 def fts_search(query: str, *, claims: list[str] | None = None, category: Optional[str] = None,
-               content_unit: Optional[str] = None, limit: int = 20, pool: int = 400) -> list[tuple[str, float]]:
+               content_unit: Optional[str] = None, limit: int = 20, pool: int = 400,
+               free_of: Optional[list[str]] = None) -> list[tuple[str, float]]:
     """[(id, score)] best first.
 
     FTS5 (trigram, all names + brand + ingredients + claim words) recalls up to `pool` rows; then
@@ -157,7 +200,7 @@ def fts_search(query: str, *, claims: list[str] | None = None, category: Optiona
     """
     concepts = parse_query(query)
     con = _con()
-    fsql, fargs = _filter_sql(claims or [], category, content_unit)
+    fsql, fargs = _filter_sql(claims or [], category, content_unit, free_of)
     bm: dict[str, float] = {}
     for mode in ("AND", "OR"):
         q = _fts_query(concepts, mode)

@@ -124,3 +124,11 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
   `--auto-approve-as EMAIL`, `--reject`, `--transport`, `--base-url`, `--via-server`, `--model`, `--thinking`, `--no-escalate`, `--faults`, `--json PATH`.
 
 - Decisions (CEO): trust sends > 3× usual week to approval; agent itself holds at ≥ 10× (likely unit error) as needs_confirmation. Hydrogen-HIGH escalation stays on in the hero demo (visible Gemini thinking control).
+
+## Gateway round 2 (Sat evening)
+- **Agent identity normalised in one place** (`aimo.gateway.service.Identity` / `normalize_agent_id`): `X-Agent-Id` may be `buyer-1` or `hotel-aurora/buyer-1`; `Quote.agent_id`/`Order.agent_id` store the bare name, audit actors are always `agent:<customer>/<agent>`. An id prefixed with another customer is kept whole (mandate lookup rejects it).
+- **`Order.approver_role`** (optional, appended to models.py). `Order.approved_by` is now the plain approver id (e.g. `anna@hotel-aurora.example`); auto-approved orders have `approved_by="policy:<policy_id>"`, `approver_role=null`.
+- **Fault `inject_text:<id|*>`**: gateway product reads (`get_product`, `search_products`, HTTP and MCP) append a planted prompt injection to `marketing_text` and add label `injected:inject_text`. Search results for injected products are full `Product` objects (with `marketing_text`).
+- **Quote line flag `supplier_text_injection_suspected`**: added when trust's `screen_text` flags a line's supplier text (contains "injection", so the policy `injection` rule fires). The gateway also passes its product reads to `trust.evaluate(..., products=...)`.
+- **Demo-only:** `POST /v1/demo/tamper/{seq}[?summary=...]` and `POST /v1/demo/untamper/{seq}` (tag `demo`) -> `{..., verify: {...}}`; 404 when `AIMO_ENV=production` or the event does not exist.
+- **`aimo serve`**: fetch data -> `load_catalog()` -> if embeddings / allergen hints are missing and `GEMINI_API_KEY` is set, builds them in a background thread (FTS until done). `--build-sync` blocks, `--no-build` skips and prints `uv run python -m aimo.catalog build`.

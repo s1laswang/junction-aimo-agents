@@ -290,3 +290,100 @@ def test_inprocess_tool_layer_matches_mcp_names():
     trail = service.get_audit_trail(o["order_id"])
     assert trail["events"] and trail["verify"]["ok"] and isinstance(trail["report"], str)
     assert service.list_policies()["policies"]
+
+
+# ------------------------------------------------------------------ round 2: identity, approver role, inject_text, tamper
+def _pending_order(api, headers=H, qty=1000):
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": qty, "tier": "best"}], headers=headers).json()
+    o = api.post("/v1/orders", headers=headers, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
+    return q, o
+
+
+def test_normalize_agent_id():
+    assert service.normalize_agent_id("hotel-aurora", "hotel-aurora/buyer-1") == "buyer-1"
+    assert service.normalize_agent_id("hotel-aurora", "buyer-1") == "buyer-1"
+    assert service.normalize_agent_id("hotel-aurora", "hotel-aurora/hotel-aurora/buyer-1") == "buyer-1"
+    assert service.normalize_agent_id("hotel-aurora", "school-tampere/buyer-1") == "school-tampere/buyer-1"
+    i = service.Identity(agent_id="hotel-aurora/buyer-1", customer_id="hotel-aurora")
+    assert i.agent_id == "buyer-1" and i.actor == "agent:hotel-aurora/buyer-1"
+    assert service.resolve_identity({"agent_id": "hotel-aurora/buyer-1", "customer_id": "hotel-aurora"}).actor == \
+        "agent:hotel-aurora/buyer-1"
+
+
+@pytest.mark.parametrize("agent", ["buyer-1", "hotel-aurora/buyer-1"])
+def test_audit_actor_not_doubled(api, agent):
+    hdr = {**H, "X-Agent-Id": agent}
+    q, o = _pending_order(api, headers=hdr)
+    assert q["agent_id"] == "buyer-1" and o["agent_id"] == "buyer-1"
+    actors = {e["actor"] for e in api.get("/v1/audit", params={"subject_id": o["order_id"]}).json()}
+    assert not any("hotel-aurora/hotel-aurora" in a for a in actors), actors
+    assert {a for a in actors if a.startswith("agent:")} <= {"agent:hotel-aurora/buyer-1"}
+
+
+def test_approved_by_is_plain_id_with_separate_role(api):
+    q, o = _pending_order(api)
+    r = api.post(f"/v1/approvals/{o['order_id']}/decision", json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
+    assert r.status_code == 200, r.text
+    assert r.json()["approved_by"] == "anna@hotel-aurora.example"
+    assert r.json()["approver_role"] == "procurement_manager"
+    # role defaults from the approver directory when omitted
+    q2, o2 = _pending_order(api)
+    r = api.post(f"/v1/approvals/{o2['order_id']}/decision",
+                 json={"decision": "reject", "quote_hash": q2["quote_hash"], "approver": "anna@hotel-aurora.example"})
+    assert r.status_code == 200, r.text
+    assert r.json()["approved_by"] == "anna@hotel-aurora.example" and r.json()["approver_role"] == "procurement_manager"
+
+
+def test_inject_text_fault_plants_and_flags_supplier_text(api):
+    from aimo.backend.client import INJECTION_TEXT
+
+    fh = {**H, "X-Aimo-Faults": "inject_text:464306"}
+    p = api.get("/v1/products/464306", headers=fh).json()
+    assert INJECTION_TEXT in (p["marketing_text"] or "") and "injected:inject_text" in p["labels"]
+    clean = api.get("/v1/products/464306", headers=H).json()
+    assert INJECTION_TEXT not in (clean.get("marketing_text") or "") and "injected:inject_text" not in clean["labels"]
+    res = api.get("/v1/products/search", params={"q": "lactose free milk", "limit": 5},
+                  headers={**H, "X-Aimo-Faults": "inject_text:*"}).json()
+    assert res and all(INJECTION_TEXT in (x.get("marketing_text") or "") for x in res)
+    assert service.screen_supplier_text(service.Product(**{**p, "allergens": {}}))["suspicious"] is True
+
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 100, "tier": "best"}], headers=fh).json()
+    assert "supplier_text_injection_suspected" in q["lines"][0]["flags"]
+    o = api.post("/v1/orders", headers=fh, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
+    assert o["status"] != "placed"
+    if service.integration_status()["trust.evaluate"] == "aimo.trust":
+        inj = [h for h in o["decision"]["hits"] if h["rule_id"].startswith("injection")]
+        assert inj and any(h["outcome"] == "needs_approval" for h in inj), o["decision"]["hits"]
+
+
+def test_inject_text_via_mcp_tool_layer():
+    from aimo.backend.client import INJECTION_TEXT
+
+    tok = bc.set_request_faults("inject_text:*")
+    try:
+        p = service.get_product("464306")
+        res = service.search_products("lactose free milk", limit=3)
+    finally:
+        bc.reset_request_faults(tok)
+    assert INJECTION_TEXT in p.marketing_text
+    assert all(INJECTION_TEXT in (x.get("marketing_text") or "") for x in res["products"])
+
+
+def test_demo_tamper_routes(api, monkeypatch):
+    if service.integration_status()["trust.audit"] != "aimo.trust":
+        pytest.skip("trust audit not available")
+    q, o = _pending_order(api)
+    seq = api.get("/v1/audit", params={"subject_id": o["order_id"]}).json()[0]["seq"]
+    assert api.get("/v1/audit/verify").json()["ok"] is True
+    r = api.post(f"/v1/demo/tamper/{seq}")
+    assert r.status_code == 200, r.text
+    assert r.json()["verify"]["ok"] is False and api.get("/v1/audit/verify").json()["ok"] is False
+    r = api.post(f"/v1/demo/untamper/{seq}")
+    assert r.status_code == 200 and r.json()["verify"]["ok"] is True
+    assert api.post("/v1/demo/tamper/999999").status_code == 404
+    monkeypatch.setenv("AIMO_ENV", "production")
+    assert api.post(f"/v1/demo/tamper/{seq}").status_code == 404
+    assert api.post(f"/v1/demo/untamper/{seq}").status_code == 404
+    assert api.get("/v1/audit/verify").json()["ok"] is True
+    spec = api.get("/openapi.json").json()
+    assert spec["paths"]["/v1/demo/tamper/{seq}"]["post"]["tags"] == ["demo"]

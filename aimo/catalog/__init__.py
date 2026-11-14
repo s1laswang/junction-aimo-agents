@@ -62,6 +62,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
     from aimo.catalog.substitution import rank_substitutes as _r
     if offers is None:
         return P.plan_need(need, limit=limit).candidates
+    need, _src = P.with_effective_query(need)
     rows, rel = P.find_candidates(need)
     keep = {pid: rows[pid] for pid in rows if pid in offers or pid in need.preferred_product_ids}
     return _r(need, offers, limit=limit, rows=keep or rows, relevance=rel)

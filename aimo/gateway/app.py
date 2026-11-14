@@ -50,6 +50,8 @@ TAGS = [
     {"name": "approvals", "description": "Human approval inbox. Decisions are bound to the quote hash."},
     {"name": "audit", "description": "Hash-chained, signed audit trail and verification."},
     {"name": "customers", "description": "Demo customers, mandates and policy summaries."},
+    {"name": "demo", "description": "Demo-only helpers (disabled with AIMO_ENV=production): tamper with one audit event "
+                                    "to show that /v1/audit/verify catches it, then restore it."},
 ]
 
 ERR = {
@@ -123,10 +125,13 @@ def build_router() -> APIRouter:
         limit: int = Query(20, ge=1, le=100),
     ):
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
-        return service.find_products(q, cl, category, content_unit, limit)
+        res = service.find_products(q, cl, category, content_unit, limit)
+        # dump each item as its own type: injected-text faults return Product (with marketing_text)
+        return JSONResponse([p.model_dump(mode="json") for p in res])
 
     @r.get("/v1/products/{product_id}", tags=["catalog"], summary="Product details", response_model=Product, responses=ERR)
     def get_product(product_id: str):
+        """Supplier fields such as `marketing_text` are UNTRUSTED: screen before showing them to an LLM."""
         return service.get_product(product_id)
 
     # ---------------------------------------------------------- offers / plan
@@ -194,6 +199,18 @@ def build_router() -> APIRouter:
            response_class=PlainTextResponse)
     def audit_report(subject_id: str):
         return PlainTextResponse(service.audit_report(subject_id), media_type="text/markdown")
+
+    # ---------------------------------------------------------- demo-only
+    @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
+    def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
+                                                                                 "'approved' to 'rejected')")):
+        """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
+        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. 404 when AIMO_ENV=production."""
+        return service.demo_tamper(seq, summary)
+
+    @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
+    def demo_untamper(seq: int):
+        return service.demo_untamper(seq)
 
     # ---------------------------------------------------------- customers
     @r.get("/v1/customers", tags=["customers"], summary="Demo customers and policy summaries")
