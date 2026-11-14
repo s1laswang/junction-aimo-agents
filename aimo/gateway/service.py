@@ -839,6 +839,12 @@ def get_order(order_id: str) -> Order:
     return o
 
 
+def audit_refusal(order_id: str, actor: str, reason: str) -> None:
+    """Record a refused approval attempt (wrong caller or credential) on the order's audit trail."""
+    audit(actor, "approval.refused", order_id, f"{actor} tried to decide order {order_id}; refused: {reason}.",
+          {"reason": reason})
+
+
 def list_approvals(status: str | None = "pending", customer_id: str | None = None) -> list[dict[str, Any]]:
     st = {"pending": "pending_approval", None: None, "": None, "all": None}.get(status, status)
     out = []

@@ -109,10 +109,12 @@ def print_step(step: Any) -> None:
 def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: threading.Event,
                        delay: float = 3.0, decision: str = "approve") -> None:
     import httpx
+    from aimo.gateway.human_auth import local_pin
+    human = {"X-Approver-Pin": local_pin()}  # the operator's approver credential (env AIMO_APPROVER_PIN or data/keys)
     seen: set[str] = set()
     while not stop.is_set():
         try:
-            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, timeout=5)
+            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, headers=human, timeout=5)
             items = r.json() if r.status_code == 200 else []
             for it in items if isinstance(items, list) else []:
                 order = it.get("order", it)
@@ -125,7 +127,7 @@ def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: thr
                 body = {"decision": decision, "approver": approver,
                         "note": "Approved from the terminal demo" if decision == "approve" else "Rejected from the terminal demo",
                         "quote_hash": order.get("quote_hash") or quote.get("quote_hash")}
-                resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body, timeout=10)
+                resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body, headers=human, timeout=10)
                 print(c(f"       [human] {approver} {decision}d {oid} via HTTP -> {resp.status_code}", "green"), flush=True)
         except Exception as e:  # noqa: BLE001
             print(c(f"       [human] approval poll failed: {type(e).__name__}", "red"), flush=True)

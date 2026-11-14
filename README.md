@@ -66,14 +66,14 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q`. With the challenge product JSON, main claimed **165 passed, 1 skipped** (Sat 14 Nov 19:05; see docs/NUMBERS.md). Without that file, catalog-backed tests skip instead of failing: a keyless run on this integration was **139 passed, 57 skipped, 2 xfailed**. Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **263 passed, 7 skipped, 2 xfailed** (Sat 14 Nov 23:00). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (8/8 with the live mock API). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
 
 ## What it is: five pillars
 
 1. **An open door for any agent.** One gateway, two equal surfaces: an **MCP server** (`/mcp`, plus stdio) and an **OpenAPI 3.1** REST API (`/v1`), discoverable from `/.well-known/otap.json`. Every tool calls the live Valio Aimo challenge mock price and availability API (batched up to 1,000 ids, cached 5 minutes, retried with backoff).
 2. **Lookup that understands food.** 17,546 products from the challenge's synthetic catalog, with Finnish, Swedish and English names, hybrid full-text plus **gemini-embedding-2** search, content-per-sales-unit parsing (€/L and €/kg), and a **good-better-best** substitution ranking that explains every rank. Allergens are tri-state (contains / free / unknown): **unknown is never safe**, and Gemini-inferred allergens can only block, never clear.
 3. **Guardrails the customer owns.** A versioned YAML policy per customer (hotel, school kitchen, hospital): spend thresholds, weekly budget, category scope, substitution tiers, allergen hard blocks, cut-off and delivery checks, standing-order drift and prompt-injection screening. Every rule returns a plain-language reason, and the strictest wins (reject > needs approval > auto).
-4. **Signed quotes and human approval bound to the hash.** Quotes are fixed-price for 15 minutes and signed with Ed25519 (JWS, RFC 7515/8037). A named approver in the right role approves *that exact* quote hash; a changed price or an expired lock invalidates the approval. Only a named person in the customer's approver directory can approve; agent identities are refused on every surface, and MCP has no approval tool at all. The gateway computes each line's substitution tier itself instead of trusting the agent.
+4. **Signed quotes and human approval bound to the hash.** Quotes are fixed-price for 15 minutes and signed with Ed25519 (JWS, RFC 7515/8037). A named approver in the right role approves *that exact* quote hash; a changed price or an expired lock invalidates the approval. Only a signed-in human can approve. Decisions need the approver credential (`X-Approver-Pin`, which no API route or MCP tool ever returns; production: the customer's SSO), any request carrying agent identity gets 403, even if it names a real approver, and the approver must be in the order customer's directory with an allowed role. MCP has no approval tool at all. Quotes and orders need an explicit caller identity (no defaults), and the inbox is scoped to the caller's customer. The gateway computes each line's substitution tier itself instead of trusting the agent.
 5. **An audit trail anyone can check.** Every request, quote, policy decision, approval and order is an event in an append-only, hash-chained, signed log, rendered as readable sentences. `GET /v1/audit/verify` recomputes every hash and signature; the evidence pack lets a third party verify offline.
 
 The reference client is a **Gemini buyer agent** (function calling over our MCP tools, structured-output need parsing, thinking-level escalation for substitution decisions). A **wind tunnel** of Gemini-generated synthetic customers measures it against a naive agent with direct API access. Details: [docs/GEMINI.md](docs/GEMINI.md).
@@ -252,17 +252,16 @@ Pilot KPIs:
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
 
-## Packaging (private repo)
+## Getting the code
 
-This repository is private. A judge whose token cannot clone `s1laswang/junction-aimo-agents` will get HTTP 404/403 even though the repo exists. **NEEDS SILAS:** grant judges read access, or make the repo public, and tell them to clone this commit:
+The repository is public:
 
 ```bash
-git clone --branch main --single-branch https://github.com/s1laswang/junction-aimo-agents.git aimo
-cd aimo && git checkout 7313679dba6eedd7232795c9b8d221491a5dc165
-cp .env.example .env && make accept
+git clone https://github.com/s1laswang/junction-aimo-agents.git aimo && cd aimo
+cp .env.example .env && make accept      # keyless acceptance; add keys to .env for the live mock API and Gemini
 ```
 
-Do not mix this tree up with AfterQuery Canary/Sleeper (`s1laswang/agent-arena`) or HoldUp (`s1laswang/junction-meta-glasses`). Prefer a release tag such as `aimo-v1` pinned to the accepted commit once `make accept` is green with keys; do not create the tag from this patch.
+The final submission will be pinned to the tag `aimo-v1` (created at the Sun 06:00 freeze). Do not confuse this repo with AfterQuery Canary/Sleeper (`s1laswang/agent-arena`) or HoldUp (`s1laswang/junction-meta-glasses`).
 
 ## Team
 
