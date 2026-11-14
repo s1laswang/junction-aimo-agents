@@ -23,7 +23,7 @@ if os.environ.get("WT_FULL") != "1":
     os.environ.setdefault("WT_SNAPSHOT_DIR", str(FIXTURE_SNAPSHOT))
 os.environ.setdefault("WT_DIR", tempfile.mkdtemp(prefix="wt-test-"))
 
-HAVE_PRODUCT_DATA = (ROOT / "data" / "valio_aimo_junction26_product_data.json").exists()
+HAVE_PRODUCT_DATA = (Path(os.environ.get("AIMO_DATA_DIR", ROOT / "data")) / "valio_aimo_junction26_product_data.json").exists()
 
 
 def pytest_configure(config):

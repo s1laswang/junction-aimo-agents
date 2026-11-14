@@ -107,3 +107,15 @@ def test_pipeline_baseline_smoke():
     assert meta["sut"] == "baseline" and len(rs) == 3
     s = score({x.scenario_id: x for x in scs}, rs)
     assert s["n"] == 3
+
+
+@pytest.mark.needs_data
+def test_agent_fault_translation():
+    from windtunnel.generate import skeleton
+    from windtunnel.run import agent_faults
+    sc = skeleton(1, "api_errors")
+    f = agent_faults(sc)
+    assert "latency_ms:" in f and "latency:" not in f.replace("latency_ms:", "")
+    sc = skeleton(2, "injection_supplier")
+    if sc.supplier_text:
+        assert f"inject_text:{next(iter(sc.supplier_text))}" in agent_faults(sc)

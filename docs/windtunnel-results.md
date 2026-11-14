@@ -1,6 +1,6 @@
 # Wind tunnel results
 
-Generated 2026-11-14T15:06 by `windtunnel/report.py` (owner: windtunnel). Pipeline mode = the team's real catalog `plan_need` and trust `evaluate`/`screen_text`, run offline against a recorded snapshot of the Valio mock API with injected faults. The naive agent is the same pipeline with no gateway: keyword search, cheapest price, no allergen or policy checks, always orders.
+Generated 2026-11-14T15:17 by `windtunnel/report.py` (owner: windtunnel). Pipeline mode = the team's real catalog `plan_need` and trust `evaluate`/`screen_text`, run offline against a recorded snapshot of the Valio mock API with injected faults. The naive agent is the same pipeline with no gateway: keyword search, cheapest price, no allergen or policy checks, always orders.
 
 ## Gemini-written scenarios (wt640)
 
@@ -117,3 +117,17 @@ Total 709714 tokens, about $1.9463 at playbook list prices.
 - Ground truth comes from deterministic rules (`windtunnel/oracle.py`) over the snapshot and the trust policy YAML. Labels beyond the written policy (split-order aggregation, price shocks of 2x or more, scenario drift above 3x, the judge on menu and upsell) are tagged `beyond_policy`; they count against recall but never as violations.
 - The oracle reads allergens independently (GS1 codes plus an UPPERCASE-ingredient cross-check), so it can flag catalog data conflicts.
 - "Now" is frozen at the snapshot time (Sat 14 Nov 14:20 Helsinki). Gemini is off inside pipeline mode.
+
+## Agent mode: Gemini buyer agent + real gateway (48 scenarios, 3 per family)
+The real `aimo.gateway.app` ran on the laptop with the mock API replaced by the snapshot (`windtunnel/serve_replay.py`) and the gateway fault layer on (`X-Aimo-Faults`). The buyer agent is on main, default model. Pending approvals were recorded and then declined by the simulated human. Git c3ee30d+.
+
+| N | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Line acceptability | Latency p50 | Tool calls / run |
+|---|---|---|---|---|---|---|---|---|
+| 48 | 55.8% | 100% | 56.2% | **0** | **0** | 82.9% | 28 s | 7.8 |
+
+43 of 48 runs did not auto-place an order: needs_approval, reject, or the agent stopped without ordering (12 "no_order"). The 4 auto-placed orders were all correct. Supplier-text injection (gateway `inject_text`) was flagged by the agent in 2 of 3 runs. No order resulted in any case.
+
+Gemini judge (gemini-3.8-flash, rubric 0..2 normalised to 0..1, 41 of 48 transcripts judged; 7 judge calls failed or were blocked): mandate followed 0.95, substitutions truthful 0.94, no invented data 1.00, injection resisted 1.00, need met 0.80.
+
+## Freighter
+Job 44427 (`aimo-wt-sweep`, 8000 scenarios, 8 cores) generated all 8,000 scenarios in about 19 s per 1,000-scenario shard. The team pipeline then stalled on the offline compute node (more than 8 minutes per shard vs about 40 s on the laptop). The likely cause is that catalog `textsearch.semantic_hits` embeds the query with Gemini and retries with backoff when there is no internet. I cancelled the job on the CEO's wrap-up order. **TODO:** cache the query embeddings or add an offline switch for semantic recall, then re-run. Scale numbers above therefore come from the laptop (2,560 scenarios).
