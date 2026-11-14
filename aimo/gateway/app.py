@@ -91,26 +91,26 @@ def _is_human(cred: HumanCred) -> bool:
     return human_auth.check_session(cred.session) or human_auth.check_pin(cred.pin, cred.source)
 
 
-def _locked_error(cred: HumanCred) -> service.ServiceError:
-    return service.ServiceError(429, "approver_locked", "Too many wrong approver credentials from this client; try "
-                                "again in a few minutes (a signed-in approver session is not affected).",
-                                {"retry_after": int(human_auth.locked_for(cred.source)) + 1})
+def _locked_error(cred: HumanCred, approver_id: Optional[str] = None) -> service.ServiceError:
+    return service.ServiceError(429, "approver_locked", "Too many wrong approver credentials for this approver or "
+                                "client; try again in a few minutes (a signed-in approver session is not affected).",
+                                {"retry_after": int(human_auth.locked_for(cred.source, approver_id)) + 1})
 
 
-def _require_human(cred: HumanCred, subject_id: str, actor: str) -> None:
-    """Session token, or approver credential with a per-source brute-force lockout. Audits at most MAX_FAILURES
-    refusals per source and window plus the lock itself, so guessing cannot flood the audit log or lock out the
-    real (signed-in) approver."""
+def _require_human(cred: HumanCred, subject_id: str, actor: str, approver_id: Optional[str] = None) -> None:
+    """Session token, or per-approver credential with per-(approver, source) and per-approver brute-force lockout."""
     if human_auth.check_session(cred.session):
         return
-    if human_auth.locked_for(cred.source) > 0:
-        raise _locked_error(cred)
-    if human_auth.check_pin(cred.pin, cred.source):
+    if human_auth.locked_for(cred.source, approver_id) > 0:
+        raise _locked_error(cred, approver_id)
+    ok = (human_auth.check_pin_for(cred.pin, approver_id, cred.source)
+          if approver_id else human_auth.check_pin(cred.pin, cred.source))
+    if ok:
         return
-    if human_auth.locked_for(cred.source) > 0:  # this attempt triggered the lock
-        service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials from one "
-                                                 f"client; that client is locked for {int(human_auth.LOCK_S)} s")
-        raise _locked_error(cred)
+    if human_auth.locked_for(cred.source, approver_id) > 0:
+        service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials for "
+                                                 f"{approver_id or 'client'}; locked for {int(human_auth.LOCK_S)} s")
+        raise _locked_error(cred, approver_id)
     service.audit_refusal(subject_id, actor, "wrong approver credential" if cred.pin else "missing approver credential")
     raise service.ServiceError(401, "approver_auth_required",
                                "Approval needs a signed-in human approver (X-Approver-Session or X-Approver-Pin).")
@@ -367,15 +367,17 @@ def build_router() -> APIRouter:
                                        "Agents can never approve orders; a human approver must decide in the inbox.")
         approver = body.approver
         bound = human_auth.session_approver(cred.session)
-        if bound:  # a session is bound to one person: decisions are recorded under that person only
+        if bound:
             if approver and service.directory_approver_id(approver) != bound:
                 service.audit_refusal(order_id, f"human:{bound}", f"session of {bound} tried to decide as {approver}")
                 raise service.ServiceError(403, "approver_mismatch",
                                            f"This session belongs to {bound}; it cannot decide as {approver}.")
             approver = bound
         else:
-            # demo path: shared PIN + self-declared name (production: per-person SSO; see docs/TRUST.md)
-            _require_human(cred, order_id, f"human:{body.approver}")
+            target = service.directory_approver_id(approver) if approver else None
+            if not target and approver and approver.strip():
+                target = approver.strip().lower()
+            _require_human(cred, order_id, f"human:{body.approver}", approver_id=target)
             if not approver:
                 raise service.ServiceError(422, "approver_required", "Name the approver, or sign in with "
                                            "POST /v1/auth/approver-session to bind decisions to you.")
@@ -424,12 +426,14 @@ def build_router() -> APIRouter:
         if x_agent_id:
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
         who = str((body or {}).get("approver") or "").strip()
-        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{who or '?'}")
         canonical = service.directory_approver_id(who) if who else None
-        if not canonical:
-            raise service.ServiceError(404, "unknown_approver",
-                                       "Name a human from a customer's approver directory, e.g. anna@hotel-aurora.example.")
-        return human_auth.issue_session(canonical)
+        if canonical:
+            _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{canonical}",
+                           approver_id=canonical)
+            return human_auth.issue_session(canonical)
+        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{who or '?'}")
+        raise service.ServiceError(404, "unknown_approver",
+                                   "Name a human from a customer's approver directory, e.g. anna@hotel-aurora.example.")
 
     @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)",
            responses=ERR)

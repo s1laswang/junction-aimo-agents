@@ -46,11 +46,12 @@ def require_known_customer(
         raise service.ServiceError(401, "identity_required", missing_message)
     known = known_customer_ids()
     if cid not in known:
+        preview = cid[:80]
         raise service.ServiceError(
             403,
             "unknown_customer",
-            f"unknown customer {cid!r}; call GET /v1/customers for valid customer ids",
-            {"customer_id": cid, "known_customers": sorted(known)},
+            f"unknown customer {preview!r}; call GET /v1/customers for valid customer ids",
+            {"customer_id": preview, "known_customers": sorted(known)},
         )
     return cid
 

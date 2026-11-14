@@ -191,72 +191,73 @@ async def create_run(request: Request):
     """Start a buyer-agent run. JSON (RunRequest, optional image_b64) or multipart/form-data with an
     `image` file (photo of a handwritten order, menu or invoice) plus text/customer_id fields."""
     from fastapi.responses import JSONResponse
+    from pydantic import ValidationError
 
     from aimo.gateway.auth import check_agent_key, is_known_customer
 
+    def _bad(code: str, message: str, status: int = 422) -> JSONResponse:
+        return JSONResponse({"error": code, "message": message}, status_code=status)
+
     hdr_cust = (request.headers.get("x-customer-id") or "").strip()
+    raw_cust = ""
     image = None
-    if request.headers.get("content-type", "").startswith("multipart/form-data"):
-        form = await request.form()
-        fields = {k: v for k, v in form.items() if isinstance(v, str)}
-        raw_cust = (fields.get("customer_id") or "").strip()
-        up = form.get("image")
-        if up is not None and not isinstance(up, str):
-            image = (await up.read(), up.content_type or "image/png")
-        if not hdr_cust and not raw_cust:
-            return JSONResponse(
-                {"error": "identity_required", "message": "POST /v1/agent/runs requires X-Customer-Id or customer_id."},
-                status_code=401,
-            )
-        if hdr_cust and raw_cust and hdr_cust != raw_cust:
-            return JSONResponse(
-                {"error": "customer_mismatch", "message": "X-Customer-Id disagrees with body customer_id."},
-                status_code=403,
-            )
-        eff_cust = hdr_cust or raw_cust
-        fields["customer_id"] = eff_cust
-        fields.setdefault("text", "")
-        req = RunRequest.model_validate(fields)
-    else:
+    try:
+        if request.headers.get("content-type", "").startswith("multipart/form-data"):
+            form = await request.form()
+            fields = {k: v for k, v in form.items() if isinstance(v, str)}
+            raw_cust = (fields.get("customer_id") or "").strip()
+            up = form.get("image")
+            if up is not None and not isinstance(up, str):
+                image = (await up.read(15_000_001), up.content_type or "image/png")
+            fields["customer_id"] = hdr_cust or raw_cust or "hotel-aurora"
+            fields.setdefault("text", "")
+            req = RunRequest.model_validate(fields)
+        else:
+            raw_body = await request.body()
+            if not raw_body.strip():
+                return _bad("invalid_body", "JSON object body required.")
+            try:
+                payload = json.loads(raw_body)
+            except (ValueError, UnicodeDecodeError):
+                return _bad("invalid_json", "The request body is not valid JSON.")
+            if not isinstance(payload, dict):
+                return _bad("invalid_body", "JSON object body required.")
+            raw_val = payload.get("customer_id")
+            if raw_val is not None and not isinstance(raw_val, str):
+                req = RunRequest.model_validate(payload)
+            else:
+                raw_cust = raw_val.strip() if isinstance(raw_val, str) else ""
+                merged = dict(payload)
+                merged["customer_id"] = hdr_cust or raw_cust or "hotel-aurora"
+                req = RunRequest.model_validate(merged)
+    except ValidationError as exc:
+        errs = [{"loc": [str(x) for x in e.get("loc", ())], "msg": str(e.get("msg", ""))} for e in exc.errors()[:10]]
+        return JSONResponse(
+            {"error": "validation_error", "message": errs[0]["msg"] if errs else "Invalid request.", "detail": errs},
+            status_code=422,
+        )
+    if req.image_b64:
         try:
-            payload = await request.json()
-        except Exception as exc:
-            raise HTTPException(422, "invalid JSON body") from exc
-        if not isinstance(payload, dict):
-            raise HTTPException(422, "JSON object body required")
-        raw_val = payload.get("customer_id")
-        raw_cust = str(raw_val).strip() if raw_val is not None else ""
-        if not hdr_cust and not raw_cust:
-            return JSONResponse(
-                {"error": "identity_required", "message": "POST /v1/agent/runs requires X-Customer-Id or customer_id."},
-                status_code=401,
-            )
-        if hdr_cust and raw_cust and hdr_cust != raw_cust:
-            return JSONResponse(
-                {"error": "customer_mismatch", "message": "X-Customer-Id disagrees with body customer_id."},
-                status_code=403,
-            )
-        eff_cust = hdr_cust or raw_cust
-        req = RunRequest.model_validate({**payload, "customer_id": eff_cust})
+            image = (base64.b64decode(req.image_b64, validate=True), req.image_mime or "image/png")
+        except (ValueError, TypeError):
+            return _bad("invalid_image", "image_b64 is not valid base64.")
+    if not req.text.strip() and image is None:
+        return _bad("text_required", "text or image is required.")
+    if image is not None and len(image[0]) > 15_000_000:
+        return _bad("image_too_large", "image too large (max 15 MB)", 413)
+    if not hdr_cust and not raw_cust:
+        return _bad("identity_required", "POST /v1/agent/runs requires X-Customer-Id or customer_id.", 401)
+    if hdr_cust and raw_cust and hdr_cust != raw_cust:
+        return _bad("customer_mismatch", "X-Customer-Id disagrees with body customer_id.", 403)
+    eff_cust = hdr_cust or raw_cust
+    req = req.model_copy(update={"customer_id": eff_cust})
     if getattr(registry.start, "__func__", None) is RunRegistry.start and req.transport != "fake":
         if not is_known_customer(eff_cust):
-            return JSONResponse(
-                {"error": "unknown_customer", "message": f"unknown customer {eff_cust!r}"},
-                status_code=403,
-            )
+            return _bad("unknown_customer", f"unknown customer {eff_cust[:80]!r}", 403)
     try:
         check_agent_key(eff_cust, request.headers.get("x-agent-key"))
     except Exception as exc:
-        return JSONResponse(
-            {"error": getattr(exc, "code", "invalid_agent_key"), "message": getattr(exc, "message", str(exc))},
-            status_code=getattr(exc, "status", 403),
-        )
-    if req.image_b64:
-        image = (base64.b64decode(req.image_b64), req.image_mime or "image/png")
-    if not req.text and image is None:
-        raise HTTPException(422, "text or image is required")
-    if image is not None and len(image[0]) > 15_000_000:
-        raise HTTPException(413, "image too large (max 15 MB)")
+        return _bad(getattr(exc, "code", "invalid_agent_key"), getattr(exc, "message", str(exc)), getattr(exc, "status", 403))
     base_mcp = os.environ.get("AIMO_MCP_URL") or f"{str(request.base_url).rstrip('/')}/mcp"
     run = registry.start(req.model_copy(update={"image_b64": None}), image=image, mcp_url=base_mcp)
     return {"run_id": run.run_id, "events_url": f"/v1/agent/runs/{run.run_id}/events",
