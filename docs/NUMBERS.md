@@ -63,7 +63,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | s0–s7: 8/8 PASS | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 | R submit, see docs/reports/pitch.md "Gate runs" for the latest |
-| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **267 passed, 7 skipped, 2 xfailed** in 71 s | R submit, Sat 23:05, fac34f0. Re-run at the freeze. |
+| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **285 passed, 7 skipped, 2 xfailed** in 58 s | R submit, Sat 23:29, 4ae14c6. Re-run at the freeze. |
 | `make accept` | README | `make accept` | RESULT: PASS (table in docs/reports/pitch.md "Gate runs") | R submit |
 
 ## Trust
