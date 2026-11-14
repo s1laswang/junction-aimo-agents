@@ -23,7 +23,7 @@ from aimo.models import AllergenStatus, Mandate, PolicyDecision, Product, Quote,
 POLICY_DIR = Path(__file__).parent / "policies"
 SEVERITY = {"allow": 0, "needs_approval": 1, "reject": 2}
 RULE_TYPES = {"scope", "quote_freshness", "spend_threshold", "period_spend", "category_scope", "substitution",
-              "allergen_block", "delivery", "quantity_drift", "injection"}
+              "allergen_block", "delivery", "quantity_drift", "injection", "split_order", "price_jump"}
 TIER_TEXT = {
     "preferred": "the customer's usual product",
     "best": "same brand and spec in a different pack (tier best)",
@@ -109,6 +109,28 @@ def policy_ids() -> list[str]:
     return sorted(p.stem for p in POLICY_DIR.glob("*.yaml"))
 
 
+def planning_profile(customer_id: Optional[str]) -> dict:
+    """What the planner must know from the customer's mandate before it searches: the policy's excluded
+    allergens (hard block, even when the request does not repeat them), why, and the usual products.
+    {} for an unknown customer (the planner then only uses what the request says)."""
+    try:
+        pol = load_policy(customer_id or "")
+    except (KeyError, ValueError, OSError):
+        return {}
+    excl: list[str] = []
+    why: list[str] = []
+    for r in pol.get("rules") or []:
+        if r.get("type") == "allergen_block":
+            excl += [str(a) for a in r.get("excluded") or []]
+            if r.get("reason") and r["reason"] not in why:
+                why.append(str(r["reason"]))
+    return {"policy_id": pol["policy_id"], "excluded_allergens": list(dict.fromkeys(excl)),
+            "allergen_reason": "; ".join(why) or None,
+            "usual_products": sorted(_preferred_ids(pol)),
+            "approved_alternatives": _approved_alternatives(pol),
+            "customer_name": (pol.get("customer") or {}).get("name") or customer_id}
+
+
 def get_mandate(customer_id: str, agent_id: str) -> Mandate:
     """Mandate for (customer, agent). Agent may be given as "buyer-1" or "hotel-aurora/buyer-1".
     Unknown customer -> KeyError. Unknown agent of a known customer -> Mandate with no scopes, so every
@@ -149,6 +171,7 @@ class Ctx:
     now: datetime
     audit_log: Any = None
     hits: list[tuple[RuleHit, Optional[str]]] = field(default_factory=list)
+    cache: dict = field(default_factory=dict)
 
     def hit(self, rule_id: str, outcome: str, message: str, role: Optional[str] = None) -> None:
         self.hits.append((RuleHit(rule_id=rule_id, outcome=outcome, message=message),
@@ -253,9 +276,142 @@ def _period_total(c: Ctx, days: int) -> float:
             if cust == c.quote.customer_id and amt is not None and _aware(e.ts) >= since \
                     and d.get("quote_id") != c.quote.quote_id:
                 total += float(amt)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return 0.0
     return total
+
+
+def _history(c: Ctx, days: int) -> list[dict]:
+    """Orders this customer placed in the last `days` days (newest last), from the audit log:
+    [{"ts", "total", "auto" (placed without a human), "lines": [{product_id, product_name, qty, unit_price,
+    line_total}] or None when the log does not say, "query": the request's product phrase or None}].
+    Lines come from the order's quote.created event (joined by quote_id)."""
+    key = ("history", days)
+    if key in c.cache:
+        return c.cache[key]
+    log = c.audit_log
+    if log is None:
+        from aimo.trust.audit import audit as log
+    since = c.now - timedelta(days=days)
+    out: list[dict] = []
+    try:
+        quotes: dict[str, dict] = {}
+        for e in log.events_by_action("quote.created"):
+            qd = (e.data or {}).get("quote") or {}
+            if qd.get("quote_id") and qd.get("customer_id") == c.quote.customer_id:
+                quotes[qd["quote_id"]] = qd
+        for e in log.events_by_action("order.placed"):
+            d = e.data or {}
+            cust = d.get("customer_id") or (d.get("quote") or {}).get("customer_id")
+            if cust != c.quote.customer_id or _aware(e.ts) < since or d.get("quote_id") == c.quote.quote_id:
+                continue
+            qd = d.get("quote") or quotes.get(d.get("quote_id") or "") or {}
+            raw = d.get("lines") or qd.get("lines")
+            lines = None if raw is None else [
+                {"product_id": str(x.get("product_id")), "product_name": x.get("product_name") or "",
+                 "qty": float(x.get("qty_sales_units") or x.get("qty") or 0), "unit_price": x.get("unit_price"),
+                 "line_total": float(x.get("line_total") or 0)} for x in raw]
+            order = d.get("order") or {}
+            auto = not d.get("approver") and not order.get("approved_by")
+            out.append({"ts": _aware(e.ts), "total": float(d.get("total_net", qd.get("total_net")) or 0), "auto": auto,
+                        "lines": lines, "query": ((qd.get("need") or {}).get("product_query") or None)})
+    except Exception:
+        out = []
+    out.sort(key=lambda h: h["ts"])
+    c.cache[key] = out
+    return out
+
+
+def _kind_keys(c: Ctx, product_id: str, name: str, query: Optional[str]) -> set[str]:
+    """What makes two purchases 'the same thing' for split-order aggregation: the product, its standing-order
+    bucket (keywords), its catalog product type + category, and the request's product phrase."""
+    keys = {f"id:{product_id}"}
+    if query:
+        keys.add("q:" + re.sub(r"\s+", " ", query.lower()).strip())
+    for b in c.policy.get("standing_orders", []):
+        if _matches(name, b.get("keywords", [])):
+            keys.add(f"so:{b['id']}")
+    p = c.product(product_id)
+    if p is not None and p.category:
+        keys.add(f"cat:{p.category}")
+    return keys
+
+
+def r_split_order(c: Ctx, r: dict) -> None:
+    """Split-order evasion: several orders of the same thing, each under the auto-approve limit, that add up
+    to well over it within a rolling window (default 7 days, more than 2x the limit). Prior orders count only
+    if they were placed without a human. When the log has no line detail for a prior order, it counts as the
+    same thing if it was itself close to the limit (>= near_limit_share of it), the usual split signature."""
+    days = int(r.get("window_days", 7))
+    spend = next((x for x in c.policy["rules"] if x.get("type") == "spend_threshold"), None)
+    if spend is None:
+        return c.hit(r["id"], "allow", "No per-order spend limit, so no split-order check.")
+    auto_max = float(spend["auto_max"])
+    limit = float(r.get("max_factor", 2)) * auto_max
+    near = float(r.get("near_limit_share", 0.6)) * auto_max
+    q = c.quote
+    if q.total_net > auto_max:
+        return c.hit(r["id"], "allow", "This order is above the auto-approve limit on its own; the spend rule decides.")
+    qquery = q.need.product_query if q.need else None
+    mine = set().union(*[_kind_keys(c, ln.product_id, ln.product_name, qquery) for ln in q.lines]) if q.lines else set()
+    prior, n = 0.0, 0
+    for h in _history(c, days):
+        if not h["auto"]:
+            continue
+        if h["lines"] is None:
+            same = h["total"] >= near
+            amt = h["total"] if same else 0.0
+        else:
+            amt = sum(x["line_total"] for x in h["lines"]
+                      if _kind_keys(c, x["product_id"], x["product_name"], h["query"]) & mine)
+            same = amt > 0
+        if same:
+            prior += amt
+            n += 1
+    total = prior + q.total_net
+    role = r.get("approver_role") or spend.get("approver_role") or c.role(r)
+    if n and total > limit:
+        c.hit(r["id"], r.get("outcome", "needs_approval"),
+              f"This is order {n + 1} of the same kind in {days} days placed without a human: together "
+              f"{eur(total)}, more than {float(r.get('max_factor', 2)):g}x the {eur(auto_max)} auto-approve limit. It looks "
+              f"like one large order split into small ones, so a {role_text(role)} must approve it.", role)
+    else:
+        c.hit(r["id"], "allow", f"No split-order pattern: {eur(total)} of the same kind in {days} days"
+                                + (f" over {n + 1} orders." if n else "."))
+
+
+def r_price_jump(c: Ctx, r: dict) -> None:
+    """A line priced more than max_increase_pct (default 15%) above the last price this customer paid for
+    the same product needs a human. Last paid price: the newest placed order in the audit log (lookback
+    default 90 days). The buyer agent may also report a reference price (need.preferences.reference_unit_price,
+    {product_id: price}); the lower of the two is used, so a reported price can only make the check stricter."""
+    pct = float(r.get("max_increase_pct", 15))
+    role = c.role(r)
+    last: dict[str, tuple[float, str]] = {}
+    for h in _history(c, int(r.get("lookback_days", 90))):
+        for x in h["lines"] or []:
+            if x.get("unit_price") is not None:
+                last[x["product_id"]] = (float(x["unit_price"]), f"paid on {h['ts']:%d %b}")
+    reported = ((c.quote.need.preferences or {}).get("reference_unit_price") if c.quote.need else None) or {}
+    bad = False
+    for ln in c.quote.lines:
+        refs = [v for v in [last.get(ln.product_id)] if v]
+        try:
+            if ln.product_id in reported and float(reported[ln.product_id]) > 0:
+                refs.append((float(reported[ln.product_id]), "reported by the buyer agent as the usual price"))
+        except (TypeError, ValueError):
+            pass
+        if not refs:
+            continue
+        ref, src = min(refs, key=lambda t: t[0])
+        if ln.unit_price > ref * (1 + pct / 100) + 1e-9:
+            bad = True
+            up = (ln.unit_price / ref - 1) * 100
+            c.hit(f"{r['id']}:{ln.product_id}", r.get("outcome", "needs_approval"),
+                  f"{_line_name(ln)} costs {eur(ln.unit_price)}, {up:.0f}% above the last price {eur(ref)} ({src}); "
+                  f"more than the {pct:g}% this customer accepts without asking. A {role_text(role)} must confirm it.", role)
+    if not bad:
+        c.hit(r["id"], "allow", f"No line is more than {pct:g}% above the last price paid.")
 
 
 def r_period_spend(c: Ctx, r: dict) -> None:
@@ -341,45 +497,201 @@ def verified_tier(c: Ctx, line) -> tuple[Optional[str], str]:
     return None, "not in the customer profile"
 
 
+def _same_kind(a: dict, b: dict, product_types: Callable) -> bool:
+    """A usual product is the reference for a line only when both are the same kind of product
+    (a milk standing order says nothing about butter). Same rule as the gateway's quote verification."""
+    ta, tb = product_types(a), product_types(b)
+    if ta and tb:
+        return bool(ta & tb)
+    return bool(a.get("category")) and a.get("category") == b.get("category")
+
+
+def catalog_verify(c: Ctx, line) -> dict:
+    """Server-side classification of a line with the catalog's substitution engine (never the agent's label):
+    {"tier", "reference" (usual product of the same kind, or None), "facts" (category/types/claims/unit),
+    "reasons"}. tier None when the catalog or the request is not available. The request's product phrase,
+    claims and allergens come from quote.need; the usual products come from this policy, not from the agent."""
+    key = ("catalog_verify", line.product_id)
+    if key in c.cache:
+        return c.cache[key]
+    out: dict = {"tier": None, "reference": None, "facts": None, "reasons": []}
+    try:
+        from aimo.catalog.substitution import product_types, rank_substitutes
+        from aimo.catalog.textsearch import get_rows
+        usual = sorted(_preferred_ids(c.policy))
+        rows = get_rows([line.product_id, *usual])
+        row = rows.get(line.product_id)
+        if row:
+            out["facts"] = {"category": row.get("category"), "types": sorted(product_types(row)),
+                            "claims": sorted(row.get("claims") or []), "content_unit": row.get("content_unit")}
+            same = [u for u in usual if u in rows and u != line.product_id and _same_kind(rows[u], row, product_types)]
+            out["reference"] = same[0] if same else None
+            need = c.quote.need
+            if need is not None:
+                ln_need = need.model_copy(update={"customer_id": c.quote.customer_id, "preferred_product_ids": same,
+                                                  "preferences": {}, "delivery_by": c.quote.delivery_date})
+                cands = rank_substitutes(ln_need, {}, limit=50, rows={k: rows[k] for k in [line.product_id, *same]},
+                                         relevance={line.product_id: 1.0})
+                cand = next((x for x in cands if x.product.id == line.product_id), None)
+                if cand is not None:
+                    out["tier"], out["reasons"] = cand.tier, cand.reasons[:2]
+    except Exception:
+        pass
+    c.cache[key] = out
+    return out
+
+
+def _request_names_excluded(c: Ctx) -> list[str]:
+    """Excluded allergen groups that the request's product phrase itself names ('milk' at a milk-free school).
+    Decided here from quote.need, never from the agent's line flags: whatever the agent planned for such a
+    request is a replacement that a human confirms."""
+    need = c.quote.need
+    if need is None:
+        return []
+    excl = list(need.excluded_allergens)
+    for r in c.policy.get("rules") or []:
+        if r.get("type") == "allergen_block":
+            excl += list(r.get("excluded") or [])
+    try:
+        from aimo.catalog.allergens import GROUP_KEYWORDS, normalize_allergens
+        norm_excl = normalize_allergens(excl)
+        if not norm_excl:
+            return []
+        try:
+            from aimo.catalog.plan import _excluded_groups_named
+            literal, implied = _excluded_groups_named(need.product_query, norm_excl)
+            return literal + implied
+        except ImportError:
+            words = re.findall(r"[a-zåäö']+", (need.product_query or "").lower())
+            literal_set = set(normalize_allergens(words)) | set(normalize_allergens([" ".join(words)]))
+            implied_set = {g for g, kws in GROUP_KEYWORDS.items() if any(w in kws for w in words)}
+            if {"oat", "kaura", "havre", "soy", "soija", "almond", "coconut", "rice", "plant", "vegan"} & set(words):
+                implied_set.discard("milk")
+                literal_set.discard("milk")
+            return [g for g in norm_excl if g in literal_set] + [
+                g for g in norm_excl if g in implied_set and g not in literal_set
+            ]
+    except Exception:
+        return []
+
+
+def _unit_plausible(query: str, unit: str, min_share: float = 0.3) -> bool:
+    """Is `unit` a normal unit for what the request names? ('milk' in KG or 'rice' in L is not: the request
+    probably has the wrong unit and the exact-name match is a different product, e.g. quark or rice drink.)
+    Share of the catalog's top text matches sold in that unit; unknown (no matches/catalog) counts as no."""
+    try:
+        from aimo.catalog.textsearch import fts_search, get_rows
+        ids = [pid for pid, _ in fts_search(query, limit=30)]
+        units = [d.get("content_unit") for d in get_rows(ids).values() if d.get("content_unit")]
+    except Exception:
+        return False
+    return bool(units) and sum(1 for u in units if u == unit) / len(units) >= min_share
+
+
+def _learned(c: Ctx, line, reference: Optional[str], facts: Optional[dict]) -> Optional[dict]:
+    try:
+        from aimo.trust.learned import match
+        return match(c.quote.customer_id, line.product_id, reference, facts)
+    except Exception:
+        return None
+
+
 def r_substitution(c: Ctx, r: dict) -> None:
     """One hit per line, with the final (strictest) outcome. The tier is verified server-side: a line
     whose tier cannot be verified (missing, or a "preferred"/"best" claim that the profile and catalog do
     not back) is treated as a substitution (`unverified`, default needs_approval). A claimed tier worse
-    than the verified one is honoured (it can only make the outcome stricter)."""
+    than the verified one is honoured (it can only make the outcome stricter).
+
+    Fewer pointless escalations (all still subject to claims here, and to the allergen, spend, split-order,
+    price-jump and injection rules):
+      - the catalog's own ranking verifies the tier server-side (same engine as planning);
+      - `new_product`: the customer has no usual product of this kind and the catalog confirms the line is
+        exactly what the request names (tier best). That is a first purchase, not a substitution;
+      - learned swaps: a human approved this swap with "always allow" (aimo.trust.learned);
+      - `auto_approve_alternatives_below_eur`: a verified-best or customer-approved alternative whose line
+        total is below this amount is allowed even when its tier would need approval."""
     tiers = r.get("tiers", {})
     role = c.role(r)
     unverified_out = r.get("unverified", "needs_approval")
+    small_eur = r.get("auto_approve_alternatives_below_eur")
     need_claims = list(c.quote.need.required_claims) if (c.quote.need and r.get("require_claims")) else []
     claims_txt = ", ".join(CLAIM_TEXT.get(x, x) for x in need_claims)
     noted = False
     rank = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
+    named_excluded = _request_names_excluded(c)
     for ln in c.quote.lines:
-        parts: list[tuple[str, str]] = []   # (outcome, sentence)
+        parts: list[tuple[str, str]] = []
         vt, how = verified_tier(c, ln)
         claimed = ln.tier
+        new_product, learned, profile_alt = False, None, vt is not None and how.startswith("a customer-approved")
+        unverified_note = None
+        if vt != "preferred":
+            cv = catalog_verify(c, ln)
+            learned = _learned(c, ln, cv["reference"], cv["facts"])
+            if vt is None and cv["tier"] in ("best", "better", "good"):
+                vt = cv["tier"]
+                if cv["reference"] is None and c.quote.need is not None and ln.product_id not in _preferred_ids(c.policy):
+                    plausible = _unit_plausible(c.quote.need.product_query, c.quote.need.unit)
+                    new_product = vt == "best" and plausible
+                    how = ("catalog check: the customer has no usual product of this kind and the product matches "
+                           "the request exactly")
+                    if not new_product:
+                        vt = None
+                        why_unverified = ("the request's unit (" + c.quote.need.unit + ") is unusual for '"
+                                          + c.quote.need.product_query + "', so the match may be a different product"
+                                          if not plausible else "it only partly matches the request")
+                        unverified_note = (f"{_line_name(ln)} is not one of the customer's usual products and "
+                                           f"{why_unverified}; treating as substitution.")
+                else:
+                    how = f"catalog check against the usual product {cv['reference']}"
         if vt is not None and rank.get(claimed, 0) > rank[vt]:
-            vt = claimed  # the caller says it is worse than we could verify: believe the stricter one
-        if vt is None:
+            vt = claimed
+            new_product = False
+        if learned is not None and vt != "preferred":
+            who = learned.get("approver") or "a human approver"
+            parts.append(("allow", f"{_line_name(ln)} is a swap that {who} approved with 'always allow' on "
+                                   f"{str(learned.get('created_at', ''))[:10]} ({learned.get('scope')})."))
+            eff = vt or "best"
+        elif vt is None:
             if claimed in ("better", "good", "rejected"):
                 eff = claimed
                 out = tiers.get(eff, "needs_approval")
                 parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]} (as reported by the agent)."))
+            elif unverified_note:
+                eff, out = None, unverified_out
+                parts.append((out, unverified_note))
             else:
                 eff, out = None, unverified_out
                 parts.append((out, f"Agent-supplied tier could not be verified; treating as substitution. "
                                    f"{_line_name(ln)} is not one of the customer's usual products or approved "
                                    f"alternatives (agent-supplied tier: "
                                    + ("preferred or none" if claimed == "preferred" else claimed) + ")."))
+        elif new_product:
+            eff = vt
+            out = r.get("new_product", "needs_approval")
+            parts.append((out, f"{_line_name(ln)} is a new product for this customer, not a substitution ({how})."))
         else:
             eff = vt
             out = tiers.get(eff, "allow" if eff == "preferred" else "needs_approval")
             if eff == "preferred":
                 parts.append((out, f"{_line_name(ln)} is the customer's usual product."))
             else:
-                parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]}, verified as {how}."))
-        if "outside_preference" in ln.flags:
+                if (out == "needs_approval" and small_eur is not None and ln.line_total < float(small_eur)
+                        and (eff == "best" or profile_alt)):
+                    out = "allow"
+                    how += (f"; the line total {eur(ln.line_total)} is below the {eur(float(small_eur))} this customer "
+                            f"lets the agent swap without asking")
+                over = ("Agent-supplied tier could not be verified; treating as substitution. "
+                        if rank.get(claimed, 0) < rank.get(eff, 0) else "")
+                parts.append((out, f"{over}{_line_name(ln)} is a substitute: {TIER_TEXT[eff]}, verified as {how}."))
+        if "outside_preference" in ln.flags and learned is None:
             parts.append((r.get("outside_preference", "needs_approval"),
                           "It is flagged as outside your standing preferences (brand, pack or spec)."))
+        if "allergen_safe_alternative" in ln.flags or named_excluded:
+            parts.append(("needs_approval", f"The request named '{c.quote.need.product_query if c.quote.need else ''}', "
+                                            f"which normally contains {' and '.join(named_excluded) or 'an excluded allergen'} "
+                                            "(excluded by this customer's policy); the agent planned an allergen-free "
+                                            "replacement, which a human confirms."))
         if need_claims:
             p = c.product(ln.product_id)
             if p is None:
@@ -391,12 +703,11 @@ def r_substitution(c: Ctx, r: dict) -> None:
                                             f"so it does not meet the request."))
         final = max((o for o, _ in parts), key=lambda o: SEVERITY[o])
         if eff == "preferred" and final == "allow" and len(parts) == 1:
-            continue  # usual product, nothing to say per line
+            continue
         noted = True
         tail = {"allow": " Allowed automatically by this policy.",
                 "needs_approval": f" A {role_text(role)} must confirm the swap.",
                 "reject": " This policy does not allow it."}[final]
-        # keep the descriptive first sentence, then only the sentences that drive the final outcome
         text = [parts[0][1]] + [s for o, s in parts[1:] if o == final or final == "allow"]
         c.hit(f"{r['id']}:{ln.product_id}", final, " ".join(text) + tail, role)
     if not noted:
@@ -418,6 +729,7 @@ def r_allergen_block(c: Ctx, r: dict) -> None:
         p = c.product(ln.product_id)
         found: dict[str, list[str]] = {"contains": [], "may_contain": [], "unknown": []}
         inferred: list[str] = []
+        claim_only: list[str] = []
         for a in excluded:
             if p is None:
                 st = "contains" if f"contains:{a}" in ln.flags else "may_contain" if f"may_contain:{a}" in ln.flags else "unknown"
@@ -426,7 +738,10 @@ def r_allergen_block(c: Ctx, r: dict) -> None:
                 src = (p.allergen_source or {}).get(a, "")
                 if src.startswith("inferred") and st != "unknown":
                     inferred.append(a)
-                    st = "unknown"  # AI-inferred is a hint for humans, never proof
+                    st = "unknown"
+                elif src == "structured:claim" and st == "free":
+                    claim_only.append(a)
+                    st = "unknown"
             if st in found:
                 found[st].append(a)
         rid = f"{r['id']}:{ln.product_id}"
@@ -443,6 +758,8 @@ def r_allergen_block(c: Ctx, r: dict) -> None:
             out = r.get("on_unknown", "reject")
             src = "no supplier allergen data" if p is None else "the supplier data does not state it"
             extra = (f" The {', '.join(inferred)} status was only AI-inferred from the ingredient text." if inferred else "")
+            extra += (f" '{'/'.join(claim_only)}-free' comes only from a nutrition claim, not from the allergen declaration."
+                      if claim_only else "")
             tail = {"reject": " Unknown is never treated as safe, so the line cannot be ordered.",
                     "needs_approval": f" Unknown is never treated as safe: a {role_text(role)} must check the label first.",
                     "allow": ""}[out]
@@ -524,15 +841,27 @@ def r_quantity_drift(c: Ctx, r: dict) -> None:
         if not matched:
             continue
         any_match = True
+        prior = 0.0
+        for h in _history(c, int(r.get("window_days", 7))):
+            for x in h["lines"] or []:
+                p = c.product(x["product_id"])
+                if not (_matches(x["product_name"], kws) or (p and _matches(p.name_fi or "", kws))):
+                    continue
+                amt, u = content_per_unit(type("L", (), {"product_name": x["product_name"]})(), p)
+                if amt and u == unit:
+                    prior += amt * x["qty"]
         base = float(b["weekly_qty"])
-        f = total / base if base else float("inf")
+        f = (total + prior) / base if base else float("inf")
         label = b.get("label", b["id"])
+        earlier = (f" including {qty_text(prior)} {unit} ordered earlier in the last {int(r.get('window_days', 7))} days"
+                   if prior > 0 else "")
         if f > factor_max:
             c.hit(f"{r['id']}:{b['id']}", "needs_approval", f"This is {f:.1f}× your usual weekly volume of {label} "
-                  f"({qty_text(total)} {unit} vs about {qty_text(base)} {unit} a week). A {role_text(role)} must confirm the quantity.", role)
+                  f"({qty_text(total + prior)} {unit}{earlier} vs about {qty_text(base)} {unit} a week). "
+                  f"A {role_text(role)} must confirm the quantity.", role)
         else:
-            c.hit(f"{r['id']}:{b['id']}", "allow", f"{label.capitalize()} volume {qty_text(total)} {unit} is in line with your usual "
-                  f"{qty_text(base)} {unit} a week ({f:.1f}×).")
+            c.hit(f"{r['id']}:{b['id']}", "allow", f"{label.capitalize()} volume {qty_text(total + prior)} {unit}{earlier} is in "
+                  f"line with your usual {qty_text(base)} {unit} a week ({f:.1f}×).")
     if not any_match:
         c.hit(r["id"], "allow", "No standing-order baseline covers these products, so there is no volume check.")
 
@@ -566,7 +895,7 @@ RULES: dict[str, Callable[[Ctx, dict], None]] = {
     "scope": r_scope, "quote_freshness": r_quote_freshness, "spend_threshold": r_spend_threshold,
     "period_spend": r_period_spend, "category_scope": r_category_scope, "substitution": r_substitution,
     "allergen_block": r_allergen_block, "delivery": r_delivery, "quantity_drift": r_quantity_drift,
-    "injection": r_injection,
+    "injection": r_injection, "split_order": r_split_order, "price_jump": r_price_jump,
 }
 
 
@@ -662,7 +991,13 @@ def _summary(pol: dict) -> list[str]:
             if r.get("require_claims"):
                 s += " Required claims (e.g. lactose free) must be kept."
             s += (" Only the products in the customer profile count as usual; the agent's own tier label is never "
-                  "trusted, and anything unverified is treated as a substitution.")
+                  "trusted: the catalog re-checks it, and anything unverified is treated as a substitution.")
+            if r.get("new_product") == "allow":
+                s += " A first purchase that exactly matches the request (no usual product of that kind) is not a substitution."
+            if r.get("auto_approve_alternatives_below_eur") is not None:
+                s += (f" Verified-best or pre-approved alternatives under {eur(float(r['auto_approve_alternatives_below_eur']))}"
+                      " a line are swapped without asking.")
+            s += " Swaps a human approved with 'always allow' are remembered."
             out.append(s)
         elif t == "allergen_block":
             ex = r.get("excluded", [])
@@ -684,6 +1019,11 @@ def _summary(pol: dict) -> list[str]:
             out.append("Only registered agents with the order:submit permission may order.")
         elif t == "injection":
             out.append(f"Orders touched by suspected prompt injection in supplier text need a {role}.")
+        elif t == "split_order":
+            out.append(f"Several small orders of the same thing within {r.get('window_days', 7)} days that add up to more than "
+                       f"{r.get('max_factor', 2)}x the auto-approve limit need a {role} (split-order evasion).")
+        elif t == "price_jump":
+            out.append(f"A price more than {r.get('max_increase_pct', 15)}% above the last price paid needs a {role}.")
     return out
 
 

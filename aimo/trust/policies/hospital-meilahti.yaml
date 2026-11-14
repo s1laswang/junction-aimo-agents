@@ -2,7 +2,7 @@
 # Coeliac patients: gluten is excluded. A dietitian signs off on every substitution and on any
 # product whose allergen data is missing or only AI-inferred.
 policy_id: hospital-meilahti
-version: "1.1.0"
+version: "1.2.0"
 effective_from: "2026-10-01"
 customer:
   id: hospital-meilahti
@@ -55,6 +55,7 @@ rules:
     tiers: {preferred: allow, best: needs_approval, better: needs_approval, good: needs_approval, rejected: reject}
     outside_preference: needs_approval
     unverified: needs_approval    # missing tier, or a tier the profile/catalog cannot back
+    new_product: allow
     approver_role: dietitian
 
   - id: allergens
@@ -72,6 +73,19 @@ rules:
   - id: quantity_drift
     type: quantity_drift
     max_factor: 3
+    approver_role: procurement_manager
+
+  - id: split_order
+    type: split_order
+    window_days: 7
+    max_factor: 1
+    near_limit_share: 0.6
+    approver_role: procurement_manager
+
+  - id: price_jump
+    type: price_jump
+    max_increase_pct: 15
+    lookback_days: 90
     approver_role: procurement_manager
 
   - id: injection
