@@ -223,8 +223,20 @@ def test_expired_quote_needs_requote(api, monkeypatch):
     real_now = service._now
     monkeypatch.setattr(service, "_now", lambda: real_now() + timedelta(hours=1))
     r = api.post(f"/v1/approvals/{o['order_id']}/decision", json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
-    assert r.status_code == 409 and r.json()["error"] == "quote_expired"
+    assert r.status_code == 409 and r.json()["error"] == "requote_needed"
+    d = r.json()["detail"]
+    assert d["reason"] == "quote_expired" and d["new_quote"]["quote_id"] != q["quote_id"]
+    assert d["new_order"]["status"] == "pending_approval" and d["new_order"]["provenance"]["supersedes"] == o["order_id"]
     assert api.get(f"/v1/orders/{o['order_id']}").json()["status"] == "expired"
+    # one step: approve the proposal
+    r2 = api.post(d["approve_with"]["path"], json={**d["approve_with"]["body"], **APPROVER})
+    assert r2.status_code == 200 and r2.json()["status"] == "placed", r2.text
+    # approving the old order again points at the same proposal (no second re-quote)
+    r3 = api.post(f"/v1/approvals/{o['order_id']}/decision", json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
+    assert r3.status_code == 409 and r3.json()["detail"]["new_order"]["order_id"] == d["new_order"]["order_id"]
+    evs = api.get("/v1/audit", params={"subject_id": o["order_id"]}).json()
+    assert any(e["action"] == "order.requoted" for e in evs)
+    # the agent path still says quote_expired (the agent re-quotes itself)
     r = api.post("/v1/orders", headers=H, json={"quote_id": q2["quote_id"], "quote_hash": q2["quote_hash"]})
     assert r.status_code == 409 and r.json()["error"] == "quote_expired"
 
@@ -544,3 +556,154 @@ def test_owner_agent_id_forms_are_equivalent(api):
     q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000}], headers={**H, "X-Agent-Id": "hotel-aurora/buyer-1"}).json()
     r = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]})
     assert r.status_code == 200 and r.json()["status"] == "pending_approval"
+
+
+# ------------------------------------------------------------------ round 5: clock, replay, learned approvals, re-quote
+from aimo.backend import clock as aclock  # noqa: E402
+from aimo.backend import replay as areplay  # noqa: E402
+
+
+def test_simulated_clock_env_drives_cutoff(monkeypatch):
+    monkeypatch.setenv("AIMO_NOW", "2026-11-12T10:00:00+02:00")      # before Terminal cut-off (Thu 15:00)
+    o = bc.get_offers(["463038"], D)["463038"]
+    assert not o.cutoff_passed and o.available is False or not o.cutoff_passed
+    assert "cutoff_passed" not in o.issues
+    monkeypatch.setenv("AIMO_NOW", "2026-11-15T17:30:00+02:00")      # after Stock cut-off (Sun 17:00)
+    o = bc.get_offers(["464306"], D)["464306"]
+    assert o.cutoff_passed and not o.available
+    assert aclock.describe()["mode"] == "env"
+
+
+def test_header_clock_and_quote_times(api, monkeypatch):
+    r = api.post("/v1/offers", headers={**H, "X-Aimo-Now": "2026-11-15T17:30:00+02:00"},
+                 json={"product_ids": ["464306"], "requested_date": "2026-11-16"})
+    assert r.json()[0]["cutoff_passed"] is True and r.json()[0]["provenance"]["clock"]["mode"] == "header"
+    q = api.post("/v1/quotes", headers={**H, "X-Aimo-Now": "2026-11-14T14:00:00+02:00"},
+                 json={"delivery_date": "2026-11-16", "lines": [{"product_id": "464306", "qty_sales_units": 1000}]}).json()
+    assert q["created_at"].startswith("2026-11-14T12:00:00") and q["expires_at"].startswith("2026-11-14T12:15:00")
+    monkeypatch.setenv("AIMO_ENV", "production")                      # header ignored in production
+    r = api.post("/v1/offers", headers={**H, "X-Aimo-Now": "2026-11-15T17:30:00+02:00"},
+                 json={"product_ids": ["464306"], "requested_date": "2026-11-16"})
+    assert r.json()[0]["provenance"]["clock"]["mode"] != "header"
+
+
+def test_demo_runs_in_the_past_with_simulated_clock(api, monkeypatch):
+    """With AIMO_NOW far from real time, quote freshness and approval expiry use the simulated clock."""
+    monkeypatch.setenv("AIMO_NOW", "2026-11-10T09:00:00+02:00")
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000}]).json()
+    assert q["expires_at"].startswith("2026-11-10T07:15")
+    o = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
+    assert o["status"] == "pending_approval", o
+    r = api.post(f"/v1/approvals/{o['order_id']}/decision", json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
+    assert r.status_code == 200 and r.json()["status"] == "placed", r.text
+
+
+def _snapshot(tmp_path):
+    d = tmp_path / "snapshot"
+    d.mkdir()
+    (d / "price_2026-11-16.json").write_text((FIX / "price_20261116.json").read_text())
+    (d / "availability_2026-11-16.json").write_text((FIX / "availability_20261116.json").read_text())
+    (d / "meta.json").write_text(json.dumps({"time_now": "2026-11-14T14:16:11+0200", "dates": ["2026-11-16"]}))
+    return d
+
+
+def test_replay_mode_serves_snapshot_offline(api, tmp_path, monkeypatch):
+    d = _snapshot(tmp_path)
+    monkeypatch.setenv("AIMO_REPLAY", str(d))
+    bc.set_client(None)                                               # get_client() -> ReplayClient
+    assert isinstance(bc.get_client(), areplay.ReplayClient)
+    r = api.post("/v1/offers", headers=H, json={"product_ids": ["463038", "464306"], "requested_date": "2026-11-16"})
+    assert r.status_code == 200 and r.headers["x-aimo-served-from"] == "replay"
+    by = {o["product_id"]: o for o in r.json()}
+    assert by["463038"]["cutoff_passed"] and not by["464306"]["cutoff_passed"]   # clock anchored at snapshot time
+    assert by["464306"]["provenance"]["clock"]["mode"] == "replay"
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000}]).json()
+    assert q["provenance"]["served_from"] == "replay"
+    r = api.post("/v1/offers", headers=H, json={"product_ids": ["464306"], "requested_date": "2026-11-19"})
+    assert r.status_code == 503 and "no availability data" in r.json()["message"] or "no price data" in r.json()["message"]
+
+
+def test_upstream_down_falls_back_to_replay(api, tmp_path, monkeypatch):
+    d = _snapshot(tmp_path)
+    monkeypatch.setenv("AIMO_REPLAY_FALLBACK", str(d))
+    monkeypatch.setattr(bc.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        raise httpx.ConnectError("no network")
+
+    c = bc.ValioClient(base_url="https://mock.invalid", api_key="k", cache_dir=tmp_path / "c", offline=False)
+    c._http = httpx.Client(base_url="https://mock.invalid", transport=httpx.MockTransport(handler))
+    bc.set_client(c)
+    r = api.post("/v1/offers", headers=H, json={"product_ids": ["464306"], "requested_date": "2026-11-16"})
+    assert r.status_code == 200 and r.headers["x-aimo-served-from"] == "replay"
+    assert "unreachable" in r.json()[0]["provenance"]["replay"]["fallback_reason"]
+    n = calls["n"]
+    assert n <= 2                                                     # connect errors retry once, then fail fast
+    api.post("/v1/offers", headers=H, json={"product_ids": ["464306"], "requested_date": "2026-11-16"})
+    assert calls["n"] == n                                            # circuit open: straight to replay
+    assert api.get("/healthz").json()["upstream"]["circuit_open"] is True
+
+
+def _fake_learned(monkeypatch):
+    import sys
+    import types
+
+    import aimo.trust as trust_pkg
+
+    mod = types.ModuleType("aimo.trust.learned")
+    mod.calls = []
+    mod.remember_swap = lambda **kw: (mod.calls.append(kw), {"ok": True})[1]
+    mod.list_learned = lambda customer_id: [c for c in mod.calls if c["customer_id"] == customer_id]
+    monkeypatch.setitem(sys.modules, "aimo.trust.learned", mod)
+    monkeypatch.setattr(trust_pkg, "learned", mod, raising=False)
+    return mod
+
+
+@needs_catalog
+def test_learned_approval_remember(api, monkeypatch):
+    mod = _fake_learned(monkeypatch)
+    q = api.post("/v1/quotes", headers=H, json={"delivery_date": "2026-11-16", "need": MILK_NEED,
+                                               "lines": [{"product_id": "464306", "qty_sales_units": 1000}]}).json()
+    o = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
+    r = api.post(f"/v1/approvals/{o['order_id']}/decision",
+                 json={"decision": "approve", "quote_hash": q["quote_hash"], "remember": True,
+                       "remember_scope": "product_type", **APPROVER})
+    assert r.status_code == 200, r.text
+    assert mod.calls and mod.calls[0]["from_product_id"] == "463038" and mod.calls[0]["to_product_id"] == "464306"
+    assert mod.calls[0]["scope"] == "product_type" and mod.calls[0]["approver"] == "anna@hotel-aurora.example"
+    assert r.json()["provenance"]["learned"]["remembered"] is True
+    got = api.get("/v1/customers/hotel-aurora/learned", headers=H).json()
+    assert got["available"] and got["swaps"][0]["to_product_id"] == "464306"
+    assert api.get("/v1/customers/hotel-aurora/learned", headers={"X-Customer-Id": "school-tampere"}).status_code == 403
+    assert service.list_policies(identity={"customer_id": "hotel-aurora", "agent_id": "buyer-1"})["learned_swaps"]["swaps"]
+
+
+def test_remember_without_trust_learned_does_not_block(api):
+    q, o = _pending_order(api)
+    r = api.post(f"/v1/approvals/{o['order_id']}/decision",
+                 json={"decision": "approve", "quote_hash": q["quote_hash"], "remember": True, **APPROVER})
+    assert r.status_code == 200 and r.json()["status"] == "placed"
+
+
+def test_cutoff_passing_while_waiting_requires_requote(api):
+    q = api.post("/v1/quotes", headers={**H, "X-Aimo-Now": "2026-11-15T16:58:00+02:00"},
+                 json={"delivery_date": "2026-11-16", "lines": [{"product_id": "464306", "qty_sales_units": 1000}]}).json()
+    o = api.post("/v1/orders", headers={**H, "X-Aimo-Now": "2026-11-15T16:58:30+02:00"},
+                 json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
+    assert o["status"] == "pending_approval"
+    r = api.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Aimo-Now": "2026-11-15T17:02:00+02:00"},
+                 json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
+    assert r.status_code == 409 and r.json()["error"] == "requote_needed"
+    assert r.json()["detail"]["reason"] == "cutoff_passed" and "new_order" not in r.json()["detail"]
+    assert api.get(f"/v1/orders/{o['order_id']}").json()["status"] == "expired"
+
+
+def test_duplicate_approval_click_is_idempotent(api):
+    q, o = _pending_order(api)
+    body = {"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER}
+    r1 = api.post(f"/v1/approvals/{o['order_id']}/decision", json=body)
+    r2 = api.post(f"/v1/approvals/{o['order_id']}/decision", json=body)
+    assert r1.status_code == r2.status_code == 200 and r1.json() == r2.json()
+    assert len(store.approvals_for(o["order_id"])) == 1
