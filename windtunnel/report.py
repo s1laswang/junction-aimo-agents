@@ -115,6 +115,24 @@ def main(argv: list[str] | None = None) -> None:
                      f"{(s['p50_latency_s'] or 0):.1f} | {(s['p95_latency_s'] or 0):.1f} | {s['thinking_tokens_mean']:.0f} | "
                      f"{s['cost_usd_per_1k']} | {s['errors']} |")
         L += ["", "![thinking vs accuracy](windtunnel-thinking.svg)", ""]
+    ag, aj = _load("agent48"), _load("agent48_judge")
+    if ag:
+        s0 = ag["systems"][0]
+        e = s0["escalation"]
+        L += ["## Agent mode: Gemini buyer agent + real gateway", "",
+              f"{s0['n']} scenarios (3 per family) through `POST /v1/agent/runs` on the real `aimo.gateway.app`, mock API "
+              "replaced by the snapshot (`windtunnel/serve_replay.py`), gateway fault layer on. Pending approvals were "
+              f"recorded, then declined by the simulated human. Run on git {s0['meta'].get('git', '?')} "
+              f"({ag['generated'][:16]}).", "",
+              "| N | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | "
+              "Line acceptability | Latency p50 / p95 s |", "|---|---|---|---|---|---|---|---|",
+              f"| {s0['n']} | {pct(e['precision'])} | {pct(e['recall'])} | {pct(s0['outcome_accuracy'])} | "
+              f"**{s0['policy_violations']}** | **{s0['allergen_violations']}** | {pct(s0.get('substitution_acceptability'))} | "
+              f"{(s0['latency_ms']['p50'] or 0) / 1000:.0f} / {(s0['latency_ms']['p95'] or 0) / 1000:.0f} |", ""]
+        if aj:
+            m = aj["mean_score_0_1"]
+            L += [f"Gemini judge (gemini-3.8-flash, structured rubric, {aj['judged']}/{aj['n']} transcripts judged): "
+                  + ", ".join(f"{k.replace('_', ' ')} {v:.2f}" for k, v in m.items() if v is not None) + ".", ""]
     if main_r and main_r.get("gemini_usage", {}).get("total_tokens"):
         u = main_r["gemini_usage"]
         L += ["## Gemini usage by the wind tunnel (ledger, features windtunnel.*)", "",

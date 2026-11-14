@@ -77,10 +77,10 @@ def test_milk_flow_needs_approval_then_places(client):
     assert order["decision"]["outcome"] == "needs_approval"
     # a tampered hash must not approve
     bad = client.post(f"/v1/approvals/{order['order_id']}/decision",
-                      json={"decision": "approve", "approver": "anna@aurora", "note": "", "quote_hash": "0" * 64})
+                      json={"decision": "approve", "approver": "anna@hotel-aurora.example", "note": "", "quote_hash": "0" * 64})
     assert bad.status_code >= 400 or bad.json().get("status") != "placed"
     ok = client.post(f"/v1/approvals/{order['order_id']}/decision",
-                     json={"decision": "approve", "approver": "anna@aurora", "note": "ok",
+                     json={"decision": "approve", "approver": "anna@hotel-aurora.example", "note": "ok",
                            "quote_hash": quote["quote_hash"]})
     assert ok.status_code == 200, ok.text
     assert ok.json()["status"] in ("placed", "approved")
