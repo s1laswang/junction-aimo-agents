@@ -1,12 +1,12 @@
 # PLAN: Valio Aimo Trusted Trade Agents (Junction 2026)
 
-Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:30 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
+Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
 
 ## Questions for Silas
 1. **Momin's code: approve the merge plan in [docs/MERGE-MOMIN.md](MERGE-MOMIN.md).** I reviewed it read-only: `junction26-valio` dev on freighter. It's a solid deterministic gateway with all 8 brief scenarios as runnable acceptance scripts, but it runs with no LLM by default.
    - **Recommendation:** submit **junction-aimo-agents**. Gemini is essential throughout it, it has the richer live UI, a red-teamed trust layer, 123 tests, and it's on GitHub. Port four things from Momin's repo, credited to him: recipe → order, the proactive seller agent, the standing-order drift detector, and his s0–s7 acceptance suite plus Dockerfile.
    - **Optional:** retarget the fleet's `valio` team to open `fr8/valio/*` PRs against our repo.
-   - I won't touch the fleet's board, repos, jobs or branches without your OK. Porting starts now, as it only touches our repo. Say stop if you prefer Momin's as the base.
+   - I won't touch the fleet's board, repos, jobs or branches without your OK. **Porting is done** (Sat 19:00): recipe → order, seller, drift and the s0–s7 suite (8/8 PASS live, `uv run python -m scenarios.run_all`) are all on main and credited to Momin. Say so if you prefer Momin's as the base.
 2. **Live demo hosting.** By default the demo runs on a laptop with one command, and we also record a backup video. Do you want a public URL for judges, such as Cloud Run? That needs your GCP project. If you don't answer, we go local plus video.
 3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
 4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
@@ -14,19 +14,23 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:30 Helsinki. Deadline: **
 
 Everything else is decided below. Change it here if you disagree.
 
-## Status (Sat 15:30)
-- **M1 and M2 are met, hours early.** Everything is on main and verified live against the mock API: gateway (REST, MCP, otap.json, faults, demo tamper routes), trust (directory-only human approvals, server-verified tiers, signed hash-chained audit), catalog (hybrid Gemini search, allergen tri-state plus Gemini inference, good-better-best, preference bug fixed), Gemini buyer agent (6/6 montage scenarios PASS: docs/demo-montage.md) and the approval UI (live tamper, presenter mode). 137 tests pass.
+## Status (Sat 19:15)
+- **On main, verified live:**
+  - the full hero flow in the browser;
+  - the guardrails red-teamed and fixed (directory-only human approvals, server-verified tiers, header identity, live re-pricing);
+  - the Gemini buyer montage 6/6 PASS at $0.034 per order (docs/demo-montage.md);
+  - Momin's s0–s7 acceptance suite 8/8 PASS (docs/SCENARIOS.md);
+  - recipes, drift and the proactive seller over REST and MCP (13 tools);
+  - 159 tests pass.
 - **In progress:**
-  - buyer: token trim, plus cost per order;
-  - wind tunnel: scenario numbers;
-  - port: Momin's recipe → order, seller agent, drift detector, s0–s7 suite, Dockerfile.
+  - gateway: block other agents from submitting a buyer's quote;
+  - wind tunnel: results table.
 - **Next:**
-  - merge those three;
-  - fill the TODO numbers in DEMO, deck, SUBMISSION and GEMINI;
+  - fill the wind tunnel TODOs in DEMO, deck, SUBMISSION and GEMINI;
   - take fresh screenshots;
   - record the video (Chintufp);
   - freeze at Sun 06:00.
-- **FR8 freighter:** SSH from the venue Wi-Fi is flaky, and /data/silas is missing (see Questions). We use ~/junction-aimo-agents-data.
+- **FR8:** the fleet's valio team (39 workers) is still hardening Momin's repo. Nothing has merged into its fr8/valio/main, and it's blocked on data. See Question 1.
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.
