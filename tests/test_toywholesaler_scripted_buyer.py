@@ -161,6 +161,10 @@ def _verify_quote_and_audit(base: str, quote_dict: dict, order_id: str, tmp_path
     assert ev_check.returncode == 0 and "VERIFIED" in ev_check.stdout, ev_check.stdout + ev_check.stderr
 
 
+def _human_headers() -> dict[str, str]:
+    return {"X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "test-pin")}
+
+
 def _decide_when_pending(base: str, seen_ids: set[str], decision: str, check_hash_mismatch: bool = False) -> tuple[threading.Thread, dict]:
     outcome: dict = {}
 
@@ -171,6 +175,7 @@ def _decide_when_pending(base: str, seen_ids: set[str], decision: str, check_has
                 inbox = httpx.get(
                     f"{base}/v1/approvals",
                     params={"status": "pending", "customer_id": "hotel-aurora"},
+                    headers=_human_headers(),
                     timeout=5.0,
                 ).json()
                 fresh = [item for item in inbox if item["order"]["order_id"] not in seen_ids]
@@ -183,12 +188,14 @@ def _decide_when_pending(base: str, seen_ids: set[str], decision: str, check_has
                 if check_hash_mismatch:
                     bad = httpx.post(
                         f"{base}/v1/approvals/{oid}/decision",
+                        headers=_human_headers(),
                         json={"decision": decision, "approver": APPROVER, "quote_hash": "0" * 64},
                         timeout=5.0,
                     )
                     outcome["mismatch_status"] = bad.status_code
                 resp = httpx.post(
                     f"{base}/v1/approvals/{oid}/decision",
+                    headers=_human_headers(),
                     json={
                         "decision": decision,
                         "approver": APPROVER,
@@ -254,7 +261,7 @@ def test_keyless_buyer_mcp_over_limit_approved_via_decision_endpoint(toy_server,
     target = now_helsinki().date() + timedelta(days=5)
     existing = {
         item["order"]["order_id"]
-        for item in httpx.get(f"{base}/v1/approvals", params={"status": "pending", "customer_id": "hotel-aurora"}, timeout=5.0).json()
+        for item in httpx.get(f"{base}/v1/approvals", params={"status": "pending", "customer_id": "hotel-aurora"}, headers=_human_headers(), timeout=5.0).json()
     }
 
     transport = _mcp_transport(base)
@@ -292,7 +299,7 @@ def test_keyless_buyer_mcp_over_limit_human_rejection(toy_server, tmp_path):
     target = now_helsinki().date() + timedelta(days=6)
     existing = {
         item["order"]["order_id"]
-        for item in httpx.get(f"{base}/v1/approvals", params={"status": "pending", "customer_id": "hotel-aurora"}, timeout=5.0).json()
+        for item in httpx.get(f"{base}/v1/approvals", params={"status": "pending", "customer_id": "hotel-aurora"}, headers=_human_headers(), timeout=5.0).json()
     }
 
     transport = _mcp_transport(base)
