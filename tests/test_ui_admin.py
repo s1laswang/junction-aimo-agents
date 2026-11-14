@@ -1,4 +1,6 @@
+from datetime import date, timedelta
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -8,8 +10,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from aimo import offers
+from aimo import allocate, catalog, keys, offers, valio
 from aimo.app import app
+from aimo.models import Mandate, Product, UnitSize
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 SELF = Path(__file__).resolve()
@@ -120,6 +123,8 @@ def test_admin_html_ids_labels_and_simulation_wiring():
         "per_week_eur",
         "substitutions",
         "exclude_allergens-in",
+        "allergen-picks",
+        "allergen-note",
         "allowed_categories-in",
         "preferred_brands-in",
         "approvers-in",
@@ -130,6 +135,7 @@ def test_admin_html_ids_labels_and_simulation_wiring():
         "sim-sec",
         "sim-form",
         "sim-product",
+        "sim-picks",
         "sim-amount",
         "sim-date",
         "sim-apply",
@@ -142,6 +148,10 @@ def test_admin_html_ids_labels_and_simulation_wiring():
         assert f'id="{label_for}"' in html, label_for
     assert "Stock simulation" in html
     assert "Clear simulation" in html
+    for allergen in ["lactose", "milk", "gluten", "peanut", "nuts", "egg", "soy", "fish"]:
+        assert f'data-allergen="{allergen}"' in html, allergen
+    for note_part in ["ML", "AM", "allowing lactose-free dairy", "blocking all dairy"]:
+        assert note_part in html, note_part
     for snippet in [
         "Number.isFinite(cur.per_order_eur)",
         "Number.isFinite(cur.per_week_eur)",
@@ -152,11 +162,31 @@ def test_admin_html_ids_labels_and_simulation_wiring():
         "Reset to saved mandate.",
         "/audit.html",
         "/v1/mandate",
+        "/v1/orders?customer=",
         "/v1/admin/simulate",
         '"POST"',
         '"DELETE"',
     ]:
         assert snippet in js, snippet
+
+
+def test_mock_constant_validates_as_pydantic_mandates():
+    node = _node_bin()
+    extractor = """
+const fs = require("fs");
+const vm = require("vm");
+const src = fs.readFileSync(process.argv[1], "utf8").split("\\n")[0];
+const ctx = vm.createContext({});
+vm.runInContext(src, ctx);
+process.stdout.write(JSON.stringify(ctx.MOCK));
+"""
+    res = subprocess.run([node, "-e", extractor, str(WEB / "admin.js")], capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stderr
+    parsed = json.loads(res.stdout)
+    assert set(parsed.keys()) == {"hotel-aurora", "hospital-tays", "school-hervanta"}
+    for cust, raw in parsed.items():
+        m = Mandate.model_validate(raw)
+        assert m.customer == cust
 
 
 def test_admin_js_mock_and_live_flows():
@@ -258,7 +288,7 @@ function makeHarness(search, fetchImpl) {
   topBar.classList.toggle("top", true);
   const menuBtn = new Elem("button", "");
 
-  for (const id of ["customer", "who", "agent", "off", "f", "per_order_eur", "per_week_eur", "substitutions", "save", "reset", "msg", "last", "sim-sec", "sim-form", "sim-product", "sim-amount", "sim-date", "sim-apply", "sim-clear", "sim-msg"]) {
+  for (const id of ["customer", "who", "agent", "off", "f", "per_order_eur", "per_week_eur", "substitutions", "allergen-picks", "allergen-note", "save", "reset", "msg", "last", "sim-sec", "sim-form", "sim-product", "sim-picks", "sim-amount", "sim-date", "sim-apply", "sim-clear", "sim-msg"]) {
     new Elem("div", id);
   }
   byId.get("sim-amount").value = "0";
@@ -374,6 +404,10 @@ function makeHarness(search, fetchImpl) {
   await m.byId.get("customer").trigger("change");
   await m.flush();
   assert.strictEqual(m.byId.get("per_order_eur").value, "1500");
+  const hospActiveAllergens = m.byId.get("allergen-picks").children.filter(b => b.classList.contains("on")).map(b => b.dataset.allergen);
+  assert.deepStrictEqual(hospActiveAllergens, ["peanut", "nuts", "egg"]);
+  const hospPickBtns = m.byId.get("sim-picks").children.filter(c => c.tagName === "BUTTON");
+  assert.strictEqual(hospPickBtns[0].dataset.pid, "462775");
 
   m.byId.get("customer").value = "hotel-aurora";
   await m.byId.get("customer").trigger("change");
@@ -407,6 +441,37 @@ function makeHarness(search, fetchImpl) {
     if (path.startsWith("/v1/mandate") && (!opts || !opts.method)) {
       return { ok: true, status: 200, async json() { return { customer: "hotel-aurora", agent_id: "buyer-aurora", per_order_eur: 2500, per_week_eur: 15000, exclude_allergens: [], allowed_categories: null, substitutions: "within_prefs", preferred_brands: ["Valio"], approvers: ["Laura Virtanen"] }; } };
     }
+    if (path.startsWith("/v1/orders")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return [
+            {
+              order_id: "ord_blocked_99",
+              status: "blocked",
+              lines: [{ product_id: "999999", name: "Blocked Peanut Product", quantity: 5 }]
+            },
+            {
+              order_id: "ord_10",
+              status: "confirmed",
+              lines: [
+                { product_id: "463982", name: "Kieku Barn Eggs L180 12300g", quantity: 4 },
+                { product_id: "460468", name: "Paulig Presidentti Tumma Paahto 18x300g", quantity: 3 }
+              ]
+            },
+            {
+              order_id: "ord_11",
+              status: "pending_approval",
+              lines: [
+                { product_id: "410008", name: "Valio Eila laktoositon kevytmaito 1 L", quantity: 200 },
+                { product_id: "463982", name: "Kieku Barn Eggs L180 12300g", quantity: 2 }
+              ]
+            }
+          ];
+        }
+      };
+    }
     if (path.startsWith("/v1/audit")) {
       return { ok: true, status: 200, async json() { return { events: [{ seq, ts: "2026-11-14T15:00:00Z", actor: "human:admin", action: "mandate_updated" }] }; } };
     }
@@ -425,6 +490,61 @@ function makeHarness(search, fetchImpl) {
   });
   await live.flush();
   await live.flush();
+  await live.flush();
+
+  const expectedAllergens = ["lactose", "milk", "gluten", "peanut", "nuts", "egg", "soy", "fish"];
+  const mAllergenBtns = m.byId.get("allergen-picks").children;
+  assert.deepStrictEqual(mAllergenBtns.map(b => b.dataset.allergen), expectedAllergens);
+  assert.ok(m.byId.get("allergen-note").textContent.includes("ML"));
+  assert.ok(m.byId.get("allergen-note").textContent.includes("AM"));
+  assert.ok(m.byId.get("allergen-note").textContent.includes("allowing lactose-free dairy"));
+  assert.ok(m.byId.get("allergen-note").textContent.includes("blocking all dairy"));
+
+  await m.byId.get("reset").trigger("click");
+  const soyBtnInit = m.byId.get("allergen-picks").children.find(b => b.dataset.allergen === "soy");
+  assert.strictEqual(soyBtnInit.getAttribute("aria-pressed"), "true");
+  assert.strictEqual(soyBtnInit.classList.contains("on"), true);
+
+  const lactoseBtn = m.byId.get("allergen-picks").children.find(b => b.dataset.allergen === "lactose");
+  assert.strictEqual(lactoseBtn.getAttribute("aria-pressed"), "false");
+  await lactoseBtn.trigger("click");
+  assert.strictEqual(m.byId.get("reset").disabled, false);
+  const lactoseBtnAfter = m.byId.get("allergen-picks").children.find(b => b.dataset.allergen === "lactose");
+  assert.strictEqual(lactoseBtnAfter.getAttribute("aria-pressed"), "true");
+  assert.strictEqual(lactoseBtnAfter.classList.contains("on"), true);
+  assert.ok(m.byId.get("allergen-note").textContent.includes("lactose-free dairy allowed"));
+
+  const milkBtn = m.byId.get("allergen-picks").children.find(b => b.dataset.allergen === "milk");
+  await milkBtn.trigger("click");
+  const milkBtnAfter = m.byId.get("allergen-picks").children.find(b => b.dataset.allergen === "milk");
+  assert.strictEqual(milkBtnAfter.getAttribute("aria-pressed"), "true");
+  assert.strictEqual(milkBtnAfter.classList.contains("on"), true);
+  assert.ok(m.byId.get("allergen-note").textContent.includes("all dairy blocked"));
+
+  await milkBtnAfter.trigger("click");
+  const lactoseBtnOff = m.byId.get("allergen-picks").children.find(b => b.dataset.allergen === "lactose");
+  await lactoseBtnOff.trigger("click");
+  assert.strictEqual(m.byId.get("reset").disabled, true);
+
+  const mockPickBtns = m.byId.get("sim-picks").children.filter(c => c.tagName === "BUTTON");
+  assert.ok(mockPickBtns.length >= 2);
+  assert.strictEqual(mockPickBtns[0].dataset.pid, "463982");
+  assert.ok(mockPickBtns[0].textContent.includes("463982"));
+  assert.ok(mockPickBtns[0].textContent.includes("Kieku"));
+  await mockPickBtns[0].trigger("click");
+  assert.strictEqual(m.byId.get("sim-product").value, "463982");
+  assert.strictEqual(mockPickBtns[0].getAttribute("aria-pressed"), "true");
+  assert.strictEqual(mockPickBtns[0].classList.contains("on"), true);
+  assert.strictEqual(mockFetchCalls, 0);
+
+  const ordersCall = calls.find(c => c.path === "/v1/orders?customer=hotel-aurora" && c.method === "GET");
+  assert.ok(ordersCall);
+  assert.strictEqual(ordersCall.headers["X-Admin-Key"], "demo-admin");
+  const livePickBtns = live.byId.get("sim-picks").children.filter(c => c.tagName === "BUTTON");
+  assert.deepStrictEqual(livePickBtns.map(b => b.dataset.pid), ["410008", "463982", "460468"]);
+  assert.ok(livePickBtns[0].textContent.includes("410008"));
+  assert.ok(livePickBtns[0].textContent.includes("Valio Eila"));
+  assert.ok(!livePickBtns.some(b => b.dataset.pid === "999999"));
 
   assert.ok(live.byId.get("last").textContent.includes("#7"));
   const lastLink = live.byId.get("last").children.find(c => c && c.tagName === "A");
@@ -445,7 +565,11 @@ function makeHarness(search, fetchImpl) {
   await live.byId.get("f").trigger("submit");
   assert.strictEqual(live.byId.get("msg").textContent, "Blocked: Server rejected mandate.");
 
-  live.byId.get("sim-product").value = "410008";
+  live.byId.get("sim-product").value = "";
+  await livePickBtns[0].trigger("click");
+  assert.strictEqual(live.byId.get("sim-product").value, "410008");
+  assert.strictEqual(livePickBtns[0].getAttribute("aria-pressed"), "true");
+  assert.strictEqual(livePickBtns[0].classList.contains("on"), true);
   live.byId.get("sim-amount").value = "0";
   live.byId.get("sim-date").value = "";
   await live.byId.get("sim-form").trigger("submit");
@@ -461,9 +585,29 @@ function makeHarness(search, fetchImpl) {
 
   await live.byId.get("sim-clear").trigger("click");
   assert.strictEqual(live.byId.get("sim-msg").textContent, "Simulation cleared.");
+  assert.strictEqual(livePickBtns[0].getAttribute("aria-pressed"), "false");
+  assert.strictEqual(livePickBtns[0].classList.contains("on"), false);
   const simDel = calls.find(c => c.path === "/v1/admin/simulate" && c.method === "DELETE");
   assert.ok(simDel);
   assert.strictEqual(simDel.headers["X-Admin-Key"], "demo-admin");
+
+  const emptyOrdersLive = makeHarness("", async (path) => {
+    if (path.startsWith("/v1/mandate")) {
+      return { ok: true, status: 200, async json() { return { customer: "hotel-aurora", agent_id: "buyer-aurora", per_order_eur: 2500, per_week_eur: 15000, exclude_allergens: [], allowed_categories: null, substitutions: "within_prefs", preferred_brands: ["Valio"], approvers: ["Laura Virtanen"] }; } };
+    }
+    if (path.startsWith("/v1/orders")) {
+      return { ok: true, status: 200, async json() { return [{ order_id: "ord_rej", status: "rejected", lines: [{ product_id: "777", name: "Rejected", quantity: 1 }] }]; } };
+    }
+    if (path.startsWith("/v1/audit")) {
+      return { ok: true, status: 200, async json() { return { events: [] }; } };
+    }
+    throw new Error("unexpected path " + path);
+  });
+  await emptyOrdersLive.flush();
+  await emptyOrdersLive.flush();
+  await emptyOrdersLive.flush();
+  assert.strictEqual(emptyOrdersLive.byId.get("sim-picks").children.filter(c => c.tagName === "BUTTON").length, 0);
+  assert.strictEqual(emptyOrdersLive.byId.get("sim-picks").textContent, "No active orders yet for this customer.");
 })();
 """
     res = subprocess.run(
@@ -565,3 +709,199 @@ def test_api_admin_simulate_post_and_delete(api_client):
     assert r_del.status_code == 200
     assert r_del.json() == {"ok": True}
     assert "410008" not in offers._overrides
+
+
+def test_e2e_mandate_lactose_vs_milk_policy_outcome_and_orders_list(tmp_path, monkeypatch):
+    empty_data = tmp_path / "empty_data"
+    empty_data.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "allergen_e2e.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    monkeypatch.setenv("AIMO_DATA_DIR", str(empty_data))
+    monkeypatch.setenv("AIMO_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(keys, "_cache", {})
+    monkeypatch.setattr(offers, "_overrides", {})
+    monkeypatch.setattr(allocate, "_data", lambda: {})
+
+    items = {
+        "1001": {
+            "product": Product(
+                product_id="1001",
+                name="Valio Eila laktoositon kevytmaito 1 L",
+                brand="Valio",
+                vendor="VALIO OY",
+                category="10400",
+                sales_unit="LTR",
+                unit_size=UnitSize(value=1.0, unit="l"),
+                allergens=["milk"],
+                labels=["free_from_lactose"],
+                origin="FI",
+                temperature=4,
+            ),
+            "net": 1.25,
+            "gross": 1.43,
+            "stock": 500.0,
+        },
+        "1004": {
+            "product": Product(
+                product_id="1004",
+                name="Valio Kuohukerma 1 L",
+                brand="Valio",
+                vendor="VALIO OY",
+                category="10400",
+                sales_unit="LTR",
+                unit_size=UnitSize(value=1.0, unit="l"),
+                allergens=["milk", "lactose"],
+                labels=[],
+                origin="FI",
+                temperature=4,
+            ),
+            "net": 3.40,
+            "gross": 3.88,
+            "stock": 500.0,
+        },
+        "2002": {
+            "product": Product(
+                product_id="2002",
+                name="Valio Oddlygood Kaurajuoma gluteeniton 1 L",
+                brand="Valio",
+                vendor="VALIO OY",
+                category="10400",
+                sales_unit="LTR",
+                unit_size=UnitSize(value=1.0, unit="l"),
+                allergens=["oats"],
+                labels=["free_from_gluten", "free_from_lactose"],
+                origin="FI",
+                temperature=4,
+            ),
+            "net": 1.55,
+            "gross": 1.77,
+            "stock": 500.0,
+        },
+    }
+
+    monkeypatch.setattr(catalog, "get", lambda pid: items[str(pid)]["product"] if str(pid) in items else None)
+    monkeypatch.setattr(catalog, "search", lambda q="", constraints=None, limit=50: [v["product"] for v in items.values()])
+    monkeypatch.setattr(catalog, "reliability", lambda pid: 0.98 if str(pid) in items else None)
+    monkeypatch.setattr(catalog, "co2_per_kg", lambda pid: 1.1 if str(pid) in items else None)
+    monkeypatch.setattr(catalog, "raw", lambda pid: None)
+    monkeypatch.setattr(catalog, "names", lambda pid: {})
+    monkeypatch.setattr(
+        valio,
+        "price",
+        lambda customer, day, ids: {
+            str(pid): {
+                "productId": str(pid),
+                "currency": "EUR",
+                "catalogPrice": {"value": items[str(pid)]["net"]},
+                "priceWithTax": {"value": items[str(pid)]["gross"]},
+            }
+            for pid in ids
+            if str(pid) in items
+        },
+    )
+    monkeypatch.setattr(
+        valio,
+        "availability",
+        lambda customer, day, ids: {
+            str(pid): {
+                "productId": str(pid),
+                "closingTime": "2026-11-12T23:59:59+02:00",
+                "salesBlock": False,
+                "scheduleLines": [
+                    {
+                        "salesBlock": False,
+                        "availableAmount": items[str(pid)]["stock"],
+                        "availableDate": day.isoformat(),
+                        "salesUnit": items[str(pid)]["product"].sales_unit,
+                    }
+                ],
+            }
+            for pid in ids
+            if str(pid) in items
+        },
+    )
+
+    delivery = (date.today() + timedelta(days=3)).isoformat()
+    with TestClient(app) as client:
+        base_mandate = client.get("/v1/mandate?customer=hotel-aurora", headers=ADMIN_HEADERS).json()
+
+        lactose_mandate = {**base_mandate, "exclude_allergens": ["lactose"]}
+        r_lactose_put = client.put("/v1/mandate", headers=ADMIN_HEADERS, json=lactose_mandate)
+        assert r_lactose_put.status_code == 200
+        assert r_lactose_put.json()["exclude_allergens"] == ["lactose"]
+
+        q_lf_under_lactose = client.post(
+            "/v1/quotes",
+            headers=AGENT_HEADERS,
+            json={"offers": [{"product_id": "1001", "quantity": 20.0}], "delivery_date": delivery},
+        ).json()
+        ord_lf_under_lactose = client.post(
+            "/v1/orders",
+            headers=AGENT_HEADERS,
+            json={"quote_id": q_lf_under_lactose["quote_id"], "jws": q_lf_under_lactose["jws"]},
+        ).json()
+        assert ord_lf_under_lactose["decision"]["outcome"] == "auto"
+        assert ord_lf_under_lactose["status"] == "confirmed"
+        assert any(r["code"] == "WITHIN_MANDATE" for r in ord_lf_under_lactose["decision"]["reasons"])
+
+        q_cream_under_lactose = client.post(
+            "/v1/quotes",
+            headers=AGENT_HEADERS,
+            json={"offers": [{"product_id": "1004", "quantity": 10.0}], "delivery_date": delivery},
+        ).json()
+        ord_cream_under_lactose = client.post(
+            "/v1/orders",
+            headers=AGENT_HEADERS,
+            json={"quote_id": q_cream_under_lactose["quote_id"], "jws": q_cream_under_lactose["jws"]},
+        ).json()
+        assert ord_cream_under_lactose["decision"]["outcome"] == "blocked"
+        assert ord_cream_under_lactose["status"] == "blocked"
+        assert any(
+            r["code"] == "ALLERGEN_CONFLICT" and "lactose" in r["text"]
+            for r in ord_cream_under_lactose["decision"]["reasons"]
+        )
+
+        milk_mandate = {**base_mandate, "exclude_allergens": ["milk"]}
+        r_milk_put = client.put("/v1/mandate", headers=ADMIN_HEADERS, json=milk_mandate)
+        assert r_milk_put.status_code == 200
+        assert r_milk_put.json()["exclude_allergens"] == ["milk"]
+
+        q_lf_under_milk = client.post(
+            "/v1/quotes",
+            headers=AGENT_HEADERS,
+            json={"offers": [{"product_id": "1001", "quantity": 20.0}], "delivery_date": delivery},
+        ).json()
+        ord_lf_under_milk = client.post(
+            "/v1/orders",
+            headers=AGENT_HEADERS,
+            json={"quote_id": q_lf_under_milk["quote_id"], "jws": q_lf_under_milk["jws"]},
+        ).json()
+        assert ord_lf_under_milk["decision"]["outcome"] == "blocked"
+        assert ord_lf_under_milk["status"] == "blocked"
+        assert any(
+            r["code"] == "ALLERGEN_CONFLICT" and "milk" in r["text"]
+            for r in ord_lf_under_milk["decision"]["reasons"]
+        )
+
+        q_oat_under_milk = client.post(
+            "/v1/quotes",
+            headers=AGENT_HEADERS,
+            json={"offers": [{"product_id": "2002", "quantity": 20.0}], "delivery_date": delivery},
+        ).json()
+        ord_oat_under_milk = client.post(
+            "/v1/orders",
+            headers=AGENT_HEADERS,
+            json={"quote_id": q_oat_under_milk["quote_id"], "jws": q_oat_under_milk["jws"]},
+        ).json()
+        assert ord_oat_under_milk["decision"]["outcome"] == "auto"
+        assert ord_oat_under_milk["status"] == "confirmed"
+
+        listed_orders = client.get("/v1/orders?customer=hotel-aurora", headers=ADMIN_HEADERS)
+        assert listed_orders.status_code == 200
+        active_pids = [
+            line["product_id"]
+            for o in reversed(listed_orders.json())
+            if o["status"] in ("placed", "approved", "confirmed", "pending_approval")
+            for line in o["lines"]
+        ]
+        assert active_pids == ["2002", "1001"]

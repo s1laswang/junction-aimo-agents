@@ -505,3 +505,19 @@ def test_unit_size_and_units_needed():
 
     unmapped = _item("2003", names={"fi": "Test 1 l"}, sales_unit="BOX", base_unit="PRK", units=[])
     assert catalog._unit_size(unmapped, {"fi": "Test 1 l"}) is None
+
+
+def test_catalog_auto_reloads_when_data_dir_changes(tmp_path, monkeypatch):
+    assert catalog.get("1001") is not None
+    alt_dir = tmp_path / "alt_catalog"
+    alt_dir.mkdir()
+    monkeypatch.setenv("AIMO_DB", str(alt_dir / "alt.db"))
+    (alt_dir / "valio_aimo_junction26_product_data.json").write_text(
+        json.dumps([_item("9001", names={"en": "Alt Oat Drink 1 l"}, brand="Oddlygood")]),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AIMO_DATA_DIR", str(alt_dir))
+    assert catalog.get("1001") is None
+    got = catalog.get("9001")
+    assert got is not None and got.name == "Alt Oat Drink 1 l"
+
