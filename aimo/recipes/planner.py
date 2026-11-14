@@ -176,10 +176,18 @@ def resolve_delivery(delivery_by: Any, text: str = "") -> date:
 
 def policy_exclusions(customer_id: str) -> list[str]:
     try:
+        from aimo.catalog.allergens import effective_excluded_allergens, normalize_allergens
+        excl = list(effective_excluded_allergens(customer_id))
+        if excl:
+            return excl
         from aimo.gateway.verify import policy_excluded_allergens
-        return list(policy_excluded_allergens(customer_id))
-    except Exception:  # noqa: BLE001
-        return []
+        return normalize_allergens(policy_excluded_allergens(customer_id))
+    except Exception:
+        try:
+            from aimo.gateway.verify import policy_excluded_allergens
+            return list(policy_excluded_allergens(customer_id))
+        except Exception:
+            return []
 
 
 def house_lactose_free(customer_id: str) -> bool:
