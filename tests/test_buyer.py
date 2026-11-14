@@ -430,3 +430,170 @@ def test_main_mcp_config_and_demo(monkeypatch, capsys):
     assert all(poll == 2 and url == "http://mock/mcp" for _, _, _, url, poll, _ in demo_calls)
     assert "== hotel-aurora:" in out_demo and "ok hotel-aurora" in out_demo
     assert "failed: simulated network error" in out_demo
+
+
+def test_soy_and_shellfish_allergen_aliases():
+    ni_soy = {"query": "sauce", "constraints": {"exclude_allergens": ["soy"]}}
+    assert not usable(offer("s1", 10, allergens=["soya"]), ni_soy, "2026-11-17")
+    assert not usable(offer("s2", 10, allergens=["may_contain:soya"]), ni_soy, "2026-11-17")
+    ni_soya = {"query": "sauce", "constraints": {"exclude_allergens": ["soya"]}}
+    assert not usable(offer("s3", 10, allergens=["soy"]), ni_soya, "2026-11-17")
+    ni_shell = {"query": "stock", "constraints": {"exclude_allergens": ["shellfish"]}}
+    assert not usable(offer("c1", 10, allergens=["crustaceans"]), ni_shell, "2026-11-17")
+
+
+def test_multiline_quote_shortfall_and_ask_human_escalation(monkeypatch):
+    calls, log = [], []
+    ni_pasta = {"query": "gluten-free pasta", "quantity": 40, "unit": "kg", "constraints": {"exclude_allergens": ["gluten", "egg"]}}
+    ni_oat = {"query": "oat drink", "quantity": 200, "unit": "l", "constraints": {"exclude_allergens": ["milk"]}}
+    ni_extra = {"query": "gluten-free pasta", "quantity": 10, "unit": "kg", "constraints": {"exclude_allergens": ["gluten", "egg"]}}
+
+    class MultiLineSession:
+        async def call_tool(self, name, args):
+            calls.append((name, args))
+            if name == "parse_request":
+                res = {"customer": args["customer"], "deliver_by": "2026-11-17", "items": [ni_pasta, ni_oat, ni_extra]}
+            elif name == "get_offers":
+                p1 = offer("pasta_a", 60, units=40, avail=15)
+                p2 = offer("pasta_sub", 80, units=40, avail=40, substitute_for="pasta_a")
+                o1 = offer("oat_1", 260, units=200, avail=120)
+                p3 = offer("pasta_a", 15, units=10, avail=10)
+                res = {"items": [
+                    {"need_item": ni_pasta, "offers": [p1, p2], "shortfall": 0},
+                    {"need_item": ni_oat, "offers": [o1], "shortfall": 80},
+                    {"need_item": ni_extra, "offers": [p3], "shortfall": 0},
+                ]}
+            elif name == "request_quote":
+                res = {"quote_id": "q_multi", "total_net": 250.0, "currency": "EUR", "valid_until": "2026-11-16T16:00:00Z", "jws": "sig.multi"}
+            elif name == "place_order":
+                res = {"order_id": "o_multi", "status": "pending_approval",
+                       "decision": {"outcome": "needs_approval", "reasons": [{"code": "AGENT_REQUESTED", "text": args.get("note", "")}]}}
+            else:
+                raise AssertionError(name)
+            return types.SimpleNamespace(is_error=False, structured_content={"result": res}, content=[])
+
+    @contextlib.asynccontextmanager
+    async def cm(url, key, stdio):
+        yield MultiLineSession()
+
+    monkeypatch.setattr(buyer, "_session", cm)
+    monkeypatch.setattr(buyer.llm, "choose", lambda *_: None)
+    out = asyncio.run(buyer._run("40 kg pasta, 200 l oat drink, 10 kg pasta", "hospital-tays", "k", "http://x/mcp", log, poll=0, interval=0))
+    q_args = dict(calls)["request_quote"]
+    assert q_args == {
+        "offers": [
+            {"product_id": "pasta_a", "quantity": 25},
+            {"product_id": "pasta_sub", "quantity": 25, "substitute_for": "pasta_a"},
+            {"product_id": "oat_1", "quantity": 120},
+        ],
+        "delivery_date": "2026-11-17",
+    }
+    p_args = dict(calls)["place_order"]
+    assert p_args["ask_human"] is True
+    assert "Shortfall: 40% of oat drink cannot be covered." in p_args["note"]
+    assert out["order"]["status"] == "pending_approval"
+
+
+def test_server_shortfall_field_escalates_ask_human(monkeypatch):
+    calls, log = [], []
+    ni = {"query": "minced meat", "quantity": 100, "unit": "kg", "constraints": {}}
+
+    class ServerShortfallSession:
+        async def call_tool(self, name, args):
+            calls.append((name, args))
+            if name == "parse_request":
+                res = {"customer": args["customer"], "deliver_by": "2026-11-17", "items": [ni]}
+            elif name == "get_offers":
+                o = offer("meat_cs", 90, units=3, avail=3)
+                res = {"items": [{"need_item": ni, "offers": [o], "shortfall": 70.0}]}
+            elif name == "request_quote":
+                res = {"quote_id": "q_sf", "total_net": 90.0, "currency": "EUR", "valid_until": "2026-11-16T16:00:00Z", "jws": "sig.sf"}
+            elif name == "place_order":
+                res = {"order_id": "o_sf", "status": "pending_approval",
+                       "decision": {"outcome": "needs_approval", "reasons": [{"code": "AGENT_REQUESTED", "text": args.get("note", "")}]}}
+            else:
+                raise AssertionError(name)
+            return types.SimpleNamespace(is_error=False, structured_content={"result": res}, content=[])
+
+    @contextlib.asynccontextmanager
+    async def cm(url, key, stdio):
+        yield ServerShortfallSession()
+
+    monkeypatch.setattr(buyer, "_session", cm)
+    monkeypatch.setattr(buyer.llm, "choose", lambda *_: None)
+    asyncio.run(buyer._run("100 kg minced meat", "school-hervanta", "k", "http://x/mcp", log, poll=0, interval=0))
+    p_args = dict(calls)["place_order"]
+    assert p_args["ask_human"] is True
+    assert p_args["note"] == "Shortfall: 70% of minced meat cannot be covered."
+
+
+def test_cli_409_and_503_error_handling(monkeypatch, capsys):
+    calls_503 = []
+
+    class Upstream503Session:
+        async def call_tool(self, name, args):
+            calls_503.append((name, args))
+            if name == "parse_request":
+                res = {"customer": args["customer"], "deliver_by": "2026-11-17",
+                       "items": [{"query": "milk", "quantity": 10, "unit": "l", "constraints": {}}]}
+                return types.SimpleNamespace(is_error=False, structured_content={"result": res}, content=[])
+            err = types.SimpleNamespace(
+                text='Error executing tool get_offers: {"code": "UPSTREAM_UNAVAILABLE", "text": "Valio API down."}'
+            )
+            return types.SimpleNamespace(is_error=True, structured_content=None, content=[err])
+
+    @contextlib.asynccontextmanager
+    async def cm_503(url, key, stdio):
+        yield Upstream503Session()
+
+    monkeypatch.setattr(buyer, "_session", cm_503)
+    monkeypatch.setattr(buyer.llm, "explain", lambda *_: None)
+    monkeypatch.setattr(sys, "argv", ["agents.buyer", "10 l milk", "--poll", "0"])
+    with pytest.raises(SystemExit) as exc_503:
+        buyer.main()
+    assert exc_503.value.code == 1
+    assert [n for n, _ in calls_503] == ["parse_request", "get_offers"]
+    assert "failed (UPSTREAM_UNAVAILABLE): Valio API down." in capsys.readouterr().out
+
+    class Quote409Session:
+        async def call_tool(self, name, args):
+            if name == "parse_request":
+                res = {"customer": args["customer"], "deliver_by": "2026-11-17",
+                       "items": [{"query": "milk", "quantity": 10, "unit": "l", "constraints": {}}]}
+                return types.SimpleNamespace(is_error=False, structured_content={"result": res}, content=[])
+            if name == "get_offers":
+                res = {"items": [{"need_item": args["items"][0], "offers": [offer("m1", 40, units=10, avail=10)]}]}
+                return types.SimpleNamespace(is_error=False, structured_content={"result": res}, content=[])
+            if name == "request_quote":
+                res = {"quote_id": "q_exp", "total_net": 40.0, "currency": "EUR", "valid_until": "2026-11-16T14:00:00Z", "jws": "sig.exp"}
+                return types.SimpleNamespace(is_error=False, structured_content={"result": res}, content=[])
+            err = types.SimpleNamespace(text='{"code": "QUOTE_EXPIRED", "text": "Quote expired at cutoff."}')
+            return types.SimpleNamespace(is_error=True, structured_content=None, content=[err])
+
+    @contextlib.asynccontextmanager
+    async def cm_409(url, key, stdio):
+        yield Quote409Session()
+
+    monkeypatch.setattr(buyer, "_session", cm_409)
+    monkeypatch.setattr(buyer.llm, "choose", lambda *_: None)
+    monkeypatch.setattr(sys, "argv", ["agents.buyer", "10 l milk", "--poll", "0"])
+    with pytest.raises(SystemExit) as exc_409:
+        buyer.main()
+    assert exc_409.value.code == 1
+    assert "failed (QUOTE_EXPIRED): Quote expired at cutoff." in capsys.readouterr().out
+
+    req = httpx.Request("POST", "http://127.0.0.1:8080/mcp")
+    resp = httpx.Response(503, request=req, json={"code": "UPSTREAM_UNAVAILABLE", "text": "Gateway 503."})
+    http_err = httpx.HTTPStatusError("503 Service Unavailable", request=req, response=resp)
+    monkeypatch.setattr(buyer, "run", lambda *a, **kw: (_ for _ in ()).throw(http_err))
+    monkeypatch.setattr(sys, "argv", ["agents.buyer", "10 l milk"])
+    with pytest.raises(SystemExit) as exc_http:
+        buyer.main()
+    assert exc_http.value.code == 1
+    assert "failed (UPSTREAM_UNAVAILABLE): Gateway 503." in capsys.readouterr().out
+
+    monkeypatch.setattr(sys, "argv", ["agents.buyer"])
+    with pytest.raises(SystemExit) as exc_arg:
+        buyer.main()
+    assert exc_arg.value.code == 2
+    capsys.readouterr()
