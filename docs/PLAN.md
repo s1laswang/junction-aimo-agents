@@ -12,7 +12,7 @@ Everything else is decided below. Change it here if you disagree.
 ## Status (Sat 15:55)
 - On main and verified live: gateway (REST /v1, MCP /mcp, otap.json, fault injection), trust (policies, signed quotes, signed hash-chained audit), catalog (hybrid FTS + gemini-embedding-2 search, allergen tri-state, good-better-best, plan_need). 1,000 L milk: plan €1,010 → signed quote → needs_approval → approve → placed AP → audit verified. 63 tests pass.
 - In progress: Gemini buyer agent, approval UI, wind tunnel, pitch/docs.
-- Blocker: FR8 freighter SSH times out from the laptop since ~14:10 (worked once at 14:05). Heavy runs wait on it.
+- FR8 freighter: SSH flaky (timed out 14:10–15:50), reachable again at 15:55. Repo cloned at ~/junction-aimo-agents, data dir /data/silas/junction-aimo-agents.
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.
