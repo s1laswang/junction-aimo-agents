@@ -13,11 +13,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+
+from pydantic import ValidationError
 
 from aimo.backend import orders as store
 from aimo.backend.client import INJECTION_TEXT, UpstreamError, current_faults, get_offers_with_meta
@@ -518,6 +521,21 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         except ServiceError:
             pass
 
+    # Pack / lot size: the supplier only ships whole multiples of allowedLotSize (>= 1; 0.01 = any unit).
+    off_lot = []
+    for pid, q in qty_by.items():
+        lot = getattr(products.get(pid), "allowed_lot_size", None)
+        if lot and lot >= 1 and abs(q / lot - round(q / lot)) > 1e-6:
+            off_lot.append({"product_id": pid, "reason": "lot_size", "requested": q, "allowed_lot_size": lot,
+                            "next_valid_qty": math.ceil(q / lot - 1e-9) * lot})
+    if off_lot:
+        audit(ident.actor, "quote.refused", f"refused-{ident.customer_id}",
+              "Quote refused: quantity is not a multiple of the pack/lot size: " +
+              "; ".join(f"{r['product_id']} {r['requested']:g} (lot {r['allowed_lot_size']:g})" for r in off_lot),
+              {"refused": off_lot, "delivery_date": delivery_date})
+        raise ServiceError(409, "lot_size_mismatch",
+                           "quantity must be a multiple of the product's lot size; re-plan and re-quote", {"refused": off_lot})
+
     # Server-side tier + flags. What the agent claimed is kept for the audit, never used.
     from aimo.gateway.verify import verify_lines
 
@@ -828,6 +846,19 @@ def _policies() -> list[dict[str, Any]]:
 
 
 # ------------------------------------------------------------------ discovery
+def _mcp_versions() -> dict[str, Any]:
+    """MCP spec revision: the pin from aimo.config plus what the installed SDK actually speaks."""
+    from aimo import config as _cfg
+    out: dict[str, Any] = {"protocol_version": _cfg.MCP_SPEC_VERSION, "handshake_protocol_version": _cfg.MCP_HANDSHAKE_VERSION,
+                           "sdk": _cfg.MCP_SDK}
+    try:
+        from mcp_types import version as v
+        out["sdk_supported_versions"] = list(v.KNOWN_PROTOCOL_VERSIONS)
+    except Exception:  # noqa: BLE001  older SDKs: the pin still stands
+        pass
+    return out
+
+
 def manifest(base_url: str) -> dict[str, Any]:
     b = base_url.rstrip("/")
     return {
@@ -839,7 +870,7 @@ def manifest(base_url: str) -> dict[str, Any]:
         "openapi_url": f"{b}/openapi.json",
         "docs_url": f"{b}/docs",
         "mcp": {"url": f"{b}/mcp", "transport": "streamable-http", "server_name": "valio-aimo-trusted-trade",
-                "stdio": "python -m aimo.gateway.mcp_server"},
+                "stdio": "python -m aimo.gateway.mcp_server", **_mcp_versions()},
         "jwks_url": f"{b}/.well-known/jwks.json",
         "identity": {"headers": ["X-Agent-Id", "X-Customer-Id"],
                      "production": "OAuth 2.1 bearer tokens with scopes catalog:read quote:create order:submit (MCP auth spec)"},
@@ -904,7 +935,11 @@ def _as_need(need: Any, ident: Identity) -> Need | None:
         return need
     d = dict(need)
     d.setdefault("customer_id", ident.customer_id)
-    return Need.model_validate(d)
+    try:
+        return Need.model_validate(d)
+    except ValidationError as e:  # MCP / in-process callers: a clean 422, never a 500
+        errs = [{"loc": list(x.get("loc", ())), "msg": x.get("msg"), "type": x.get("type")} for x in e.errors()]
+        raise ServiceError(422, "invalid_need", "need failed validation (e.g. quantity must be > 0)", errs) from e
 
 
 def _j(x: Any) -> Any:

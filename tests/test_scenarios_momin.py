@@ -60,6 +60,7 @@ def test_recipe_list_has_momins_dishes():
     assert {"lasagne", "salmon-soup", "pancakes", "carbonara"} <= ids and len(ids) == 11
 
 
+@pytest.mark.skipif(not config.PRODUCT_JSON.exists(), reason="product data not present")
 def test_lasagne_for_120_scales_and_converts_units():
     from aimo.recipes import recipe_needs
 

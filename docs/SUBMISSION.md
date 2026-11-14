@@ -5,7 +5,7 @@ Deadline: Sun 15 Nov 2026 10:00 Helsinki. Links to fill: repo (public?) **TODO**
 
 ## Short version (under 500 characters)
 
-> Trusted Trade Agents is an open front door for AI purchasing agents at Valio Aimo. Any agent (Gemini, Claude, an ERP) connects over MCP or OpenAPI, searches 17.5k real products, gets a signed fixed-price quote and orders, while the customer's own policy decides what runs automatically and what needs a named human. Approvals bind to the quote hash, and every step lands in a signed, hash-chained audit log anyone can verify.
+> Trusted Trade Agents is an open front door for AI purchasing agents at Valio Aimo. Any agent (Gemini, Claude, an ERP) connects over MCP or OpenAPI, searches the 17.5k-product challenge catalog, gets a signed fixed-price quote and orders, while the customer's own policy decides what runs automatically and what needs a named human. Approvals bind to the quote hash, and every step lands in a signed, hash-chained audit log anyone can verify.
 
 (425 characters)
 
@@ -19,15 +19,15 @@ Let any company's AI agent buy from Valio Aimo, inside rules the customer contro
 Foodservice customers want their AI agents to restock milk, plan event menus and swap out-of-stock items, but a wholesaler can't give an agent its ERP login. Today there is no standard way for an outside agent to look up products, prices and stock, get a binding price, and order, while the customer decides what the agent may do alone and what needs a human. Without that, every integration is bespoke and nobody can prove afterwards what was agreed.
 
 ## Solution
-One gateway with two open surfaces: an **MCP server** (9 tools) and an **OpenAPI 3.1 REST API**, discoverable from `/.well-known/otap.json`. Behind it:
-- **Live lookup** over the real Valio Aimo mock price and availability API and the 17,546-product catalog, with Finnish/Swedish/English hybrid search (full-text plus Gemini embeddings) and €/L comparison.
+One gateway with two open surfaces: an **MCP server** (13 tools) and an **OpenAPI 3.1 REST API**, discoverable from `/.well-known/otap.json`. Behind it:
+- **Live lookup** over the live Valio Aimo challenge mock price and availability API and the 17,546-product synthetic catalog, with Finnish/Swedish/English hybrid search (full-text plus Gemini embeddings) and €/L comparison.
 - **Good-better-best substitution** that explains each rank. Allergens are tri-state; unknown is never safe.
 - **Customer-owned guardrails**: a versioned YAML policy per customer (hotel, school kitchen, hospital) with spend limits, weekly budget, category scope, substitution tiers, allergen hard blocks, cut-off checks, standing-order drift and prompt-injection screening, each returning a plain-language reason.
 - **Signed quotes** (Ed25519 JWS, 15-minute price lock) and **human approval bound to the quote hash**. Agents have no approve tool.
 - **A signed, hash-chained audit trail** rendered as readable sentences, with chain verification and an offline evidence pack.
 - A **Gemini buyer agent** as the reference client and an approval UI for the human.
 
-Demo: *"We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L box missed its cut-off (real data), so the agent plans Valio Eila 1 L at €1.01/L, €1,010 in total. The hotel's policy says **needs approval** (over €500, outside the standing preference, 3.3× the usual weekly volume). The procurement manager approves the exact signed quote, the order is placed with a Peppol-style "AP accepted" response, and the audit chain verifies.
+Demo: *"We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L box missed its cut-off (live mock-API data), so the agent plans Valio Eila 1 L at €1.01/L, €1,010 in total. The hotel's policy says **needs approval** (over €500, outside the standing preference, 3.3× the usual weekly volume). The procurement manager approves the exact signed quote, the order is placed in our mock order service (no upstream order API) with a Peppol-style "AP accepted" response, and the audit chain verifies.
 
 ## How we meet the core requirements
 1. **Product, price and availability lookup in structured form.** `search_products`, `get_product`, `get_offers` (MCP) and `/v1/products/search`, `/v1/products/{id}`, `/v1/offers` (REST) return typed JSON: GTIN, sales unit, content per unit, claims, tri-state allergens, delivery reliability, CO2, live price and stock, cut-off time, and an `issues` list (`cutoff_passed`, `partial_stock`, `out_of_stock`, ...) with provenance (live or cached, fetched at).
@@ -53,9 +53,9 @@ Demo: *"We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Mo
 
 Each scenario takes 22–37 s end to end. The agent escalated to gemini-4-hydrogen with high thinking on every run, but only for the quote-decision turn (6 of 31 agent steps, 19%). Cost per placed order: **$0.0339** in Gemini calls (down from $0.0822 before a token trim, −59%).
 
-Wind tunnel (**TODO** from the wind tunnel report): N synthetic scenarios, escalation precision/recall, policy violations (target 0), allergen violations (target 0), injection block rate, plan coverage, € error vs the cheapest compliant plan, and the same metrics for a naive agent with direct API access.
+Wind tunnel (`docs/windtunnel-results.md`, from branch `team/windtunnel`; keep this paragraph only once that branch is merged, and re-run on the merged commit if the gateway changed): 640 Gemini-written scenarios (16 families, 3 policy archetypes), scored by a deterministic oracle (`windtunnel/oracle.py`). Trusted gateway vs a naive agent with direct API access: policy violations **1 vs 372**, allergen violations **0 vs 193**, escalation recall 98.8% vs 17.8%, escalation precision 54.0% vs 90.8% (the gateway asks a human more often), injection block 56.2% vs 0%, plan coverage 92.4% vs 98.2%, median € over the cheapest compliant plan 0.0% for both. At 2,560 template scenarios: 11 vs 1,452 policy violations, 0 vs 728 allergen violations. Injection screen alone: regex 44.4% recall, regex + Gemini 94.4% (35% false positives on buyer requests, 0/60 on supplier texts).
 
-Also measured: the regex injection screen flags 0 of 34,159 real supplier marketing texts; the catalog unit parser agrees with live comparison prices for 93% of a 752-product sample; 165 offline tests pass (commands for every number: [NUMBERS.md](NUMBERS.md)).
+Also measured: the regex injection screen flags 0 of 34,159 supplier marketing texts in the challenge catalog; the catalog unit parser agrees with live comparison prices for 93% of a 752-product sample; 165 offline tests pass (commands for every number: [NUMBERS.md](NUMBERS.md)).
 
 ## Tech
 Python 3.11, FastAPI, Pydantic v2, SQLite (FTS5 trigram), official `mcp` SDK (streamable HTTP and stdio), `google-genai`, `cryptography` (Ed25519), PyYAML; no-build HTML/JS approval UI. Gemini: `gemini-3.8-flash` (buyer agent, need parsing, scenario generation), `gemini-4-hydrogen` with high thinking (substitution decisions), `gemini-3.1-flash-lite` (allergen inference over 4,076 products, recipe check, injection screen), `gemini-embedding-2` (17,546-product hybrid search). About 31% of the agent's input tokens are served from Gemini's implicit cache. One command: `uv run aimo serve`.

@@ -4,19 +4,46 @@
 
 Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" challenge and the Google DeepMind "Best Use of Gemini API" prize.
 
-> A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L dispenser box missed its order cut-off (Thu 12 Nov 15:00, real mock-API data). The gateway plans a same-brand substitute (Valio Eila 1 L, 464306, €1.01/L, €1,010 total), issues an Ed25519-signed quote, and the hotel's own policy says **needs approval**: €1,010 is over the €500 auto limit and 3.3× the usual weekly milk volume. The procurement manager approves the exact quote hash. The order is placed (Peppol response `AP`), and the whole story is in a hash-chained, signed audit log that anyone can verify.
+> A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L dispenser box missed its order cut-off (Thu 12 Nov 15:00, live data from the challenge's mock API; all challenge data is synthetic). The gateway plans a same-brand substitute (Valio Eila 1 L, 464306, €1.01/L, €1,010 total), issues an Ed25519-signed quote, and the hotel's own policy says **needs approval**: €1,010 is over the €500 auto limit and 3.3× the usual weekly milk volume. The procurement manager approves the exact quote hash. The order is placed in our own mock order service (the challenge API has price and availability but no order endpoint) and answered with a Peppol-style response `AP`, and the whole story is in a hash-chained, signed audit log that anyone can verify.
 
 ![Approval UI: the agent paused for the procurement manager, every rule explained, order placed with Peppol AP](docs/pitch/img/approval-ui.png)
 <!-- Screenshot from the frontend engineer's live integration run (team/frontend, Sat 14 Nov 14:45). TODO: re-capture from main after the freeze. -->
 
+## Prerequisites
+
+| Tool | Why | Install |
+|---|---|---|
+| Python 3.11+ | runtime (`requires-python = ">=3.11"`) | system package or uv-managed |
+| [uv](https://docs.astral.sh/uv/) | one-command runner and lockfile installer | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Network | first-run download of the challenge product JSON from the Valio mock API | — |
+
+Environment variables (names only; copy `.env.example` to `.env` and fill them in — never commit `.env`):
+
+| Variable | Required for | If missing |
+|---|---|---|
+| `AIMO_API_KEY` | `aimo serve` / `aimo fetch-data` downloading `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs). Needed for the live catalog, catalog-backed pytest cases, `qa_milk_flow.py`, and the conformance suite's catalog-backed checks. | Download is skipped with a warning. `aimo serve` still starts (UI / docs / `/.well-known`). Tests that need the product JSON skip. |
+| `AIMO_PORTAL_URL`, `AIMO_PORTAL_PASSWORD` | portal login to obtain a mock-API key if you do not already have `AIMO_API_KEY` | leave blank if you already have a key |
+| `GEMINI_API_KEY` | `uv run aimo demo` (Gemini buyer), embeddings / allergen hints, wind-tunnel live runs | Keyless path: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (still needs the product data + a running gateway). `aimo serve --no-build` skips Gemini catalog builds. |
+
+Do not put real values in the README. A judge machine with none of these variables set can still run `make accept`, which will SKIP key-gated steps and must not crash.
+
+One-command check (keyless steps + documented skips):
+
+```bash
+cp .env.example .env    # fill keys if you have them
+make accept             # or: uv run bash scripts/judge_accept.sh
+```
+
 ## Quickstart (one command)
 
-Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requirements: see Prerequisites.
 
 ```bash
 cp .env.example .env    # fill AIMO_PORTAL_URL, AIMO_PORTAL_PASSWORD, AIMO_API_KEY, GEMINI_API_KEY
-uv run aimo serve       # downloads the challenge data on first run, builds the catalog, serves on :8000
+uv run aimo serve       # downloads the challenge data on first run (needs AIMO_API_KEY), builds the catalog, serves on :8000
 ```
+
+Without `AIMO_API_KEY` the download is skipped. This checkout's `aimo serve` still binds :8000 so you can open `/ui?mock=1`, `/docs`, `/healthz` and `/.well-known/otap.json`. The live catalog, most tests and the milk-flow script need the downloaded product file.
 
 Then open:
 
@@ -24,7 +51,7 @@ Then open:
 |---|---|
 | http://localhost:8000/ui | Approval UI: agent console, good-better-best cards, policy verdict, approval inbox, audit timeline (`?mock=1` plays the story with no backend) |
 | http://localhost:8000/docs | OpenAPI 3.1 REST API (interactive) |
-| http://localhost:8000/mcp | MCP server (streamable HTTP), 9 tools |
+| http://localhost:8000/mcp | MCP server (streamable HTTP), 13 tools |
 | http://localhost:8000/.well-known/otap.json | Discovery manifest: endpoints, MCP URL, JWKS URL, policies, standards |
 | http://localhost:8000/.well-known/jwks.json | Public key to verify quote and audit signatures |
 | http://localhost:8000/healthz | Which components are live vs fallback |
@@ -39,12 +66,12 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q` (165 passed, 1 skipped on main, Sat 14 Nov 19:05; see docs/NUMBERS.md).
+Tests: `uv run --extra dev pytest -q`. With the challenge product JSON, main claimed **165 passed, 1 skipped** (Sat 14 Nov 19:05; see docs/NUMBERS.md). Without that file, catalog-backed tests skip instead of failing: a keyless run on this integration was **139 passed, 57 skipped, 2 xfailed**. Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
 
 ## What it is: five pillars
 
-1. **An open door for any agent.** One gateway, two equal surfaces: an **MCP server** (`/mcp`, plus stdio) and an **OpenAPI 3.1** REST API (`/v1`), discoverable from `/.well-known/otap.json`. Every tool hits the real Valio Aimo mock price and availability API (batched up to 1,000 ids, cached 5 minutes, retried with backoff).
-2. **Lookup that understands food.** 17,546 real products with Finnish, Swedish and English names, hybrid full-text plus **gemini-embedding-2** search, content-per-sales-unit parsing (€/L and €/kg), and a **good-better-best** substitution ranking that explains every rank. Allergens are tri-state (contains / free / unknown): **unknown is never safe**, and Gemini-inferred allergens can only block, never clear.
+1. **An open door for any agent.** One gateway, two equal surfaces: an **MCP server** (`/mcp`, plus stdio) and an **OpenAPI 3.1** REST API (`/v1`), discoverable from `/.well-known/otap.json`. Every tool calls the live Valio Aimo challenge mock price and availability API (batched up to 1,000 ids, cached 5 minutes, retried with backoff).
+2. **Lookup that understands food.** 17,546 products from the challenge's synthetic catalog, with Finnish, Swedish and English names, hybrid full-text plus **gemini-embedding-2** search, content-per-sales-unit parsing (€/L and €/kg), and a **good-better-best** substitution ranking that explains every rank. Allergens are tri-state (contains / free / unknown): **unknown is never safe**, and Gemini-inferred allergens can only block, never clear.
 3. **Guardrails the customer owns.** A versioned YAML policy per customer (hotel, school kitchen, hospital): spend thresholds, weekly budget, category scope, substitution tiers, allergen hard blocks, cut-off and delivery checks, standing-order drift and prompt-injection screening. Every rule returns a plain-language reason, and the strictest wins (reject > needs approval > auto).
 4. **Signed quotes and human approval bound to the hash.** Quotes are fixed-price for 15 minutes and signed with Ed25519 (JWS, RFC 7515/8037). A named approver in the right role approves *that exact* quote hash; a changed price or an expired lock invalidates the approval. Only a named person in the customer's approver directory can approve; agent identities are refused on every surface, and MCP has no approval tool at all. The gateway computes each line's substitution tier itself instead of trusting the agent.
 5. **An audit trail anyone can check.** Every request, quote, policy decision, approval and order is an event in an append-only, hash-chained, signed log, rendered as readable sentences. `GET /v1/audit/verify` recomputes every hash and signature; the evidence pack lets a third party verify offline.
@@ -61,7 +88,7 @@ flowchart LR
   end
   H["Human approver<br/>(web/ at /ui)"]
   subgraph GW["aimo.gateway (FastAPI)"]
-    MCP["MCP /mcp<br/>9 tools"]
+    MCP["MCP /mcp<br/>13 tools"]
     REST["REST /v1<br/>OpenAPI 3.1"]
     WK["/.well-known<br/>otap.json, jwks.json"]
     SVC["service layer<br/>(one implementation for both surfaces)"]
@@ -92,7 +119,7 @@ More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (components, milk data flow, 
 
 The gateway is agent-agnostic. Identity in the demo is two headers (`X-Customer-Id`, `X-Agent-Id`) or, over stdio, the env vars `AIMO_CUSTOMER_ID` / `AIMO_AGENT_ID`. In production this becomes an OAuth 2.1 bearer token per the MCP authorization spec.
 
-MCP tools: `search_products`, `get_product`, `get_offers`, `plan_need`, `create_quote`, `place_order`, `get_order_status`, `get_audit_trail`, `list_policies`. There is deliberately no approval tool: an agent cannot approve its own order.
+MCP tools (13, from `build_mcp().list_tools()`): `search_products`, `get_product`, `get_offers`, `plan_need`, `create_quote`, `place_order`, `get_order_status`, `get_audit_trail`, `list_policies`, `list_recipes`, `plan_recipe`, `check_standing_order_drift`, `propose_offer`. There is deliberately no approval tool: an agent cannot approve its own order.
 
 **Claude Desktop** (`claude_desktop_config.json`, stdio):
 ```json
@@ -131,7 +158,7 @@ MCP tools: `search_products`, `get_product`, `get_offers`, `plan_need`, `create_
 }
 ```
 
-Check the server from the terminal: `uv run aimo mcp-check` (HTTP) or `uv run aimo mcp-check stdio`. Both list the 9 tools and call `search_products` and `get_offers` (verified Sat 14 Nov). The three client config snippets follow each client's documented format and have not been tried in those clients yet.
+Check the server from the terminal: `uv run aimo mcp-check` (HTTP) or `uv run aimo mcp-check stdio`. The server advertises 13 tools (the nine trade tools plus `list_recipes`, `plan_recipe`, `check_standing_order_drift` and `propose_offer`). `mcp-check` also calls `search_products` and `get_offers` when the catalog file is present. The three client config snippets follow each client's documented format and have not been tried in those clients yet.
 
 **REST with curl** (the 1,000 L milk flow; every command below was run against a live gateway):
 ```bash
@@ -168,6 +195,46 @@ The same flow as one script with checks: `uv run python docs/pitch/qa_milk_flow.
 
 Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULTS`): `stockout:<id|*>`, `partial:<id|*>:<n>`, `price_shock:<id|*>:<factor>`, `cutoff:<id|*>`, `error_rate:<p>`, `rate_limit:<p>`, `latency_ms:<n>`. See [docs/interfaces.md](docs/interfaces.md).
 
+## Openness: what is standard, what is ours
+
+| Standard | Status here |
+|---|---|
+| **MCP** | Implemented. Spec revision **2026-07-28** via the official `mcp` 2.3.0 SDK (from `uv.lock`). Clients on the `initialize` handshake negotiate up to 2025-11-25. Streamable HTTP and stdio. |
+| **OpenAPI 3.1** | Implemented (`/openapi.json`, `/docs`). |
+| **JWS / JWK** (RFC 7515, 7517, 7638, 8037) | Implemented. Ed25519 quotes and audit events, JWKS at `/.well-known/jwks.json`. |
+| **Peppol BIS Advanced Ordering 3.0** | Partial. Order Response Advanced (T116, UBL 2.3) export at `GET /v1/orders/{id}/peppol-order-response.xml`, with samples in `docs/peppol/`. Validated against the UBL 2.3 XSD and the PEPPOL-T116 rules, **not** the full Peppol schematron. Party IDs are placeholders. Order, Order Change and Cancellation are not done, and nothing is connected to a Peppol access point. |
+| **GS1 GTIN** | Used for product identity. |
+| **AP2 / ACP / UCP** | **Aligned, not implemented.** The quote-hash approval is AP2-style (policy ≈ open mandate, approved quote hash ≈ closed checkout mandate). AP2 v0.2 wants an ECDSA-signed checkout JWT, and our quotes are Ed25519. ACP is consumer and card checkout. UCP's B2B procurement council has no spec yet. |
+| **`otap/0.1`** | Ours: discovery, tools, signed quotes, approvals and audit. It is published with a conformance suite (`uv run python -m conformance`) that two different wholesalers pass. It is not a standard yet. Next homes: GS1 Finland, OpenPeppol / State Treasury, UCP B2B. |
+
+## Production next steps
+
+The order is read-only first, then quotes, then orders. Durations and targets are our proposals and have not been checked with Valio.
+
+1. **Read-only pilot** with 3 customers (a hotel, a school kitchen and a hospital ward). Tokens get `catalog:read` only, and humans still order in the webshop. Measure the agent's plan against what the human actually ordered.
+2. **Quotes** (`quote:create`). These are signed fixed-price quotes with a 15-minute lock. Valio legal must confirm whether a signed quote is a binding offer under the sales terms.
+3. **Orders, every one human-approved** (`order:submit`, with every policy outcome forced to `needs_approval`). Approvers are named in the customer's own identity provider.
+4. **Autonomy inside limits.** Relax rules one at a time, using audit evidence. Allergen rules never relax for schools and hospitals.
+5. **Integrations.**
+   - SAP and webshop behind the existing `BackendClient` seam: contract prices and real available-to-promise.
+   - GS1 Synkka as the allergen and net-content truth source, so Gemini hints stay advisory.
+   - Buyer agents hosted in kitchen systems (JAMIX, Aromi).
+   - Peppol Order / Order Response through Valio's access point.
+6. **Identity and keys.**
+   - OAuth 2.1 per the MCP authorization spec, with spend limits as RFC 9396 `authorization_details`.
+   - Signing keys in a KMS or HSM.
+   - Audit to WORM storage with anchored chain heads.
+
+Pilot KPIs:
+- zero-correction order rate;
+- **0** allergen or policy violations reaching an order;
+- escalation precision and recall;
+- time from request to order, and approver wait;
+- AP / CA / RE mix;
+- substitution acceptance;
+- 24-hour complaints vs human orders;
+- model cost per order.
+
 ## Repo map
 
 | Path | What |
@@ -184,6 +251,18 @@ Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULT
 | `docs/` | [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
+
+## Packaging (private repo)
+
+This repository is private. A judge whose token cannot clone `s1laswang/junction-aimo-agents` will get HTTP 404/403 even though the repo exists. **NEEDS SILAS:** grant judges read access, or make the repo public, and tell them to clone this commit:
+
+```bash
+git clone --branch main --single-branch https://github.com/s1laswang/junction-aimo-agents.git aimo
+cd aimo && git checkout 7313679dba6eedd7232795c9b8d221491a5dc165
+cp .env.example .env && make accept
+```
+
+Do not mix this tree up with AfterQuery Canary/Sleeper (`s1laswang/agent-arena`) or HoldUp (`s1laswang/junction-meta-glasses`). Prefer a release tag such as `aimo-v1` pinned to the accepted commit once `make accept` is green with keys; do not create the tag from this patch.
 
 ## Team
 
