@@ -12,16 +12,16 @@ load_dotenv(ROOT / ".env")
 DATA_DIR = Path(os.environ.get("AIMO_DATA_DIR", ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-AIMO_BASE_URL = os.environ.get("AIMO_PORTAL_URL", "https://junction26.valioaimo.fi/").rstrip("/")
-AIMO_API_KEY = os.environ.get("AIMO_API_KEY", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+AIMO_BASE_URL = (os.environ.get("AIMO_PORTAL_URL") or os.environ.get("VALIO_API_BASE") or "https://junction26.valioaimo.fi/").rstrip("/")
+AIMO_API_KEY = os.environ.get("AIMO_API_KEY") or os.environ.get("VALIO_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
 
 PRODUCT_JSON = DATA_DIR / "valio_aimo_junction26_product_data.json"
 RELIABILITY_CSV = DATA_DIR / "valio_aimo_junction26_delivery_reliability.csv"
 CO2_CSV = DATA_DIR / "valio_aimo_junction26_carbon_footprint.csv"
 CATALOG_DB = DATA_DIR / "catalog.sqlite"
-STATE_DB = DATA_DIR / "state.sqlite"        # quotes, orders, approvals, audit
-KEY_DIR = DATA_DIR / "keys"                 # Ed25519 signing key (demo; production: KMS)
+STATE_DB = Path(os.environ.get("AIMO_STATE_DB") or DATA_DIR / "state.sqlite")
+KEY_DIR = Path(os.environ.get("AIMO_KEY_DIR") or DATA_DIR / "keys")
 
 # Gemini models (see docs/GEMINI.md). Override via env.
 GEMINI_AGENT_MODEL = os.environ.get("GEMINI_AGENT_MODEL", "gemini-3.8-flash")
