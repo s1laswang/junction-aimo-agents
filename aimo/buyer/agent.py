@@ -30,7 +30,8 @@ from aimo.buyer.tools import ToolTransport
 from aimo.models import AgentStep, Need
 
 DRIFT_RATIO = 10.0  # harness hold (likely unit mix-up); moderate drift (>3x) is trust policy -> needs_approval
-PLANNER_PREF_KEYS = {"brand", "fat_pct", "organic", "pack", "use"}
+EXTRA_STEP_KINDS = {"needs_clarification"}
+PLANNER_PREF_KEYS ={"brand", "fat_pct", "organic", "pack", "use"}
 UNTRUSTED_FIELDS =("marketing_text", "ingredients_text", "description", "text")
 _INJECTION_RE = re.compile(
     r"ignore (all |your |previous |the )*(instructions|limits|rules|policy)|system (note|prompt|message)|"
@@ -155,7 +156,9 @@ class BuyerAgent:
                  emit: Optional[Callable[[AgentStep], None]] = None, run_id: Optional[str] = None,
                  approval_timeout_s: float = 1800, poll_s: float = 2.0,
                  generate_fn: Optional[Callable[..., Any]] = None, use_gemini_parse: bool = True,
-                 explain: bool = True, now: Optional[datetime] = None, audit_base_url: str = ""):
+                 explain: bool = True, now: Optional[datetime] = None, audit_base_url: str = "",
+                 answer_fn: Optional[Callable[[dict], Optional[dict]]] = None, clarify: bool = True,
+                 image: Optional[tuple[bytes, str]] = None):
         from aimo.config import GEMINI_AGENT_MODEL, GEMINI_REASONING_MODEL
         self.t = transport
         self.profile = get_profile(customer_id)
@@ -173,6 +176,10 @@ class BuyerAgent:
         self._generate = generate_fn
         self.use_gemini_parse = use_gemini_parse
         self.explain_enabled = explain
+        self.answer_fn = answer_fn          # question dict -> {"option_id"|"text"} or None (no answer)
+        self.clarify_enabled = clarify
+        self.image = image                  # (bytes, mime): photo of a handwritten order / menu / invoice
+        self.clarifications: list[dict] = []
         self.now = now
         self.audit_base_url = audit_base_url.rstrip("/")
         self.steps: list[AgentStep] = []
@@ -199,8 +206,13 @@ class BuyerAgent:
     # ------------------------------------------------------------ plumbing
     def emit(self, kind: str, title: str, **data: Any) -> AgentStep:
         self._seq += 1
-        step = AgentStep(run_id=self.run_id, seq=self._seq, ts=datetime.now(HELSINKI), kind=kind,
-                         title=title, data=data)
+        fields = dict(run_id=self.run_id, seq=self._seq, ts=datetime.now(HELSINKI), kind=kind, title=title, data=data)
+        if kind in EXTRA_STEP_KINDS:
+            # `needs_clarification` is not (yet) in AgentStep.kind's Literal (models.py, CEO-owned):
+            # build without validation; it serialises like any other step.
+            step = AgentStep.model_construct(**fields)
+        else:
+            step = AgentStep(**fields)
         self.steps.append(step)
         if self.emit_fn:
             try:
@@ -242,7 +254,9 @@ class BuyerAgent:
         now = (self.now or now_helsinki()).astimezone(HELSINKI)
         self.emit("thought", "Received purchasing request", text=text, customer_id=self.customer_id,
                   agent_id=self.agent_id, transport=getattr(self.t, "kind", "?"), model=self.model,
-                  thinking=self.thinking)
+                  thinking=self.thinking, has_image=bool(self.image))
+        if self.image:
+            text = self._read_image(text, now)
         t = time.time()
         self.needs = parse_request(text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
         self.need = n = self.needs[0]
@@ -250,6 +264,8 @@ class BuyerAgent:
         self.emit("thought", f"Parsed need: {items}, delivery by {n.delivery_by}",
                   need=n.model_dump(mode="json"), needs=[x.model_dump(mode="json") for x in self.needs],
                   latency_s=round(time.time() - t, 2), parsed_by=n.preferences.get("parsed_by"))
+        if self.clarify_enabled and not self._clarify(text, now):
+            return self._finish_unanswered()
         for x in self.needs:
             ratio = x.preferences.get("standing_order_ratio")
             if ratio and float(ratio) >= DRIFT_RATIO and not self.drift:
@@ -277,6 +293,68 @@ class BuyerAgent:
                                    delivery_by=n.delivery_by.isoformat(), extra=extra)
         final_text = self._loop(system, task)
         return self._finish(final_text)
+
+    # ------------------------------------------------------------ multimodal intake and clarification
+    def _read_image(self, text: str, now: datetime) -> str:
+        from aimo.buyer.vision import extract_order_from_image
+        t = time.time()
+        data, mime = self.image
+        try:
+            ex = extract_order_from_image(data, mime, self.profile, now, run_id=self.run_id,
+                                          generate=lambda **kw: self.generate(**kw), hint=text)
+        except Exception as e:  # noqa: BLE001
+            self.emit("error", f"Could not read the image ({type(e).__name__})", error=str(e)[:300])
+            if not text:
+                raise
+            return text
+        lines = ex.get("lines", [])
+        self.emit("thought", f"Read {ex.get('document_type') or 'image'} with Gemini vision: {len(lines)} line(s)",
+                  extracted=ex, lines=lines, request_text=ex.get("request_text"), latency_s=round(time.time() - t, 2))
+        img_text = ex.get("request_text") or ""
+        return f"{text} {img_text}".strip() if text else img_text
+
+    def _clarify(self, text: str, now: datetime) -> bool:
+        """Ask the human when the need is genuinely ambiguous. False = no answer, stop the run."""
+        from aimo.buyer.clarify import apply_answer, find_questions
+
+        def search(q: str, claims: list[str]) -> Any:
+            return self._tool("search_products", {"query": q, "claims": claims, "limit": 10})
+
+        questions = find_questions(self.needs, self.profile, text, now, search)
+        for q in questions:
+            public = {k: v for k, v in q.items() if k != "options"}
+            public["options"] = [{k: v for k, v in o.items() if k != "patch"} for o in q["options"]]
+            self.emit("needs_clarification", q["question"], **public, allow_free_text=True,
+                      answer_url=f"/v1/agent/runs/{self.run_id}/answer")
+            answer = None
+            if self.answer_fn is not None:
+                try:
+                    answer = self.answer_fn(public)
+                except Exception:  # noqa: BLE001
+                    answer = None
+            if not answer:
+                self.clarifications.append({**public, "answer": None})
+                self._pending_question = public
+                return False
+            self.needs, label = apply_answer(self.needs, q, answer)
+            if not label and answer.get("text"):
+                # free text that matches no option: re-parse the request with the answer appended
+                self.needs = parse_request(f"{text} ({answer['text']})", self.profile, now,
+                                           use_gemini=self.use_gemini_parse, run_id=self.run_id)
+                label = f"free text: {answer['text']}"
+            self.clarifications.append({**public, "answer": answer, "resolved": label})
+            self.emit("thought", f"Clarified: {label}", question_id=q["question_id"], answer=answer,
+                      needs=[x.model_dump(mode="json") for x in self.needs])
+        self.need = self.needs[0]
+        return True
+
+    def _finish_unanswered(self) -> dict:
+        q = getattr(self, "_pending_question", {}) or {}
+        summary = (f"I need an answer before I can order: {q.get('question', '')} "
+                   f"Options: {'; '.join(o['label'] for o in q.get('options', []))}. Nothing was ordered.")
+        self.emit("final", "Waiting for clarification", summary=summary, status="needs_clarification",
+                  latency_s=round(time.time() - self.t0, 2), question=q)
+        return self.result(summary, status="needs_clarification")
 
     # ------------------------------------------------------------ the tool loop
     def _loop(self, system: str, task: str) -> str:
@@ -684,7 +762,7 @@ class BuyerAgent:
         return {"run_id": self.run_id, "status": status, "summary": summary,
                 "need": self.need.model_dump(mode="json") if self.need else None, "needs": [x.model_dump(mode="json") for x in self.needs],
                 "quote": self.quote, "order": self.order, "plan": self.plan,
-                "latency_s": round(time.time() - self.t0, 2), "models_used": self.models_used,
+                "latency_s": round(time.time() - self.t0, 2), "models_used": self.models_used, "clarifications": self.clarifications,
                 "steps": [s.model_dump(mode="json") for s in self.steps]}
 
     # ------------------------------------------------------------ formatting helpers
