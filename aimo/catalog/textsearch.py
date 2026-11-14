@@ -206,7 +206,13 @@ def get_rows(ids: list[str]) -> dict[str, dict[str, Any]]:
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
         for r in con.execute(f"select * from products where id in ({','.join('?' * len(chunk))})", chunk):
-            out[r["id"]] = row_to_dict(r)
+            d = row_to_dict(r)
+            try:  # allergen contradiction sweep: structured FREE_FROM vs ingredient text -> unknown
+                from aimo.catalog.data_quality import apply as _dq
+                _dq(d)
+            except Exception:  # noqa: BLE001
+                pass
+            out[r["id"]] = d
     return out
 
 
