@@ -96,8 +96,14 @@ async function api(path,opts){
     var p=await readPayload(r);
     if(!r.ok){
       var info=errInfo(p.data,p.raw);
-      var le={status:r.status,detail:info.detail};
+      var det=info.detail;
+      if(info.code&&det){
+        det={code:info.code,text:det};
+        Object.defineProperty(det,"toString",{value:function(){return info.detail}});
+      }
+      var le={status:r.status,detail:det};
       if(info.code)le.code=info.code;
+      if(info.detail)le.text=info.detail;
       window.aimo.lastError=le;
       return null;
     }

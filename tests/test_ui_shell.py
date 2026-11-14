@@ -256,6 +256,7 @@ async function main() {
     responder = async () => new Response(JSON.stringify({ code: "NOT_APPROVER", text: "Only Laura Virtanen may approve" }), { status: 403 });
     const r403 = await env.aimo.api("/v1/approvals/ord_1", { method: "POST", admin: true, body: { approve: true } });
     const e403 = env.aimo.lastError;
+    const e403Str = String(e403.detail);
 
     responder = async () => ({
       ok: false,
@@ -264,6 +265,7 @@ async function main() {
     });
     const r409 = await env.aimo.api("/v1/orders", { method: "POST", body: { quote_id: "q1" } });
     const e409 = env.aimo.lastError;
+    const e409Str = String(e409.detail);
 
     responder = async () => new Response(JSON.stringify({ detail: [{ loc: ["body", "per_order_eur"], msg: "Field required" }] }), { status: 422 });
     const r422 = await env.aimo.api("/v1/mandate", { method: "PUT", admin: true, body: {} });
@@ -282,7 +284,7 @@ async function main() {
     const offNetHtml = panel.innerHTML;
 
     console.log(JSON.stringify({
-      r204, e204, rEmpty, eEmpty, r403, e403, r409, e409, r422, e422, off503, off503Html, rNet, eNet, offNet, offNetHtml
+      r204, e204, rEmpty, eEmpty, r403, e403, e403Str, r409, e409, e409Str, r422, e422, off503, off503Html, rNet, eNet, offNet, offNetHtml
     }));
     return;
   }
@@ -489,17 +491,22 @@ def test_node_api_204_structured_errors_and_offline():
     assert res["e403"] == {
         "status": 403,
         "code": "NOT_APPROVER",
-        "detail": "Only Laura Virtanen may approve",
+        "text": "Only Laura Virtanen may approve",
+        "detail": {"code": "NOT_APPROVER", "text": "Only Laura Virtanen may approve"},
     }
+    assert res["e403Str"] == "Only Laura Virtanen may approve"
     assert res["r409"] is None
     assert res["e409"] == {
         "status": 409,
         "code": "QUOTE_EXPIRED",
-        "detail": "Quote has expired",
+        "text": "Quote has expired",
+        "detail": {"code": "QUOTE_EXPIRED", "text": "Quote has expired"},
     }
+    assert res["e409Str"] == "Quote has expired"
     assert res["r422"] is None
     assert res["e422"] == {
         "status": 422,
+        "text": "per_order_eur: Field required",
         "detail": "per_order_eur: Field required",
     }
     assert res["off503"] == "Unavailable (503)"
