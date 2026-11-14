@@ -126,7 +126,14 @@ def embed_query(q: str) -> np.ndarray:
         cache = _qcache()
         if key in cache:
             return np.array(cache[key], dtype=np.float32)
-    v = _embed_batch([q], "catalog.embed.query", retries=2)[0]  # interactive path: fail fast
+    from aimo.catalog.netcheck import gemini_online, mark_offline
+    if not gemini_online():   # AIMO_SEMANTIC=0, AIMO_OFFLINE=1, no key, or no network: skip at once
+        raise RuntimeError("semantic recall offline")
+    try:
+        v = _embed_batch([q], "catalog.embed.query", retries=1)[0]  # interactive path: fail fast
+    except Exception:
+        mark_offline()
+        raise
     with _qlock:
         cache = _qcache()
         cache[key] = [round(float(x), 5) for x in v]

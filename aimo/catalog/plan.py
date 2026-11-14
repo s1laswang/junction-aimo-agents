@@ -196,6 +196,9 @@ def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
     """Gemini recipe-compatibility note for substitute lines vs the usual product (cached; flags only)."""
     if not need.preferred_product_ids:
         return
+    from aimo.catalog.netcheck import gemini_online
+    if not gemini_online():
+        return
     orig = need.preferred_product_ids[0]
     subs = [l for l in plan.lines if l.product_id not in need.preferred_product_ids][:3]
     if not subs:

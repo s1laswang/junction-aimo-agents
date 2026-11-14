@@ -290,7 +290,8 @@ def semantic_hits(query: str, *, claims: list[str] | None = None, category: Opti
     """Gemini-embedding recall with the same filters as FTS. [] if embeddings are not built/available."""
     try:
         from aimo.catalog.embeddings import available, semantic_search
-        if not available() or not (query or "").strip():
+        from aimo.catalog.netcheck import semantic_enabled
+        if not semantic_enabled() or not available() or not (query or "").strip():
             return []
         raw = semantic_search(query, k=k * 3)
     except Exception:  # noqa: BLE001 - embeddings are optional (no key, offline, not built)
