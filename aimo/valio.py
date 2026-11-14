@@ -13,12 +13,24 @@ CHUNK = 1000
 _client: httpx.Client | None = None
 
 
+class UpstreamUnavailable(Exception):
+    code = "UPSTREAM_UNAVAILABLE"
+    text = "The Valio price and availability service is busy, try again shortly."
+
+    def __init__(self, detail: str = ""):
+        super().__init__(f"{self.code}: {detail}")
+
+
 def _http() -> httpx.Client:
     global _client
     if _client is None:
+        base = os.environ.get("VALIO_API_BASE", "").strip()
+        key = os.environ.get("VALIO_API_KEY", "").strip()
+        if not base or not key:
+            raise UpstreamUnavailable("VALIO_API_BASE or VALIO_API_KEY not configured")
         _client = httpx.Client(
-            base_url=os.environ["VALIO_API_BASE"].rstrip("/"),
-            headers={"X-API-Key": os.environ["VALIO_API_KEY"]},
+            base_url=base.rstrip("/"),
+            headers={"X-API-Key": key},
             timeout=30,
         )
     return _client
@@ -28,14 +40,6 @@ def _cache_file(endpoint: str, customer: str, day: date) -> Path:
     root = Path(os.environ.get("AIMO_CACHE_DIR", "var/cache"))
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{endpoint}__{customer}__{day.isoformat()}.json"
-
-
-class UpstreamUnavailable(Exception):
-    code = "UPSTREAM_UNAVAILABLE"
-    text = "The Valio price and availability service is busy, try again shortly."
-
-    def __init__(self, detail: str = ""):
-        super().__init__(f"{self.code}: {detail}")
 
 
 def _wait(r, attempt: int) -> float:
@@ -83,6 +87,8 @@ def _fetch(endpoint: str, customer: str, day: date, ids) -> dict[str, dict]:
     path = _cache_file(endpoint, customer, day)
     store = json.loads(path.read_text()) if path.exists() else {}
     missing = [i for i in ids if i not in store]
+    if not missing:
+        return {i: store[i] for i in ids if i in store}
     try:
         for n in range(0, len(missing), CHUNK):
             chunk = missing[n : n + CHUNK]

@@ -1,7 +1,9 @@
 import json
+import math
 import os
 
 from aimo import audit, db
+from aimo.approvals import ApprovalError
 from aimo.models import Mandate
 
 _MANDATES = [
@@ -49,7 +51,13 @@ _DEMO_KEYS = {
 
 def _keys():
     raw = os.environ.get("AIMO_AGENT_KEYS")
-    return json.loads(raw) if raw else _DEMO_KEYS
+    if not raw:
+        return _DEMO_KEYS
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return _DEMO_KEYS
+    return parsed if isinstance(parsed, dict) else _DEMO_KEYS
 
 
 def _con():
@@ -75,7 +83,29 @@ def get(customer, agent_id=None):
     return None
 
 
+def _invalid(text):
+    try:
+        from aimo.api import Err
+    except ImportError:
+        raise ApprovalError("INVALID_MANDATE", text)
+
+    class InvalidMandate(ApprovalError, Err):
+        def __init__(self):
+            Exception.__init__(self, f"INVALID_MANDATE: {text}")
+            self.code = "INVALID_MANDATE"
+            self.text = text
+            self.status = 409
+            self.body = {"code": "INVALID_MANDATE", "text": text}
+
+    InvalidMandate.__name__ = "ApprovalError"
+    raise InvalidMandate()
+
+
 def put(m, actor="human:admin"):
+    if not (math.isfinite(m.per_order_eur) and m.per_order_eur > 0 and math.isfinite(m.per_week_eur) and m.per_week_eur > 0):
+        _invalid("Mandate spending limits must be greater than 0 EUR.")
+    if m.per_order_eur > m.per_week_eur:
+        _invalid("Per-order limit cannot exceed weekly limit.")
     old = get(m.customer, m.agent_id)
     con = _con()
     try:
@@ -94,7 +124,7 @@ def put(m, actor="human:admin"):
 
 def agent_for_key(key):
     hit = _keys().get(key)
-    if not hit:
+    if not isinstance(hit, (list, tuple)) or len(hit) < 2:
         return None
     m = get(hit[0], hit[1])
     return (hit[0], hit[1], m) if m else None

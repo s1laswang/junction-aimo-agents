@@ -24,8 +24,17 @@ def _lines(lines):
     return [{"product_id": l.product_id, "name": l.name, "quantity": l.quantity} for l in lines]
 
 
+def _cat_get(catalog, pid):
+    if not pid:
+        return None
+    try:
+        return catalog.get(pid)
+    except FileNotFoundError:
+        return None
+
+
 def _why_sub(l, products, catalog):
-    orig = catalog.get(l.substitute_for)
+    orig = products.get(l.substitute_for) or _cat_get(catalog, l.substitute_for)
     new = products.get(l.product_id)
     a = orig.name if orig else l.substitute_for
     b = (new.name if new else None) or l.name or l.product_id
@@ -162,7 +171,8 @@ def place(customer, agent_id, req: PlaceOrderRequest):
     con.commit()
     detail = {"order_id": o.order_id, "quote_id": quote.quote_id, "total_net": o.total_net, "lines": _lines(quote.lines)}
     audit.record(customer, f"agent:{agent_id}", "order.placed", o.order_id, "Agent submitted an order against a signed quote.", detail)
-    products = {l.product_id: catalog.get(l.product_id) for l in quote.lines}
+    pids = [pid for l in quote.lines for pid in (l.product_id, l.substitute_for) if pid]
+    products = {pid: _cat_get(catalog, pid) for pid in dict.fromkeys(pids)}
     subs = [Substitution(original_id=l.substitute_for, substitute_id=l.product_id, reason=_why_sub(l, products, catalog)) for l in quote.lines if l.substitute_for]
     o.substitutions = subs
     o.decision = policy.decide(quote, mandates.get(customer, agent_id), products, spent_this_week(customer), subs)
@@ -185,8 +195,8 @@ def react_stockout(product_id):
     con = _con()
     out = []
     for r in con.execute("select * from orders where status in ('placed','approved','confirmed','pending_approval')").fetchall():
-        o = _order(r)
-        if all(l.product_id != product_id for l in o.lines):
+        o = _expire(con, r)
+        if o.status == "expired" or all(l.product_id != product_id for l in o.lines):
             continue
         day = date.fromisoformat(r["delivery_date"])
         fresh = offers.fresh_offers(o.customer, day, [l.product_id for l in o.lines])
@@ -196,7 +206,11 @@ def react_stockout(product_id):
         old = {l.product_id for l in o.lines}
         o.lines = plan["lines"]
         o.total_net = round(sum(l.line_total_net for l in o.lines), 2)
-        o.substitutions += [Substitution(original_id=product_id, substitute_id=l.product_id, reason="Stock dropped, refilled from the next offer.") for l in o.lines if l.product_id not in old]
+        seen = {(s.original_id, s.substitute_id) for s in o.substitutions}
+        for l in o.lines:
+            if l.product_id not in old and (product_id, l.product_id) not in seen:
+                seen.add((product_id, l.product_id))
+                o.substitutions.append(Substitution(original_id=product_id, substitute_id=l.product_id, reason="Stock dropped, refilled from the next offer."))
         why = "Stock dropped after the order: " + "; ".join(plan["changes"]) + (f". Shortfall {plan['shortfall']:g}." if plan["shortfall"] else "")
         o.decision = Decision(outcome="needs_approval", reasons=[Reason(code="STOCKOUT", text=why)])
         o.status = "pending_approval"
