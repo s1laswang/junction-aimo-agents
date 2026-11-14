@@ -22,6 +22,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 |---|---|---|---|---|
 | Sat 14 Nov 23:22–23:28 | 8d0d10e (on fac34f0) | 267 passed, 7 skipped, 2 xfailed (41 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP: live Gemini demo by design; keyed .env; conformance 44/44, MILK FLOW OK) |
 | Sat 14 Nov 23:26–23:29 | 74b5e79 (rebased on 4ae14c6, S5 ui merged) | 285 passed, 7 skipped, 2 xfailed (58 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
+| Sun 15 Nov 00:18 | 2468bdd (`fr8/valio/main`, per-approver PINs + fleet suites) | 743 passed, 7 skipped, 2 xfailed (94.7 s, 752 collected) | 8/8 PASS (live, 88 checks) | conformance 44/44 (2.3 s), `qa_milk_flow.py` MILK FLOW OK (73 audit events verified), keyless `aimo demo` placed in 5.95 s, keyless `--montage` 6/6 PASS in 2.6 s |
 
 ## Open items
 - Re-check README, SUBMISSION, DEMO and QA against main every hour while the other sessions merge:

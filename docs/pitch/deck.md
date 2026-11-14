@@ -2,7 +2,7 @@
 
 For Chintufp to build the visual deck and record the video. Every number has a source in brackets ([docs/NUMBERS.md](../NUMBERS.md)). Hard questions and answers: [QA.md](QA.md). Keep slides sparse: one idea, one visual, at most 15 words of text. The live demo ([docs/DEMO.md](../DEMO.md)) replaces slide 3 when presenting live; the video uses the screen recording there.
 
-Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots: `docs/pitch/img/approval-ui.png`, plus fresh captures from `/ui` after the freeze.
+Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots: `docs/reports/frontend/s5-approval-signed-in.png` (live S5 UI with sign-in and 3 approval rules) and `docs/pitch/img/approval-ui.png`, plus fresh captures from `/ui` after the freeze.
 
 ---
 
@@ -20,7 +20,7 @@ Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the
 
 ## Slide 3: Solution (demo)
 **On slide:** "Trusted Trade gateway" in the middle; left: "Any agent: Gemini, Claude, ERP" (MCP / OpenAPI); right: "Valio Aimo backend"; bottom: "Human approver". The milk flow as 6 steps: request → live lookup → good-better-best → signed quote → policy: needs approval → approved, placed (AP), audited.
-**Visual:** screenshot `docs/pitch/img/approval-ui.png` or the 60-second clip.
+**Visual:** screenshot `docs/reports/frontend/s5-approval-signed-in.png` (or `docs/pitch/img/approval-ui.png`) or the 60-second clip.
 **Numbers:** €1,010 for 1,000 × Valio Eila 1 L at €1.01 [live run, docs/ARCHITECTURE.md §2]; usual 10 L box missed its cut-off Thu 12 Nov 15:00 [mock API]; 3 rules needed a human: spend > €500, outside preference, 3.3× usual weekly volume [frontend live run screenshot].
 **Speaker notes (40 s):** walk the six steps. Stress: live mock-API data (synthetic, as the challenge provides), the agent re-planned around two real exceptions, the policy is the hotel's own file, the human approved the exact signed quote.
 
@@ -45,7 +45,7 @@ Second half (or a build): wind tunnel table, "Trusted gateway vs naive agent wit
 | Allergen violations | **0** | 193 |
 | Injection block rate | 56.2% | 0% |
 Source: `docs/windtunnel-results.md` § "Gemini-written scenarios (wt640)" (snapshot `2f2fef829c50`). Honest caveat for Q&A: escalation precision is 54.0% vs 90.8% for the naive agent, so the gateway asks a human more often than it strictly needs to. That's the price of 1 vs 372 violations. The target of 0 policy violations was missed by one (an over-spend-limit auto-approval in `split_order`). Scale run on template text: 2,560 scenarios, 11 vs 1,452 policy violations, 0 vs 728 allergen violations [same file, § wt2560]. Injection screen: regex alone 44.4% recall, regex + Gemini 94.4% (Gemini flags 42/60 buyer requests, 0/60 supplier texts; a flag only means a human looks) [same file].
-Footnote facts already measured: 0 false positives on 34,159 catalog supplier texts [docs/TRUST.md]; 739 passed, 7 skipped, 2 xfailed across 748 pytest checks, 8/8 acceptance scenarios, and 44/44 conformance checks on two wholesalers [docs/NUMBERS.md, docs/OPENNESS.md]; an agent that tries to approve as the real manager gets 403 and the refusal is audited [docs/pitch/permissions_attack.py].
+Footnote facts already measured: 0 false positives on 34,159 catalog supplier texts [docs/TRUST.md]; 743 passed, 7 skipped, 2 xfailed across 752 pytest checks, 8/8 acceptance scenarios (88 checks), and 44/44 conformance checks on two wholesalers [docs/NUMBERS.md, docs/OPENNESS.md]; an agent that tries to approve as the real manager gets 403 and the refusal is audited [docs/pitch/permissions_attack.py].
 **Speaker notes (25 s):** "We didn't test one happy path. Six live scenarios, end to end with the Gemini agent against the live challenge mock API: stock-out, school allergens, prompt injection, standing-order drift, a last-minute event. All six pass. And our wind tunnel replays recorded API data across 640 Gemini-written customers, scored against an independent oracle: one policy violation for us, 372 for a naive agent with direct API access, and zero allergen violations."
 
 ## Slide 6: Openness and production path

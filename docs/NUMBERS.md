@@ -57,13 +57,13 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Hero run input 87,184 → 27,403 tokens | GEMINI, deck | `uv run python docs/evidence/montage_stats.py` ("Hero input" column) | 87,184 / 27,403 | R submit, Sat 23:00 |
 | 31% of montage input from implicit cache (57,661 of 183,196) | GEMINI, SUBMISSION, deck | `uv run python docs/evidence/montage_stats.py` (per-scenario cached column sums to 57,661) | 31% | R submit, Sat 23:00 |
 | Escalation to gemini-4-hydrogen HIGH on 6/6 runs, 6 of 31 agent steps (19%); 6 of 36 before the trim | GEMINI, deck, DECISIONS | `uv run python docs/evidence/montage_stats.py` | 19% / 17% | R submit, Sat 23:00 |
-| Single hero run 38 s with escalation | README | `uv run aimo demo --base-url http://localhost:8000 --auto-approve-as anna@hotel-aurora.example` (**live**) | 38 s | R pitch, Sat 15:00 |
+| Single hero run 38 s with escalation (live Gemini); keyless scripted buyer 5.95 s (live server, 0 Gemini calls); keyless fake montage 6/6 PASS in 2.6 s | README, DEMO | `uv run aimo demo --base-url http://localhost:8000 --auto-approve-as anna@hotel-aurora.example` (**live** with `GEMINI_API_KEY`, or keyless with `GEMINI_API_KEY=""`); `GEMINI_API_KEY="" uv run aimo demo --montage --transport fake` | 38 s (Gemini) / 5.95 s (keyless MCP) / 2.6 s (keyless 6/6 montage) | R pitch (38 s); R lead (`2468bdd`) for keyless runs |
 
 ## Acceptance scenarios and tests
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
-| s0–s7: 8/8 PASS | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 | R submit, see docs/reports/pitch.md "Gate runs" for the latest |
-| Test count | README, SUBMISSION, deck, COMBINE | `uv run --extra dev pytest -q` (with the catalog file present) | **739 passed, 7 skipped, 2 xfailed** (748 collected in `tests/` on `combined` / `fr8/valio/main`; standalone `main` before the fleet unit suites runs 285 passed, 7 skipped, 2 xfailed; standalone `ours/tests` adds 525 passed) | R docs + lead (`cfd6c6b`), Sat 23:50. Re-run at the freeze. |
+| s0–s7: 8/8 PASS (88 checks) | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 (88 checks) | R lead (`2468bdd`), Sun 00:18 |
+| Test count | README, SUBMISSION, deck, COMBINE | `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (with the catalog file present) | **743 passed, 7 skipped, 2 xfailed** in 94.7 s (752 collected in `tests/` on `fr8/valio/main` `2468bdd`; standalone `main` before the fleet unit suites ran 285 passed, 7 skipped, 2 xfailed; standalone `ours/tests` adds 525 passed) | R lead (`2468bdd`), Sun 00:18. Re-run at the freeze. |
 | `make accept` | README | `make accept` | RESULT: PASS (table in docs/reports/submit.md "Gate runs") | R submit |
 
 ## Trust
