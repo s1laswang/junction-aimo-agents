@@ -163,3 +163,10 @@ MCP tools: `list_recipes()`, `plan_recipe(recipe_id?, portions?, delivery_by?, t
 
 Audit actions: `drift.checked`, `proposal.created`, `proposal.accepted`, `proposal.declined`, `proposal.accept_refused`.
 
+
+## Gateway round 4 (Sat night): quote ownership
+- **`POST /v1/orders` / `place_order`: only the agent that obtained the quote may submit it** (normalised agent id + customer).
+  Anyone else, including another agent of the same customer or `valio-aimo/seller-*`, gets **403 `agent_mismatch`** (wrong customer: 403 `customer_mismatch`).
+  It is audited as `order.refused` on the quote, and no order row is created, so it can never take the per-quote idempotency slot.
+- **`order:submit` scope is checked by the gateway before any order exists:** a mandate without it gets 403 `scope_missing` and an `order.refused` audit.
+  Previously trust's `mandate_scope` rule produced a stored rejected order.

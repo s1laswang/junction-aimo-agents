@@ -496,3 +496,51 @@ def test_quote_refetches_live_bypassing_cache(api, tmp_path):
     assert calls == {"price": 2, "availability": 2}
     assert q["provenance"]["served_from"] == "live" and q["provenance"]["fresh_requested"] is True
     assert api.post("/v1/offers", headers=H, json=body).headers["x-aimo-served-from"] == "cache"  # browsing still cached
+
+
+# ------------------------------------------------------------------ round 4: only the quoting agent may order its quote
+def _all_orders(api):
+    return api.get("/v1/approvals", params={"status": "all"}).json()
+
+
+@pytest.mark.parametrize("intruder", [
+    {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "planner-1"},
+    {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "hotel-aurora/buyer-2"},
+    {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "valio-aimo/seller-1"},
+])
+def test_other_agent_cannot_burn_buyers_quote(api, intruder):
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000, "tier": "best"}]).json()
+    body = {"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}
+    r = api.post("/v1/orders", headers=intruder, json=body)
+    assert r.status_code == 403 and r.json()["error"] == "agent_mismatch", r.text
+    assert _all_orders(api) == []                       # no order row, no idempotency record
+    evs = api.get("/v1/audit", params={"subject_id": q["quote_id"]}).json()
+    assert any(e["action"] == "order.refused" and e["data"].get("reason") == "agent_mismatch" for e in evs)
+    o = api.post("/v1/orders", headers=H, json=body)    # the real buyer is not blocked
+    assert o.status_code == 200 and o.json()["status"] == "pending_approval" and o.json()["agent_id"] == "buyer-1"
+
+
+def test_seller_with_own_customer_header_gets_403(api):
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 10}]).json()
+    r = api.post("/v1/orders", headers={"X-Customer-Id": "valio-aimo", "X-Agent-Id": "valio-aimo/seller-1"},
+                 json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]})
+    assert r.status_code == 403 and r.json()["error"] == "customer_mismatch"
+    assert _all_orders(api) == []
+
+
+def test_quote_owner_without_order_scope_gets_403_and_no_order(api):
+    if service.integration_status()["trust.evaluate"] != "aimo.trust":
+        pytest.skip("mandates come from trust")
+    ph = {**H, "X-Agent-Id": "planner-1"}                # may quote, may not order
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 10}], headers=ph).json()
+    body = {"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}
+    for _ in range(2):
+        r = api.post("/v1/orders", headers=ph, json=body)
+        assert r.status_code == 403 and r.json()["error"] == "scope_missing"
+    assert _all_orders(api) == []
+
+
+def test_owner_agent_id_forms_are_equivalent(api):
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000}], headers={**H, "X-Agent-Id": "hotel-aurora/buyer-1"}).json()
+    r = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]})
+    assert r.status_code == 200 and r.json()["status"] == "pending_approval"
