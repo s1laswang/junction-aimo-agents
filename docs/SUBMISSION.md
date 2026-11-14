@@ -1,7 +1,7 @@
 # Junction 2026 submission text
 
 Challenge: Valio Aimo, "Trusted Trade Agents". Also entered: Google DeepMind Best Use of Gemini API (see [GEMINI.md](GEMINI.md)).
-Deadline: Sun 15 Nov 2026 10:00 Helsinki. Repo: https://github.com/s1laswang/junction-aimo-agents (public, pinned to tag aimo-v1 at freeze). Video: [filled at freeze]. Live URL: [filled at freeze; runs locally with one command: uv run aimo serve].
+Deadline: Sun 15 Nov 2026 10:00 Helsinki. Repo: https://github.com/s1laswang/junction-aimo-agents (public, pinned to tag aimo-v1 at freeze). Video: TODO (human: paste backup video URL after recording). Live URL: Runs locally with one command (uv run aimo serve on :8000); public tunnel URL: TODO (human: fill at freeze).
 
 ## Short version (under 500 characters)
 
@@ -38,7 +38,7 @@ Demo: *"We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Mo
 - **Delivery time and sustainability.** Each product shows the delivery reliability and category CO2 (kg CO2e/kg) from the challenge CSVs; cut-off times and requested dates come from the live API. Organic and origin labels (e.g. Finnish Blue Swan) are parsed from the data.
 - **Substitution and exceptions.** Good-better-best ranking with reasons; cut-off passed, partial stock, stock-out, sales block, price shock, upstream 429/503 (retry, then a clear 503 with `Retry-After`). Fault injection per request (`X-Aimo-Faults`) makes every exception demonstrable.
 - **Traceability and explainability.** Hash-chained, Ed25519-signed audit events with a readable report per order, `GET /v1/audit/verify`, and an evidence pack (events, signed quote, decision, JWKS, verification steps) for offline checking.
-- **Scenarios covered:** last-minute event, supplier stock-out with a compatible substitute (Gemini recipe check), allergen-safe substitution for a school (milk and nuts) and a hospital (gluten), prompt injection in supplier text, standing-order drift (3× usual volume). Six of these run live end to end with the Gemini agent and all six pass (see Robustness). Menu-to-order and the proactive selling agent run both as live acceptance scenarios (`POST /v1/recipes/plan` in `s2_recipe_order` and `POST /v1/proposals` in `s6_proactive_seller`, 8/8 PASS in `scenarios.run_all`) and as two of the 16 wind-tunnel scenario families (`menu_recipe` and `upsell_pitch` in [windtunnel-results.md](windtunnel-results.md)).
+- **Scenarios covered:** last-minute event, supplier stock-out with a compatible substitute (Gemini recipe check), allergen-safe substitution for a school (milk and nuts) and a hospital (gluten), prompt injection in supplier text, standing-order drift (3× usual volume). Six of these run live end to end with the Gemini agent and all six pass (see Robustness). Menu-to-order (`POST /v1/recipes/plan`, MCP `list_recipes` / `plan_recipe`, live acceptance scenarios `s2`, `s3`, `s5`) and the proactive selling agent (`POST /v1/proposals`, MCP `propose_offer`, live scenario `s6`) pass in `scenarios.run_all` (8/8 PASS) and are evaluated at scale as `menu_recipe` and `upsell_pitch` among the 16 scenario families in [docs/windtunnel-results.md](windtunnel-results.md).
 
 ## Robustness (measured)
 **Live montage, 6 of 6 scenarios PASS** (`uv run aimo demo --montage`, Gemini agent over MCP against the live mock API, Sat 14 Nov 18:21; [demo-montage.md](demo-montage.md)):
