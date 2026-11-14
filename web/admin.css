@@ -3,6 +3,7 @@
 .form~.panel-head,.note~.panel-head,#last~.panel-head,section+section{margin-top:24px}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field input,.field select{width:100%}
+.field input[type="checkbox"]{width:15px;height:15px;padding:0;margin:0;accent-color:var(--valio)}
 .row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
 .chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-height:32px;padding:3px 4px;background:var(--well);border:1px solid var(--rule);border-radius:4px}
 .chips:focus-within{border-color:var(--valio);outline:2px solid var(--valio);outline-offset:0}
@@ -11,6 +12,14 @@
 .chip button{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;border:0;background:transparent;color:var(--ink-3);cursor:pointer;border-radius:3px;padding:0}
 .chip button:hover{color:var(--stop);background:rgba(163,52,43,.08)}
 .chip button:focus-visible{outline:2px solid var(--valio);outline-offset:1px;color:var(--stop);background:rgba(163,52,43,.08)}
+.quick,.picks,#sim-picks{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:2px;min-width:0}
+.quick button,button.chip,button.pick,#sim-picks button{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:3px 8px;background:var(--paper);color:var(--ink-2);border:1px solid var(--rule-2);border-radius:4px;font:500 12px/1.3 var(--sans);cursor:pointer;text-align:left;max-width:100%;overflow-wrap:anywhere;transition:background .12s,border-color .12s,color .12s}
+.quick button:hover,button.chip:hover,button.pick:hover,#sim-picks button:hover{background:var(--well);color:var(--ink);border-color:var(--valio)}
+.quick button[aria-pressed="true"],button.chip[aria-pressed="true"],button.pick[aria-pressed="true"],button.pick.on,#sim-picks button[aria-pressed="true"]{background:rgba(31,78,140,.08);color:var(--valio);border-color:var(--valio)}
+.quick button[aria-pressed="true"]:hover,button.chip[aria-pressed="true"]:hover,button.pick[aria-pressed="true"]:hover,button.pick.on:hover,#sim-picks button[aria-pressed="true"]:hover{background:rgba(31,78,140,.14);color:var(--valio);border-color:var(--valio)}
+.quick button:focus-visible,button.chip:focus-visible,button.pick:focus-visible,#sim-picks button:focus-visible{outline:2px solid var(--valio);outline-offset:2px;border-color:var(--valio)}
+.quick button:disabled,button.chip:disabled,button.pick:disabled,#sim-picks button:disabled{opacity:.45;cursor:not-allowed;background:var(--paper);color:var(--ink-2);border-color:var(--rule-2)}
+.quick button code,button.chip code,button.pick code,#sim-picks button code,.quick button .mono,button.chip .mono,button.pick .mono,#sim-picks button .mono{font:11px var(--mono);color:inherit}
 .actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .note{margin-top:12px}
 #last{margin-top:4px;color:var(--ink-2)}
@@ -18,7 +27,8 @@
 .row2{grid-template-columns:minmax(0,1fr);gap:12px}
 .panel-head{flex-wrap:wrap}
 .form{padding:12px}
+.quick button,button.chip,button.pick,#sim-picks button{min-height:30px}
 }
 @media (prefers-reduced-motion:reduce){
-.chip button{transition:none}
+.chip button,.quick button,button.chip,button.pick,#sim-picks button{transition:none}
 }

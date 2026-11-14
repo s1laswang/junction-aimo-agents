@@ -12,7 +12,9 @@ main.grid{max-width:1560px;margin:0 auto;padding:12px 16px;display:grid;grid-tem
 .panel{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:12px 16px}
 .lbl,.k{font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
 main.grid textarea{width:100%;margin:4px 0 8px;background:var(--well);border:1px solid var(--rule);border-radius:4px;padding:8px;resize:vertical}
-main.grid textarea:focus-visible,main.grid select:focus-visible,main.grid button:focus-visible,main.grid a:focus-visible,main.grid summary:focus-visible{outline:2px solid var(--valio);outline-offset:2px}
+main.grid textarea:focus-visible,main.grid input:focus-visible,main.grid select:focus-visible,main.grid button:focus-visible,main.grid a:focus-visible,main.grid summary:focus-visible{outline:2px solid var(--valio);outline-offset:2px}
+input[type="checkbox"]{width:15px;height:15px;padding:0;margin:0;accent-color:var(--valio);cursor:pointer;flex:none}
+label.ask-h{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);cursor:pointer;max-width:100%}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip,.cons{border:1px solid var(--rule-2);background:var(--sheet);border-radius:4px;padding:2px 8px;font-size:12px;color:var(--ink-2)}
@@ -63,15 +65,19 @@ tr.short td{color:var(--warn);background:rgba(143,100,18,.08)}
 button.ghost{background:none;border:1px solid var(--rule-2);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer}
 button.ghost:hover:not(:disabled){background:var(--well)}
 button.ghost:disabled{opacity:.45;cursor:not-allowed}
-.dec{border-radius:6px;padding:8px 12px;border:1px solid var(--rule)}
+.dec{border-radius:6px;padding:8px 12px;border:1px solid var(--rule);overflow-wrap:anywhere;word-break:break-word}
 .dec.auto{background:rgba(47,107,79,.08);color:var(--ok)}
 .dec.needs_approval{background:rgba(143,100,18,.08);color:var(--warn)}
-.dec.blocked{background:rgba(163,52,43,.08);color:var(--stop)}
+.dec.blocked{background:rgba(163,52,43,.08);border-color:rgba(163,52,43,.25);color:var(--stop)}
 .dec strong{font-size:16px}
+.dec p{margin:4px 0 0;color:var(--ink);overflow-wrap:anywhere}
+.dec p:first-child{margin-top:0}
+.dec code{font:500 11px var(--mono);padding:1px 6px;border-radius:4px;background:rgba(23,33,43,.06);color:var(--ink-2);max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+.dec.blocked code{color:var(--stop);background:rgba(163,52,43,.12)}
 .dec ul{margin:6px 0 0;padding:0;list-style:none;color:var(--ink)}
-.dec li{display:flex;gap:8px;padding:2px 0;min-width:0}
-.dec li code{font:11px var(--mono);color:var(--ink-3);min-width:110px}
-.dec li span{min-width:0;overflow-wrap:anywhere}
+.dec li{display:flex;align-items:baseline;gap:8px;padding:2px 0;min-width:0;flex-wrap:wrap}
+.dec li code{min-width:110px}
+.dec li span{flex:1 1 160px;min-width:0;overflow-wrap:anywhere}
 .dec a{color:var(--valio)}
 .trace{list-style:none;margin:0;padding:0}
 .ln{border-top:1px solid var(--rule);padding:6px 0;animation:in .16s cubic-bezier(.23,1,.32,1)}
@@ -114,8 +120,11 @@ main.grid{grid-template-columns:minmax(0,1fr);padding:12px}
 main.grid{padding:12px;gap:10px}
 .panel{padding:12px}
 td:first-child{min-width:150px}
+.dec{padding:8px 10px}
+.dec .kv{gap:4px 8px}
 .dec li{flex-wrap:wrap;gap:2px 8px}
 .dec li code{min-width:0;overflow-wrap:anywhere}
+main.grid .dec .tag{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .quote .jws{max-width:min(200px,100%)}
 }
 @media (prefers-reduced-motion:reduce){
