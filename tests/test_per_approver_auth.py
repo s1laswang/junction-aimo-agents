@@ -325,3 +325,46 @@ def test_locking_out_anna_does_not_lock_out_liisa_or_annas_active_session(monkey
     assert human_auth.locked_for("203.0.113.77", LIISA) == 0.0
     assert human_auth.check_pin_for(liisa_pin, LIISA, source="203.0.113.77") is True
     assert human_auth.check_session(anna_sess) is True
+
+
+def test_default_approver_pin_file_syncs_with_anna_for_milk_flow_and_ui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AIMO_APPROVER_PIN", raising=False)
+    monkeypatch.delenv("AIMO_APPROVER_PINS", raising=False)
+    c = _client()
+
+    assert human_auth.credential_warning() is None
+    pin_file = config.KEY_DIR / "approver_pin"
+    pins_file = config.KEY_DIR / "approver_pins.json"
+    assert pin_file.exists() and pins_file.exists()
+    assert (pin_file.stat().st_mode & 0o777) == 0o600
+    file_pin = pin_file.read_text(encoding="utf-8").strip()
+    pins = human_auth.approver_pins()
+    assert file_pin == pins[ANNA] == human_auth.expected_pin()
+    assert file_pin != pins[MIKKO] and file_pin != pins[LIISA]
+
+    assert (
+        c.post("/v1/auth/approver-session", headers={"X-Approver-Pin": file_pin}, json={"approver": ANNA}).status_code
+        == 200
+    )
+    assert (
+        c.post("/v1/auth/approver-session", headers={"X-Approver-Pin": file_pin}, json={"approver": LIISA}).status_code
+        == 401
+    )
+    q_aurora, o_aurora = _pending_aurora(c)
+    r_ok = c.post(
+        f"/v1/approvals/{o_aurora['order_id']}/decision",
+        headers={"X-Approver-Pin": file_pin},
+        json={"decision": "approve", "quote_hash": q_aurora["quote_hash"], "approver": ANNA},
+    )
+    assert r_ok.status_code == 200 and r_ok.json()["status"] == "placed"
+
+    legacy_dir = tmp_path / "legacy_keys"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "approver_pin").write_text("existing-operator-pin-12\n", encoding="utf-8")
+    monkeypatch.setattr(config, "KEY_DIR", legacy_dir)
+    migrated = human_auth.approver_pins()
+    assert migrated[ANNA] == "existing-operator-pin-12"
+    assert migrated[MIKKO] != "existing-operator-pin-12"
+    assert len(migrated[MIKKO]) >= 12

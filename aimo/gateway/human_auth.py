@@ -119,7 +119,13 @@ def _configured_approver_pins() -> dict[str, str]:
 
 def _ensure_pins_file() -> dict[str, str]:
     path = _pins_path()
+    pin_file = _pin_path()
     dir_ids = _directory_approver_ids()
+    primary_id = (
+        "anna@hotel-aurora.example"
+        if ("anna@hotel-aurora.example" in dir_ids or not dir_ids)
+        else dir_ids[0]
+    )
     with _lock:
         data: dict[str, str] = {}
         if path.exists():
@@ -133,7 +139,16 @@ def _ensure_pins_file() -> dict[str, str]:
                     }
             except (OSError, ValueError):
                 data = {}
+        legacy_pin = ""
+        if pin_file.exists():
+            try:
+                legacy_pin = pin_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                legacy_pin = ""
         changed = not path.exists()
+        if legacy_pin and not data.get(primary_id) and legacy_pin not in data.values():
+            data[primary_id] = legacy_pin
+            changed = True
         existing_vals = set(data.values())
         for aid in dir_ids:
             if not data.get(aid):
@@ -147,6 +162,11 @@ def _ensure_pins_file() -> dict[str, str]:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             os.chmod(path, 0o600)
+        primary_val = data.get(primary_id)
+        if primary_val and legacy_pin != primary_val:
+            pin_file.parent.mkdir(parents=True, exist_ok=True)
+            pin_file.write_text(primary_val, encoding="utf-8")
+            os.chmod(pin_file, 0o600)
         return data
 
 
@@ -160,6 +180,11 @@ def expected_pin() -> str:
     env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
     if env:
         return env
+    pins = _ensure_pins_file()
+    if "anna@hotel-aurora.example" in pins:
+        return pins["anna@hotel-aurora.example"]
+    if pins:
+        return next(iter(pins.values()))
     return _read_or_create(_pin_path(), lambda: secrets.token_urlsafe(9))
 
 
@@ -197,7 +222,13 @@ def credential_warning() -> str | None:
                 f"AIMO_APPROVER_PINS entry for {aid} is only {len(apin)} characters; use a 12+ character passphrase "
                 "(demo only; production uses SSO)"
             )
-    _ensure_pins_file()
+    pins = _ensure_pins_file()
+    for aid, apin in pins.items():
+        if len(apin) < 12:
+            return (
+                f"approver passphrase for {aid} is only {len(apin)} characters; use a 12+ character passphrase "
+                "(demo only; production uses SSO)"
+            )
     return None
 
 
