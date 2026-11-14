@@ -16,18 +16,33 @@ var MOCK = [
       { product_id: "P-300118", name: "Voipavut 500g", quantity: 60, sales_unit: "KG", unit_price_net: 6.2, line_total_net: 372, substitute_for: "P-300077" },
       { product_id: "P-300552", name: "Valio ruokakerma 15%", quantity: 25, sales_unit: "KG", unit_price_net: 3.9, line_total_net: 97.5 } ],
     total_net: 469.5,
-    substitutions: [{ original_id: "P-300077", original_name: "Valio Voipavut 500g", substitute_id: "P-300118", reason: "Original out of stock for the requested date; same brand family, same pack size" }],
+    substitutions: [{ original_id: "P-300077", substitute_id: "P-300118", reason: "Substitute for Valio Voipavut 500g: Voipavut 500g. Original out of stock for the requested date; same brand family, same pack size" }],
     decision: { outcome: "needs_approval", reasons: [{ code: "SUBSTITUTION_NEEDS_APPROVAL", text: "Substituting P-300077 with P-300118 needs human approval (Original out of stock for the requested date; same brand family, same pack size)" }, { code: "NON_PREFERRED_BRAND", text: "Voipavut 500g (P-300118) is brand Pride, preferred: Valio" }] },
     created_at: iso(-47 * 6e4), updated_at: iso(-47 * 6e4), delivery_date: day(2), valid_until: iso(0.6 * 36e5) },
   { order_id: "ord_91d4e7", quote_id: "q_20261114_0044", customer: "hospital-tays", agent_id: "buyer-tays", status: "pending_approval",
     lines: [
       { product_id: "P-410902", name: "Kaurahiutale gluteeniton", quantity: 200, sales_unit: "KG", unit_price_net: 4.15, line_total_net: 830, substitute_for: "P-410455" } ],
     total_net: 830,
-    substitutions: [{ original_id: "P-410455", original_name: "Valio kaurahiutale", substitute_id: "P-410902", reason: "Gluten-free requirement kept, price within 5 percent" }],
+    substitutions: [{ original_id: "P-410455", substitute_id: "P-410902", reason: "Substitute for Valio kaurahiutale: Kaurahiutale gluteeniton. Gluten-free requirement kept, price within 5 percent" }],
     decision: { outcome: "needs_approval", reasons: [
       { code: "UNKNOWN_PRODUCT", text: "Could not check allergens for P-410902: product data missing" },
       { code: "SUBSTITUTION_NEEDS_APPROVAL", text: "Substituting P-410455 with P-410902 needs human approval (Gluten-free requirement kept, price within 5 percent)" } ] },
-    created_at: iso(-3 * 6e4), updated_at: iso(-3 * 6e4), delivery_date: day(1), valid_until: iso(5.5 * 36e5) }
+    created_at: iso(-3 * 6e4), updated_at: iso(-3 * 6e4), delivery_date: day(1), valid_until: iso(5.5 * 36e5) },
+  { order_id: "ord_5c18a2", quote_id: "q_20261114_0045", customer: "hotel-aurora", agent_id: "buyer-aurora", status: "pending_approval",
+    lines: [
+      { product_id: "P-100249", name: "Valio Luomu kevytmaito laktoositon 1 l", quantity: 400, sales_unit: "L", unit_price_net: 1.48, line_total_net: 592, substitute_for: null } ],
+    total_net: 592,
+    substitutions: [{ original_id: "P-100234", substitute_id: "P-100249", reason: "Stock dropped, refilled from the next offer." }],
+    decision: { outcome: "needs_approval", reasons: [
+      { code: "STOCKOUT", text: "Stock dropped after the order: P-100234 Valio Eila laktoositon kevytmaitojuoma: 400 -> 0 units, no stock; +400 from P-100249 Valio Luomu kevytmaito laktoositon 1 l" } ] },
+    created_at: iso(-28 * 6e4), updated_at: iso(-6 * 6e4), delivery_date: day(2), valid_until: iso(2.4 * 36e5) },
+  { order_id: "ord_6d04f9", quote_id: "q_20261114_0046", customer: "school-hervanta", agent_id: "buyer-hervanta", status: "pending_approval",
+    lines: [
+      { product_id: "P-205110", name: "Valio Oddlygood kaurajuoma gluteeniton 1 l", quantity: 120, sales_unit: "L", unit_price_net: 1.55, line_total_net: 186 } ],
+    total_net: 186, substitutions: [],
+    decision: { outcome: "needs_approval", reasons: [
+      { code: "AGENT_REQUESTED", text: "Confirm early 06:30 kitchen dock delivery with head cook before dispatch." } ] },
+    created_at: iso(-8 * 6e4), updated_at: iso(-8 * 6e4), delivery_date: day(2), valid_until: iso(4.1 * 36e5) }
 ];
 
 var APPR = { "hotel-aurora": ["Laura Virtanen", "Mikko Heikkinen"], "hospital-tays": ["Helena Korhonen", "Antti Lahtinen"], "school-hervanta": ["Sari Nieminen"] };
@@ -50,7 +65,8 @@ var eur = new Intl.NumberFormat("en-GB", { minimumFractionDigits: 2, maximumFrac
 function money(v) { return eur.format(v); }
 function amt(v) { return h("div", { class: "amt" }, h("span", { class: "num" }, money(v)), h("small", null, "EUR")); }
 function ago(ts) { var m = Math.max(0, Math.round((Date.now() - Date.parse(ts)) / 6e4)); if (m < 1) return "just now"; if (m < 60) return m + " min ago"; var hh = Math.floor(m / 60); return hh < 24 ? hh + " h ago" : Math.floor(hh / 24) + " d ago"; }
-function left(ts) { var ms = Date.parse(ts) - Date.now(); if (ms <= 0) return "expired"; var m = Math.floor(ms / 6e4), d = Math.floor(m / 1440), hh = Math.floor(m % 1440 / 60); if (d) return "expires in " + d + "d " + hh + "h"; if (hh) return "expires in " + hh + "h " + (m % 60) + "m"; return "expires in " + m + "m"; }
+function isExpired(ts) { return !!ts && Date.parse(ts) <= Date.now(); }
+function left(ts) { var ms = Date.parse(ts) - Date.now(); if (!isFinite(ms)) return String(ts || ""); if (ms <= 0) return "expired"; var m = Math.floor(ms / 6e4), d = Math.floor(m / 1440), hh = Math.floor(m % 1440 / 60); if (d) return "expires in " + d + "d " + hh + "h"; if (hh) return "expires in " + hh + "h " + (m % 60) + "m"; return "expires in " + m + "m"; }
 function dday(s) { return new Date(s + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }); }
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; }
 
@@ -136,12 +152,29 @@ function poll() {
   });
 }
 
+var STOP_CODES = { STOCKOUT: 1, ALLERGEN_CONFLICT: 1, CATEGORY_NOT_ALLOWED: 1, SUBSTITUTION_NOT_ALLOWED: 1, PAST_CUTOFF: 1, INVALID_QUOTE: 1 };
 function level(r) { return r.level || (r.code === "NON_PREFERRED_BRAND" ? "info" : "approval"); }
-function reasonIcon(r) { return icon(/allerg|unknown/i.test(r.code) ? "allergen" : "warn"); }
+function reasonTone(r) {
+  var c = r && r.code;
+  if (STOP_CODES[c]) return "stop";
+  if (c === "AGENT_REQUESTED" || c === "NON_PREFERRED_BRAND") return "neutral";
+  if (c === "WITHIN_MANDATE") return "ok";
+  return "warn";
+}
+function reasonTag(r) { return r && r.code ? h("span", { class: "tag " + reasonTone(r) }, r.code) : null; }
+function reasonIcon(r) { return icon(/allerg|unknown/i.test((r && r.code) || "") ? "allergen" : "warn"); }
 function reasons(o) {
   var all = (o.decision && o.decision.reasons) || [], hot = all.filter(function (r) { return level(r) !== "info"; }), cool = all.filter(function (r) { return level(r) === "info"; });
-  return [hot.length ? h("ul", { class: "why" }, hot.map(function (r) { return h("li", null, reasonIcon(r), h("span", null, r.text)); })) : null,
-    cool.length ? h("ul", { class: "note" }, cool.map(function (r) { return h("li", null, r.text); })) : null];
+  return [
+    hot.length ? h("ul", { class: "why" }, hot.map(function (r) {
+      var tag = reasonTag(r);
+      return h("li", null, reasonIcon(r), h("span", null, tag, tag ? " " : null, r.text));
+    })) : null,
+    cool.length ? h("ul", { class: "note" }, cool.map(function (r) {
+      var tag = reasonTag(r);
+      return h("li", null, tag, tag ? " " : null, r.text);
+    })) : null
+  ];
 }
 
 function findLineName(o, id) {
@@ -149,10 +182,22 @@ function findLineName(o, id) {
   return l ? l.name : "";
 }
 function origNameOf(o, s) {
-  var n = (s && s.original_name) || findLineName(o, s && s.original_id);
+  var id = s && s.original_id;
+  var n = (s && s.original_name) || findLineName(o, id);
   if (!n && s && s.reason) {
     var m = /^Substitute for (.+?): /.exec(s.reason);
-    if (m && m[1] !== s.original_id) n = m[1];
+    if (m && m[1] !== id) n = m[1];
+  }
+  if (!n && id && o.decision && o.decision.reasons) {
+    var needle = id + " ";
+    o.decision.reasons.forEach(function (r) {
+      if (n || !r || !r.text) return;
+      var i = r.text.indexOf(needle);
+      if (i >= 0) {
+        var rest = r.text.slice(i + needle.length), j = rest.indexOf(": ");
+        if (j > 0) n = rest.slice(0, j).trim();
+      }
+    });
   }
   return n || "";
 }
@@ -240,38 +285,56 @@ function renderList() {
 function field(label, val) { return [h("dt", null, label), h("dd", null, val)]; }
 
 function lineCell(o, l) {
-  var sub = l.substitute_for ? ((o.substitutions || []).filter(function (s) { return s.original_id === l.substitute_for && s.substitute_id === l.product_id; })[0] || { original_id: l.substitute_for }) : null;
+  var sub = (o.substitutions || []).filter(function (s) { return s.substitute_id === l.product_id && (!l.substitute_for || s.original_id === l.substitute_for); })[0] || (l.substitute_for ? { original_id: l.substitute_for } : null);
+  var origId = l.substitute_for || (sub && sub.original_id) || "";
   var origN = sub ? origNameOf(o, sub) : "";
-  var parts = l.name ? [h("span", { class: "pname" }, l.name), h("span", { class: "pid" }, l.product_id)] : [h("span", { class: l.substitute_for ? "pid" : "mono" }, l.product_id)];
-  if (l.substitute_for) {
-    parts.push(h("span", { class: "tag warn" }, "Substitute for " + l.substitute_for));
+  var parts = l.name ? [h("span", { class: "pname" }, l.name), h("span", { class: "pid" }, l.product_id)] : [h("span", { class: origId ? "pid" : "mono" }, l.product_id)];
+  if (origId) {
+    parts.push(h("span", { class: "tag warn" }, "Substitute for " + origId));
     if (origN) parts.push(h("span", { class: "pid" }, "Replaces " + origN));
   }
   return parts;
 }
 
+var syncDetailPaint = null;
 function renderDetail() {
   var o = cur(), p = $("#detailPane");
   var key = JSON.stringify([o, wide.matches, S.name]);
   document.body.dataset.view = S.sel && o ? "detail" : "list";
   if (key === S.dsig) { tick(); return; } S.dsig = key;
+  syncDetailPaint = null;
   p.replaceChildren();
   if (!o) { if (wide.matches) p.append(h("div", { class: "empty full" }, h("h2", null, "No orders waiting for you"), h("p", null, "Pick an order from the list when one arrives."), lastLine())); return; }
-  var rejecting = false, note = h("textarea", { id: "note", rows: "2", placeholder: "Tell the buyer why" });
-  var noteBox = h("div", { hidden: true }, h("label", { for: "note" }, "Reason for rejecting (required)"), note);
-  var app = h("button", { class: "act primary", type: "button", onclick: function () { decide(o, true, ""); } }, "Approve ", h("span", { class: "num" }, money(o.total_net) + " EUR"));
-  var rej = h("button", { class: "act quiet", type: "button" }, "Reject");
+  var rejecting = false, exp = isExpired(o.valid_until);
+  var expNote = h("p", { id: "expNote", class: "small", style: "color:var(--stop);margin:0 0 8px" }, "Quote expired. This order can no longer be approved and placed; reject it or wait for a fresh quote.");
+  var note = h("textarea", { id: "note", rows: "2", placeholder: "Tell the buyer why" });
+  var noteBox = h("div", { id: "noteBox", hidden: true }, h("label", { for: "note" }, "Reason for rejecting (required)"), note);
+  var app = h("button", { id: "approveBtn", class: "act primary", type: "button", onclick: function () { if (!isExpired(o.valid_until)) decide(o, true, ""); } }, "Approve ", h("span", { class: "num" }, money(o.total_net) + " EUR"));
+  var rej = h("button", { id: "rejectBtn", class: "act quiet", type: "button" }, "Reject");
   function paint() {
+    exp = isExpired(o.valid_until);
+    expNote.hidden = rejecting || !exp;
     noteBox.hidden = !rejecting;
     app.hidden = rejecting;
+    app.disabled = exp;
     rej.className = rejecting ? "act danger" : "act quiet";
     rej.textContent = rejecting ? "Reject order" : "Reject";
     rej.disabled = rejecting && !note.value.trim();
     back.hidden = !rejecting;
   }
-  var back = h("button", { class: "act quiet", type: "button", onclick: function () { rejecting = false; paint(); } }, "Back");
+  var back = h("button", { id: "cancelRejBtn", class: "act quiet", type: "button", onclick: function () { rejecting = false; paint(); } }, "Back");
   rej.addEventListener("click", function () { if (!rejecting) { rejecting = true; paint(); note.focus(); } else decide(o, false, note.value.trim()); });
   note.addEventListener("input", paint);
+  note.addEventListener("keydown", function (ev) {
+    if (rejecting && (ev.key === "Escape" || ev.key === "Esc")) {
+      if (ev.preventDefault) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+      rejecting = false;
+      paint();
+      rej.focus();
+    }
+  });
+  syncDetailPaint = paint;
   paint();
   var rows = o.lines.map(function (l) {
     var qty = l.sales_unit ? l.quantity + " " + l.sales_unit : String(l.quantity);
@@ -291,17 +354,18 @@ function renderDetail() {
         field("Quote", [h("span", { class: "mono" }, o.quote_id), h("span", { class: "tag ok" }, icon("verified"), "Signature verified")]),
         field("Audit", h("a", { href: "/audit.html?order_id=" + encodeURIComponent(o.order_id) }, "Audit trail")),
         field("Created", ago(o.created_at)),
-        o.valid_until ? field("Valid until", h("span", { class: "tag " + (rem === "expired" ? "stop" : "warn"), "data-until": o.valid_until }, rem)) : null,
+        o.valid_until ? field("Valid until", h("span", { class: "tag " + (exp ? "stop" : "warn"), "data-until": o.valid_until }, rem)) : null,
         o.delivery_date ? field("Delivery", dday(o.delivery_date)) : null)))),
-    h("div", { class: "actions" }, noteBox, h("div", { class: "btns" }, back, rej, app)));
+    h("div", { class: "actions" }, expNote, noteBox, h("div", { class: "btns" }, back, rej, app)));
   tick();
 }
 function tick() {
   document.querySelectorAll("[data-until]").forEach(function (e) {
-    var rem = left(e.dataset.until);
+    var exp = isExpired(e.dataset.until), rem = left(e.dataset.until);
     e.textContent = rem;
-    e.className = "tag " + (rem === "expired" ? "stop" : "warn");
+    e.className = "tag " + (exp ? "stop" : "warn");
   });
+  if (syncDetailPaint) syncDetailPaint();
 }
 
 function render() { renderList(); renderDetail(); }
@@ -421,6 +485,6 @@ if ((window.aimo && window.aimo.mockMode()) || /[?&]mock(=1|&|$)/.test(location.
 }
 S.sel = targetId();
 poll(); setInterval(poll, 3000); setInterval(tick, 20000);
-S.poll = poll; S.decide = decide; S.loadDecided = loadDecided;
+S.poll = poll; S.decide = decide; S.loadDecided = loadDecided; S.tick = tick; S.MOCK = MOCK;
 window.__inbox = S;
 })();

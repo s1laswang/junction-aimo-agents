@@ -14,7 +14,7 @@
   <section class="pane list" id="listPane" aria-label="Pending approvals">
     <div class="tools">
       <h1>Waiting for you <span class="count" id="count">0</span></h1>
-      <span class="tag stop" id="offTag" hidden>offline, retrying</span>
+      <span class="tag stop" id="offTag" role="status" hidden>offline, retrying</span>
       <button class="lk" id="who" type="button"></button>
     </div>
     <ol class="cards" id="cards"></ol>
@@ -23,7 +23,7 @@
   <section class="pane detail" id="detailPane" aria-label="Order detail"></section>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-<dialog id="whoDlg">
+<dialog id="whoDlg" aria-label="Who is approving?">
   <form method="dialog">
     <h2>Who is approving?</h2>
     <p>Your name is recorded in the audit trail with every decision.</p>
