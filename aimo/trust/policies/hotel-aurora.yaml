@@ -2,7 +2,7 @@
 # Evaluated by aimo.trust.policy.evaluate() on every quote before an order is placed.
 # Outcome = strictest rule: reject > needs_approval > auto_approve.
 policy_id: hotel-aurora
-version: "1.1.0"
+version: "1.2.0"
 effective_from: "2026-11-01"
 customer:
   id: hotel-aurora
@@ -71,10 +71,17 @@ rules:
     type: category_scope
     # Category names are not in the Valio Aimo data set (only codes). Groups below are inferred from
     # sampled product names per code prefix. UNVERIFIED against Valio's category tree.
+    # v1.2: the restaurant also buys dry goods (flour, pasta, beans: 21), spices/coffee/baking (22), fresh meat
+    # and fish (18) and frozen food incl. frozen bread (41). Non-food stays out: equipment (20), hygiene and
+    # disposables (63/64), confectionery (52), drinks (84/85), office (90). Groups inferred from product names.
     allowed:
       - {prefix: "10", label: dairy and chilled}
-      - {prefix: "11", label: bakery}
+      - {prefix: "11", label: fresh bakery}
       - {prefix: "17", label: chilled food and produce}
+      - {prefix: "18", label: fresh meat and fish}
+      - {prefix: "21", label: dry goods}
+      - {prefix: "22", label: spices, coffee and baking}
+      - {prefix: "41", label: frozen food}
     on_violation: needs_approval
     on_unknown: needs_approval
     approver_role: procurement_manager
@@ -85,6 +92,11 @@ rules:
     tiers: {preferred: allow, best: allow, better: needs_approval, good: needs_approval, rejected: reject}
     outside_preference: needs_approval
     unverified: needs_approval    # missing tier, or a tier the profile/catalog cannot back
+    # no usual product of this kind + catalog confirms an exact match for the request = a first purchase,
+    # not a substitution (allergen, claim, spend and other rules still apply)
+    new_product: allow
+    # verified-best or pre-approved alternative lines under this amount are swapped without asking
+    auto_approve_alternatives_below_eur: 50
     approver_role: procurement_manager
 
   - id: allergens
@@ -101,6 +113,19 @@ rules:
   - id: quantity_drift
     type: quantity_drift
     max_factor: 3
+    approver_role: procurement_manager
+
+  - id: split_order
+    type: split_order
+    window_days: 7                # same product, standing-order product or category, placed without a human
+    max_factor: 2                 # together more than 2x the spend rule's auto_max -> a human approves
+    near_limit_share: 0.6         # orders with no line detail in the log count when they were >= 60% of auto_max
+    approver_role: procurement_manager
+
+  - id: price_jump
+    type: price_jump
+    max_increase_pct: 15          # unit price more than 15% above the last price paid for the same product
+    lookback_days: 90
     approver_role: procurement_manager
 
   - id: injection

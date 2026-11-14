@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from datetime import date
+from functools import lru_cache
 from typing import Any, Callable, Optional
 
 from aimo.catalog.allergens import blocking
@@ -17,6 +19,7 @@ from aimo.catalog.substitution import TIER_ORDER, rank_substitutes
 from aimo.models import Candidate, Need, Offer, Plan, PlanLine
 
 MAX_OFFER_IDS = 30
+SUPPLIER_TEXT_REASON = "Supplier text contains instructions aimed at AI agents"
 
 
 def effective_query(need: Need) -> tuple[str, str]:
@@ -94,12 +97,169 @@ def _round_lot(units: float, lot: Optional[float], up: bool = True) -> float:
     return q * step
 
 
+def usual_products_for(need: Need) -> list[str]:
+    """The customer's usual products (policy `preferred_products`) that are what this request asks for:
+    same unit, every required claim, no excluded allergen, and the product phrase matches the product.
+    Used only when the request names no usual product itself, so 'oat drink' at the school picks the
+    school's usual oat drink instead of the cheapest exact match (fewer pointless substitutions)."""
+    if need.preferred_product_ids or any((need.preferences or {}).get(k) for k in ("brand", "fat_pct", "organic", "pack")):
+        return []   # the request says what it wants (a usual product, or a brand/spec): that wins over the profile
+    try:
+        from aimo.trust.policy import planning_profile
+        usual = planning_profile(need.customer_id).get("usual_products") or []
+    except Exception:  # noqa: BLE001
+        return []
+    if not usual:
+        return []
+    from aimo.catalog.substitution import missing_query_concepts
+    out = []
+    for pid, d in get_rows(list(usual)).items():
+        if d.get("content_unit") != need.unit or not set(need.required_claims) <= set(d.get("claims") or []):
+            continue
+        if blocking(d.get("allergens") or {}, need.excluded_allergens) or missing_query_concepts(need.product_query, d):
+            continue
+        out.append(pid)
+    return out
+
+
+def _excluded_groups_named(query: str, excluded: list[str]) -> tuple[list[str], list[str]]:
+    """Excluded allergen groups the product phrase itself names: (literal, implied). Literal: the group's own
+    name or alias ('milk', 'dairy', 'maito'). Implied: a food that normally is that allergen ('cream',
+    'butter', 'cheese' for milk; 'wheat flour' for gluten). Plant-based phrases ('oat drink') name nothing."""
+    from aimo.catalog.allergens import GROUP_KEYWORDS
+    from aimo.catalog.substitution import normalize_allergens
+    words = re.findall(r"[a-zåäö']+", (query or "").lower())
+    literal = set(normalize_allergens(words)) | set(normalize_allergens([" ".join(words)]))
+    implied = {g for g, kws in GROUP_KEYWORDS.items() if any(w in kws for w in words)}
+    if {"oat", "kaura", "havre", "soy", "soija", "almond", "coconut", "rice", "plant", "vegan"} & set(words):
+        implied.discard("milk")    # 'oat cream', 'soy milk': the phrase already asks for a milk-free product
+        literal.discard("milk")
+    return [g for g in excluded if g in literal], [g for g in excluded if g in implied and g not in literal]
+
+
+@lru_cache(maxsize=4096)
+def _screen_supplier_text(text: str) -> tuple[str, ...]:
+    """Strong prompt-injection signals in supplier-written text (trust's regex screen; no LLM call)."""
+    try:
+        from aimo.trust.screening import screen_text
+        s = screen_text(text, use_gemini=False)
+    except Exception:  # noqa: BLE001
+        return ()
+    return tuple(s.get("strong_reasons") or s.get("reasons") or ["suspicious"]) if s.get("suspicious") else ()
+
+
+def mark_supplier_text(cands: list[Candidate], rows: dict[str, dict[str, Any]],
+                       texts: Optional[dict[str, str]] = None) -> None:
+    """Put the injection-screen result on each candidate whose supplier text tries to instruct an agent:
+    flag `supplier_text_injection_suspected` (same name as the gateway quote flag) plus a reason. The text is never followed; the policy's injection rule
+    sends any order with such a line to a human. `texts` overrides the catalog text (e.g. live product reads)."""
+    for c in cands:
+        text = (texts or {}).get(c.product.id) or (rows.get(c.product.id) or {}).get("marketing_text") or ""
+        hits = _screen_supplier_text(text) if text.strip() else ()
+        if hits and "supplier_text_injection_suspected" not in c.flags:
+            c.flags.append("supplier_text_injection_suspected")
+            c.reasons.append(SUPPLIER_TEXT_REASON + " (" + ", ".join(hits[:3])
+                             + "); ignored by the agent, and an order with this line goes to a human.")
+
+
 def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[str, Offer]]] = None,
               limit: int = 12) -> Plan:
     if offers_fn is None:
         from aimo.catalog.offers import get_offers as offers_fn  # type: ignore[no-redef]
+    from aimo.catalog.substitution import policy_allergens, with_policy_allergens
     original = need
+    need, policy_added = with_policy_allergens(need)
     need, qsrc = with_effective_query(need)
+    usual = usual_products_for(need)
+    if usual:
+        need = need.model_copy(update={"preferred_product_ids": usual,
+                                       "preferences": {**(need.preferences or {}), "usual_from_profile": usual}})
+    plan, full, late_notes = _plan_core(need, offers_fn, limit)
+    notes = []
+    if policy_added:
+        _excl, why, pid = policy_allergens(need.customer_id)
+        notes.append(f"Customer policy {pid} excludes {', '.join(policy_added)}" + (f" ({why})" if why else "")
+                     + "; enforced as a hard block even though the request did not say so.")
+    if usual:
+        names = ", ".join(f"{l.product_name} ({l.product_id})" for l in plan.lines if l.product_id in usual)
+        notes.append(f"Started from the customer's usual product{'s' if len(usual) > 1 else ''} for this request"
+                     + (f": {names}." if names else f" ({', '.join(usual)}), which cannot be used here."))
+    literal, implied = _excluded_groups_named(need.product_query, need.excluded_allergens)
+    if literal:
+        alt_plan, alt_note = _allergen_safe_alternative(need, plan, offers_fn, limit, literal)
+        if alt_plan is not None:
+            plan, full, late_notes = alt_plan, list(alt_plan.candidates), []
+        notes.append(alt_note)
+    named = literal + implied
+    if named:
+        for l in plan.lines:
+            if "allergen_safe_alternative" not in l.flags:
+                l.flags = sorted(set(l.flags) | {"allergen_safe_alternative"})
+                l.reasons.insert(0, f"The request names '{need.product_query}', which normally contains "
+                                    f"{' and '.join(named)} (excluded by policy). This product is {' and '.join(named)}-free "
+                                    f"per supplier data; a human confirms it is a suitable replacement.")
+        if implied and not literal:
+            notes.append(f"'{need.product_query}' normally contains {' and '.join(implied)}, which this customer's "
+                         f"policy excludes: only products confirmed {' and '.join(implied)}-free are planned, and each "
+                         f"needs a human's confirmation.")
+    if need.product_query != original.product_query:
+        notes.append(f"Searched the catalog for '{need.product_query}'"
+                     + (" (taken from the request text because the parsed product phrase found nothing)"
+                        if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
+                        " enforced as exclusions, not searched for)") + ".")
+    advice =shortfall_advice(need, plan, full) if plan.shortfall > 1e-9 else []
+    cover = coverage_sentence(need, plan)
+    out_need = original if not policy_added else original.model_copy(
+        update={"excluded_allergens": list(need.excluded_allergens)})
+    plan = plan.model_copy(update={"need": out_need, "explanation": " ".join(
+        [*notes, cover, plan.explanation, *late_notes, *advice]).strip()})
+    if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
+        _recipe_checks(need, plan)
+    return plan
+
+
+def _allergen_safe_alternative(need: Need, plan: Plan, offers_fn, limit: int,
+                               named: list[str]) -> tuple[Optional[Plan], str]:
+    """The request names a product the customer's policy excludes ('milk' at a milk-free school). Never
+    plan it. If the customer has a usual product that is free of the excluded groups, in the same unit and
+    with the required claims, plan that instead, flagged `allergen_safe_alternative` (a human confirms the
+    swap); otherwise say so and leave the shortfall explicit."""
+    try:
+        from aimo.trust.policy import planning_profile
+        usual = planning_profile(need.customer_id).get("usual_products") or []
+    except Exception:  # noqa: BLE001
+        usual = []
+    rows = get_rows(list(usual)) if usual else {}
+    safe = [pid for pid, d in rows.items() if d.get("content_unit") == need.unit
+            and set(need.required_claims) <= set(d.get("claims") or [])
+            and not blocking(d.get("allergens") or {}, need.excluded_allergens)]
+    head = (f"'{need.product_query}' is itself {' and '.join(named)}, which this customer's policy excludes, "
+            f"so no {' or '.join(named)} product is planned")
+    if not safe:
+        return None, head + "; the shortfall is left for a human (no allergen-safe usual product on file)."
+    alt_need = need.model_copy(update={"preferred_product_ids": safe,
+                                       "product_query": rows[safe[0]].get("name_en") or rows[safe[0]].get("name") or ""})
+    alt, _full, _late = _plan_core(alt_need, offers_fn, limit)
+    alt_lines = [l for l in alt.lines if l.product_id in safe]
+    if not alt_lines:
+        return None, head + f"; the customer's allergen-safe usual product ({', '.join(safe)}) is not orderable for this date."
+    for l in alt_lines:
+        l.flags = sorted(set(l.flags) | {"allergen_safe_alternative"})
+        l.reasons.insert(0, f"Allergen-safe alternative: the request asked for '{need.product_query}', which contains "
+                            f"{' and '.join(named)} (excluded by policy). This is the customer's usual "
+                            f"{' and '.join(named)}-free product; a human confirms the swap.")
+    covered = round(sum(l.covered_amount for l in alt_lines), 4)
+    alt = alt.model_copy(update={"need": need, "lines": alt_lines, "covered_amount": covered,
+                                 "total_net": round(sum(l.line_total for l in alt_lines), 2),
+                                 "shortfall": round(max(0.0, need.quantity - covered), 4),
+                                 "candidates": [*alt.candidates, *[c for c in plan.candidates if c.tier == "rejected"][:6]]})
+    names = ", ".join(f"{l.product_name} ({l.product_id})" for l in alt_lines)
+    return alt, head + f"; planned the customer's usual allergen-safe product instead: {names} (needs a human's confirmation)."
+
+
+def _plan_core(need: Need, offers_fn, limit: int) -> tuple[Plan, list[Candidate]]:
+    """Candidates -> offers -> ranking -> greedy fill (+ late split). `need` already carries the policy's
+    allergen exclusions and the effective query."""
     rows, rel = find_candidates(need)
     order = sorted(rows.values(), key=lambda d: _static_priority(need, d, rel.get(d["id"], 0)))
     top_ids = [d["id"] for d in order[:MAX_OFFER_IDS]]
@@ -119,24 +279,13 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
         except Exception:  # noqa: BLE001
             pass
     full = rank_substitutes(need, offers, limit=200, rows=shortlist, relevance=rel, inferred_allergens=hints)
+    mark_supplier_text(full, shortlist)
     cands = _trim(full, limit)
     plan = fill(need, cands)
     late_notes: list[str] = []
     if plan.shortfall > 1e-9:
         plan, late_notes = _late_split(need, plan, full, shortlist, rel, hints)
-    notes = []
-    if need.product_query != original.product_query:
-        notes.append(f"Searched the catalog for '{need.product_query}'"
-                     + (" (taken from the request text because the parsed product phrase found nothing)"
-                        if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
-                        " enforced as exclusions, not searched for)") + ".")
-    advice = shortfall_advice(need, plan, full) if plan.shortfall > 1e-9 else []
-    cover = coverage_sentence(need, plan)
-    plan = plan.model_copy(update={"need": original, "explanation": " ".join(
-        [*notes, cover, plan.explanation, *late_notes, *advice]).strip()})
-    if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
-        _recipe_checks(original, plan)
-    return plan
+    return plan, full, late_notes
 
 
 _ORDERABILITY = ("order cut-off passed", "earliest delivery", "not available for the requested date")
@@ -385,6 +534,7 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
         covered = round(units * content, 4)
         total = round(units * c.offer.unit_price, 2)
         reasons = [c.reasons[0]] if c.reasons else []
+        reasons += [r for r in c.reasons[1:] if r.startswith(SUPPLIER_TEXT_REASON)]
         reasons.append(f"{units:g} x {c.product.sales_unit} x {content:g} {need.unit} = {covered:g} {need.unit}; "
                        f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}")
         lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,

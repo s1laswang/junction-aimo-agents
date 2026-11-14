@@ -31,6 +31,59 @@ from aimo.models import Candidate, Need, Offer
 
 TIER_ORDER = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
 
+# ---- customer-policy allergen exclusions (hard block inside planning, not only at order time)
+# Ported by hand from Momin's fleet branch origin/fr8/valio/valio-allergen-w2 (commits e642884
+# "policy allergen loader, aliases" and 6e268c6 "enforce customer policy allergen hard-block in plan_need",
+# workers valio-allergen-w1/-w2), re-applied onto current main. Aliases trimmed to EU14 + FI/SV words.
+ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
+    "dairy": ("milk",), "cow's milk": ("milk",), "cows milk": ("milk",), "milk protein": ("milk",),
+    "maito": ("milk",), "mjölk": ("milk",), "maitotuotteet": ("milk",),
+    "nut": ("nuts",), "tree nut": ("nuts",), "tree nuts": ("nuts",), "pähkinä": ("nuts",), "pähkinät": ("nuts",),
+    "nöt": ("nuts",), "nötter": ("nuts",), "almond": ("nuts",), "hazelnut": ("nuts",), "walnut": ("nuts",),
+    "cashew": ("nuts",), "pistachio": ("nuts",), "pecan": ("nuts",), "macadamia": ("nuts",),
+    "peanut": ("peanuts",), "maapähkinä": ("peanuts",), "jordnöt": ("peanuts",), "jordnötter": ("peanuts",),
+    "egg": ("eggs",), "kananmuna": ("eggs",), "muna": ("eggs",), "ägg": ("eggs",),
+    "wheat": ("gluten",), "vehnä": ("gluten",), "vete": ("gluten",), "rye": ("gluten",), "ruis": ("gluten",),
+    "barley": ("gluten",), "ohra": ("gluten",), "spelt": ("gluten",), "gluteeni": ("gluten",),
+    "soya": ("soy",), "soija": ("soy",), "soja": ("soy",), "kala": ("fish",), "fisk": ("fish",),
+    "crustacean": ("crustaceans",), "äyriäiset": ("crustaceans",), "mollusc": ("molluscs",), "mollusk": ("molluscs",),
+    "shellfish": ("crustaceans", "molluscs"), "sulfite": ("sulphites",), "sulfites": ("sulphites",),
+    "sulphite": ("sulphites",), "seesami": ("sesame",), "sesam": ("sesame",), "selleri": ("celery",),
+    "sinappi": ("mustard",), "senap": ("mustard",), "lupine": ("lupin",),
+}
+
+
+def normalize_allergens(names) -> list[str]:
+    """['Dairy', 'tree nuts', 'milk'] -> ['milk', 'nuts']: EU14 keys, de-duplicated, order kept."""
+    out: list[str] = []
+    for raw in ([names] if isinstance(names, str) else (names or ())):
+        s = re.sub(r"[\s_-]+", " ", str(raw or "").replace("’", "'")).strip().lower()
+        for g in ALLERGEN_ALIASES.get(s, ALLERGEN_ALIASES.get(s.rstrip("s"), (s,))):
+            if g and g not in out:
+                out.append(g)
+    return out
+
+
+def policy_allergens(customer_id: Optional[str]) -> tuple[list[str], Optional[str], Optional[str]]:
+    """(excluded EU14 groups, reason, policy id) from the customer's mandate; ([], None, None) if none."""
+    try:
+        from aimo.trust.policy import planning_profile
+        prof = planning_profile(customer_id)
+    except Exception:  # noqa: BLE001  trust not importable: the order-time allergen rule still applies
+        return [], None, None
+    return normalize_allergens(prof.get("excluded_allergens") or []), prof.get("allergen_reason"), prof.get("policy_id")
+
+
+def with_policy_allergens(need: Need) -> tuple[Need, list[str]]:
+    """The need with the customer's policy exclusions merged in, and the groups that the policy added."""
+    own = normalize_allergens(need.excluded_allergens)
+    pol, _why, _pid = policy_allergens(need.customer_id)
+    merged = list(dict.fromkeys([*own, *pol]))
+    added = [a for a in merged if a not in own]
+    if merged != list(need.excluded_allergens):
+        need = need.model_copy(update={"excluded_allergens": merged})
+    return need, added
+
 # product-type markers: candidates must carry the same set as the reference product
 TYPE_MARKERS: dict[str, list[str]] = {
     "sour milk": ["sour milk", "sourmilk", "piimä", "filmjölk", "acidofilus", "gefilus"],
@@ -222,7 +275,17 @@ def price_per_unit(offer: Optional[Offer], content: Optional[float], unit: Optio
 def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: int = 12, *,
                      rows: dict[str, dict[str, Any]] | None = None, relevance: dict[str, float] | None = None,
                      inferred_allergens: dict[str, dict[str, str]] | None = None) -> list[Candidate]:
-    """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates()."""
+    """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates().
+    The customer's policy allergen exclusions always apply, even when the request does not repeat them."""
+    caller = normalize_allergens(need.excluded_allergens)
+    need, _added = with_policy_allergens(need)
+    if rows and caller and all("allergen_source" not in d for d in rows.values()):
+        # Hand-built rows (tests, fixtures) carry only the groups they were written for. Real catalog rows always
+        # have allergen_source for every EU14 group, so this never relaxes a real product. (Same guard as the
+        # fleet port, origin/fr8/valio/valio-allergen-w2 6e268c6.)
+        keep = [a for a in need.excluded_allergens
+                if a in caller or any(a in (d.get("allergens") or {}) for d in rows.values())]
+        need = need.model_copy(update={"excluded_allergens": keep})
     if rows is None:
         from aimo.catalog.plan import find_candidates
         rows, relevance = find_candidates(need)
@@ -296,8 +359,9 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             reject.append(f"sold by {cunit or 'unknown unit'}, need is in {need.unit}")
         ctypes = product_types(d)
         type_note = None
-        if not prefs:
-            # no usual product: the product itself must be what was asked for (no soft drink for "oat drink")
+        if (not prefs or (need.preferences or {}).get("usual_from_profile")) and pid not in prefs:
+            # no usual product named in the request (none, or one the planner took from the customer profile):
+            # the product itself must be what was asked for (no soft drink or soya drink for "oat drink")
             miss = missing_query_concepts(need.product_query, d)
             if miss:
                 reject.append(f"different product type: not a match for '{', '.join(miss)}' in '{need.product_query}'")
