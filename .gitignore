@@ -2,3 +2,11 @@
 node_modules/
 __pycache__/
 .venv/
+data/
+*.sqlite
+*.sqlite-journal
+.pytest_cache/
+.claude/worktrees/
+keys/
+*.pem
+.DS_Store
