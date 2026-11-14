@@ -12,9 +12,10 @@ Owner: pitch (from the code on main, Sat 14 Nov). Contracts: [interfaces.md](int
 | Catalog | `aimo/catalog/`, `aimo/backend/catalog_store.py` | 17,546 products in SQLite with an FTS5 trigram index over fi/sv/en names; hybrid search with gemini-embedding-2 (768-d) by reciprocal rank fusion; content per sales unit; GS1 allergen codes mapped to the EU14 tri-state; good-better-best ranking; `plan_need` split planner | Catalog report: parser agrees with live comparison prices on 702 of 752 sampled products (93%). 9,978 products have structured allergen data, 7,568 have none (unknown). |
 | Trust | `aimo/trust/` | YAML policy engine, Ed25519 JWS signing of quotes, approvals bound to the quote hash, append-only hash-chained signed audit log, readable report, evidence pack, injection screening (regex, plus optional Gemini layer 2) | Regex screen flags 0 of 34,159 real supplier marketing texts (trust report). 28 unit tests. |
 | Gemini wrapper | `aimo/gemini.py` | One shared `google-genai` client, retries on 429/5xx, usage ledger `data/gemini/ledger/*.jsonl` (no prompts, no keys) | Summarised by `docs/pitch/ledger_stats.py`. |
-| Buyer agent | `aimo/buyer/` | Gemini function-calling agent over the MCP tools; structured-output need parsing; harness guardrails; terminal demo; `POST /v1/agent/runs` + SSE | Tool loop is run by our code (automatic function calling disabled) so every step is logged and streamed. |
+| Buyer agent | `aimo/buyer/` | Gemini function-calling agent over the MCP tools, plus deterministic regex parser and scripted keyless fallback (`mock_model.py`); structured-output need parsing; vision intake (`vision.py`); clarifying-question pause; harness guardrails; terminal demo; `POST /v1/agent/runs` + SSE | Tool loop is run by our code (automatic function calling disabled) so every step is logged and streamed. |
 | Approval UI | `web/` | No-build console: agent timeline, good-better-best cards, verdict with every rule, approval inbox, Peppol response, audit chain rail, "Verify chain", evidence pack download; `?mock=1` offline mode | Verifies the quote's Ed25519 signature in the browser against the JWKS (frontend report). |
-| Wind tunnel *(landing from team/windtunnel)* | `windtunnel/` | Deterministic scenario skeletons plus Gemini-written request text; recorded API snapshots replayed with faults; independent oracle; scoring vs a naive baseline agent | Metrics: escalation precision/recall, policy and allergen violations (target 0), injection block rate, plan coverage, EUR error vs optimum (`windtunnel/score.py`). |
+| Wind tunnel | `windtunnel/` | Deterministic scenario skeletons plus Gemini-written request text (640 Gemini + 2,560 template scenarios); recorded API snapshots replayed with faults; independent oracle; scoring vs a naive baseline agent | Metrics: escalation precision/recall, policy and allergen violations (target 0), injection block rate, plan coverage, EUR error vs optimum (`windtunnel/score.py`, [windtunnel-results.md](windtunnel-results.md)). |
+| Openness & conformance | `conformance/`, `toywholesaler/`, `scenarios/` | External `otap/0.1` conformance suite (44/44 checks), second synthetic wholesaler (*Nordic Bakery Supply*), and `s0`..`s7` end-to-end acceptance scenarios (8/8) | Independent Ed25519 JWS and audit-chain verification without importing `aimo` ([OPENNESS.md](OPENNESS.md), [SCENARIOS.md](SCENARIOS.md)). |
 
 ## 2. Data flow: "1,000 litres of lactose-free milk by Monday"
 
@@ -44,8 +45,8 @@ sequenceDiagram
   G->>T: evaluate(quote, mandate): 11 rules
   T-->>G: needs_approval (spend > EUR 500; 3.3x usual weekly milk volume)
   G-->>A: Order pending_approval
-  H->>G: POST /v1/approvals/{order}/decision (approve, role, quote_hash)
-  G->>T: check_approval: hash, signature, expiry, role, approver directory
+  H->>G: POST /v1/approvals/{order}/decision (X-Approver-Pin or X-Approver-Session, approve, role, quote_hash)
+  G->>T: check_approval: human credential, no X-Agent-Id, hash, signature, expiry, role, approver directory
   G->>G: place in order store, Peppol response AP
   G->>T: audit events (quote.created, policy.evaluated, order.pending_approval, approval.verified, order.approved, order.placed)
   H->>G: GET /v1/audit/report/{order}, GET /v1/audit/verify -> ok
@@ -65,7 +66,7 @@ Full spec: [TRUST.md](TRUST.md).
 - **Who may act:** a `Mandate` (customer, agent, scopes `catalog:read quote:create order:submit`, policy id). Unknown agents get no scopes, so their orders are rejected ("Agent hotel-aurora/mallory is not registered with Hotel Aurora Helsinki, so it has no authority to order.", observed live).
 - **What the agent may do alone:** the customer's versioned YAML policy. Every rule reports, including passes. The strictest outcome wins: reject > needs_approval > auto_approve. A crashing rule yields needs_approval, never approval. Unknown allergen data is never safe; Gemini-inferred allergens count as unknown.
 - **Quotes:** `quote_hash = sha256(canonical JSON)`, close to RFC 8785; `signature` is a compact JWS (`alg: EdDSA`, RFC 7515/8037) verifiable with `/.well-known/jwks.json`; 15-minute price lock.
-- **Approvals:** accepted only if the decision was needs_approval, the hash and signature match, the lock is valid, and the approver acts in the named role (or an override role). Every attempt is audited.
+- **Approvals:** accepted only if the caller presents a human-only credential (`X-Approver-Pin` or a signed per-person `X-Approver-Session` token from `POST /v1/auth/approver-session`, with no `X-Agent-Id`), the decision was needs_approval, the hash and signature match, the lock is valid, and the approver acts in the named role (or an override role). Every attempt is audited, with per-client brute-force lockout (`429 approver_locked`).
 - **Audit:** SQLite table with triggers that refuse UPDATE and DELETE; each event stores `prev_hash`, `hash` and a JWS over `{seq, hash}`. `verify()` recomputes everything; `evidence_pack()` bundles events, quote, decision, JWKS and verification steps for offline checking.
 
 ## 4. Production path
