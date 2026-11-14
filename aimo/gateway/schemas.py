@@ -50,6 +50,9 @@ class DecisionRequest(BaseModel):
     approver: str = Field(..., description="Human approver identity, e.g. anna@aurora")
     note: Optional[str] = None
     quote_hash: str = Field(..., description="The quote_hash the approver reviewed; 409 if it does not match the order")
+    approver_role: Optional[str] = Field(None, description="Role the approver acts in (e.g. procurement_manager). "
+                                         "Defaults to the role in the customer's approver directory.")
 
     model_config = {"json_schema_extra": {"examples": [
-        {"decision": "approve", "approver": "anna@aurora (procurement_manager)", "note": "OK for Monday", "quote_hash": "<sha256>"}]}}
+        {"decision": "approve", "approver": "anna@hotel-aurora.example", "approver_role": "procurement_manager",
+         "note": "OK for Monday", "quote_hash": "<sha256>"}]}}

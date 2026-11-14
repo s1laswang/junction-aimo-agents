@@ -179,7 +179,7 @@ def build_router() -> APIRouter:
     def decide(order_id: str, body: DecisionRequest):
         """Human decision. `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409
         "re-quote needed". Approve places the order and returns the order response."""
-        return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note)
+        return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role)
 
     # ---------------------------------------------------------- audit
     @r.get("/v1/audit", tags=["audit"], summary="Audit events")

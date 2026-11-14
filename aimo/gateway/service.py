@@ -172,17 +172,42 @@ def evaluate(q: Quote, m: Mandate) -> PolicyDecision:
         return _fallback_evaluate(q, m)
 
 
-def audit(actor: str, action: str, subject_id: str, summary: str, data: dict[str, Any] | None = None) -> None:
+def audit(actor: str, action: str, subject_id: str, summary: str, data: dict[str, Any] | None = None,
+          related_ids: list[str] | None = None) -> None:
     data = json.loads(json.dumps(data or {}, default=str))
     t = _trust()
     try:
-        t.audit.append(actor=actor, action=action, subject_id=subject_id, summary=summary, data=data)  # type: ignore[union-attr]
+        if related_ids:
+            t.audit.append(actor, action, subject_id, summary, data, related_ids=related_ids)  # type: ignore[union-attr]
+        else:
+            t.audit.append(actor, action, subject_id, summary, data)  # type: ignore[union-attr]
         return
     except _MISSING:
         pass
     except Exception:  # never let audit break the trade flow; but log loudly
         log.exception("trust.audit.append failed; writing to fallback chain")
     store.fallback_audit_append({"actor": actor, "action": action, "subject_id": subject_id, "summary": summary, "data": data})
+
+
+def _trust_log(fn_name: str, *args, **kwargs) -> bool:
+    """Call a trust audit helper (log_quote, log_decision, log_order). False if unavailable."""
+    t = _trust()
+    try:
+        getattr(t, fn_name)(*args, **kwargs)
+        return True
+    except _MISSING:
+        return False
+    except Exception:
+        log.exception("trust.%s failed; using gateway audit wording", fn_name)
+        return False
+
+
+def _log_order(order: Order, quote: Quote | None, actor: str, note: str, fb_action: str, fb_summary: str,
+               fb_data: dict[str, Any] | None = None) -> None:
+    if _trust_log("log_order", order, quote, actor=actor, note=note):
+        return
+    audit(actor, fb_action, order.order_id, fb_summary, {"quote_id": order.quote_id, **(fb_data or {})},
+          related_ids=[order.quote_id])
 
 
 def audit_events(subject_id: str | None = None) -> list[dict[str, Any]]:
@@ -198,6 +223,7 @@ def audit_events(subject_id: str | None = None) -> list[dict[str, Any]]:
         out = [e.model_dump(mode="json") if isinstance(e, AuditEvent) else dict(e) for e in evs]
     except _MISSING:
         out = [e for s in (subjects if subject_id else [None]) for e in store.fallback_audit_events(s)]
+    out = list({e.get("seq"): e for e in out}.values())  # de-dup (trust already follows related ids)
     out.sort(key=lambda e: e.get("seq", 0))
     return out
 
@@ -393,12 +419,13 @@ def create_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any
     )
     quote = sign_quote(quote)
     store.save_quote(quote)
-    audit(ident.actor, "quote.created", quote.quote_id,
-          f"Quote {quote.quote_id} for {ident.customer_id}: {len(qlines)} line(s), €{quote.total_net:.2f} net, "
-          f"delivery {delivery_date.isoformat()}, price fixed until {expires:%H:%M} UTC"
-          + ("" if quote.signature else " (UNSIGNED: trust module not loaded)"),
-          {"quote_hash": quote.quote_hash, "kid": quote.kid, "total_net": quote.total_net,
-           "lines": [l.model_dump(mode="json") for l in qlines], "provenance": quote.provenance})
+    if not _trust_log("log_quote", quote):
+        audit(ident.actor, "quote.created", quote.quote_id,
+              f"Quote {quote.quote_id} for {ident.customer_id}: {len(qlines)} line(s), €{quote.total_net:.2f} net, "
+              f"delivery {delivery_date.isoformat()}, price fixed until {expires:%H:%M} UTC"
+              + ("" if quote.signature else " (UNSIGNED: trust module not loaded)"),
+              {"quote_hash": quote.quote_hash, "kid": quote.kid, "total_net": quote.total_net,
+               "lines": [l.model_dump(mode="json") for l in qlines], "provenance": quote.provenance})
     return quote
 
 
@@ -435,7 +462,7 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
         store.save_order(order)
         audit("system:gateway", "order.placement_failed", order.order_id,
               f"Order {order.order_id} approved but placement failed (upstream unavailable); retry POST /v1/orders.",
-              {"error": str(e), "quote_id": quote.quote_id})
+              {"error": str(e), "quote_id": quote.quote_id}, related_ids=[quote.quote_id])
         raise _upstream(e) from e
     code, rlines = store.confirm_lines(quote, offers)
     status = "rejected" if code == "RE" else "placed"
@@ -443,10 +470,13 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
                                      "updated_at": _now(), "provenance": meta})
     store.save_order(order)
     words = {"AP": "accepted", "CA": "accepted with changes", "RE": "rejected by supplier"}[code]
-    audit("system:order-backend", "order.placed" if status == "placed" else "order.rejected_by_supplier", order.order_id,
-          f"Order {order.order_id} {words} ({code}): " + "; ".join(f"{l.product_id} {l.code} {l.qty_confirmed:g}" for l in rlines),
-          {"quote_id": quote.quote_id, "quote_hash": quote.quote_hash, "response_code": code,
-           "response_lines": [l.model_dump() for l in rlines], "placed_by": actor})
+    detail = "; ".join(f"{l.product_id} {l.code} {l.qty_confirmed:g}" + (f" ({l.note})" if l.code != "AP" else "")
+                       for l in rlines)
+    _log_order(order, quote, "system:order-backend", detail,
+               "order.placed" if status == "placed" else "order.rejected_by_supplier",
+               f"Order {order.order_id} {words} ({code}): {detail}",
+               {"quote_hash": quote.quote_hash, "response_code": code,
+                "response_lines": [l.model_dump() for l in rlines], "placed_by": actor})
     return order
 
 
@@ -470,7 +500,8 @@ def place_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
                            {"expires_at": quote.expires_at.isoformat()})
 
     mandate = mandate_for(ident)
-    if "order:submit" not in (mandate.scopes or []):
+    trust_policy = integration_status()["trust.evaluate"] == "aimo.trust"
+    if not trust_policy and "order:submit" not in (mandate.scopes or []):
         raise ServiceError(403, "scope_missing", "agent mandate lacks scope order:submit")
     mexp = mandate.expires_at
     if mexp and (mexp if mexp.tzinfo else mexp.replace(tzinfo=timezone.utc)) <= _now():
@@ -480,27 +511,29 @@ def place_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
     now = _now()
     order = Order(order_id=_id("ORD"), quote_id=quote_id, quote_hash=quote.quote_hash or "", customer_id=quote.customer_id,
                   agent_id=ident.agent_id, status="pending_approval", decision=decision, created_at=now, updated_at=now)
-    audit("system:policy-engine", "policy.evaluated", order.order_id,
-          f"Policy {decision.policy_id} v{decision.policy_version} on quote {quote_id} (€{quote.total_net:.2f}): {decision.outcome}"
-          + (f", approver {decision.approver_role}" if decision.approver_role else "") + ". "
-          + " ".join(h.message for h in decision.hits if h.outcome != "allow"),
-          {"quote_id": quote_id, "decision": decision.model_dump()})
+    if not _trust_log("log_decision", quote, decision, order.order_id):
+        audit("system:policy-engine", "policy.evaluated", order.order_id,
+              f"Policy {decision.policy_id} v{decision.policy_version} on quote {quote_id} (€{quote.total_net:.2f}): "
+              f"{decision.outcome}" + (f", approver {decision.approver_role}" if decision.approver_role else "") + ". "
+              + " ".join(h.message for h in decision.hits if h.outcome != "allow"),
+              {"quote_id": quote_id, "decision": decision.model_dump()}, related_ids=[quote_id])
 
     if decision.outcome == "reject":
         order = order.model_copy(update={"status": "rejected"})
         store.save_order(order)
-        audit(ident.actor, "order.rejected", order.order_id, f"Order {order.order_id} rejected by policy.", {"quote_id": quote_id})
+        why = " ".join(h.message for h in decision.hits if h.outcome == "reject")
+        _log_order(order, quote, ident.actor, why, "order.rejected", f"Order {order.order_id} rejected by policy. {why}")
         return order
     if decision.outcome == "needs_approval":
         store.save_order(order)
-        audit(ident.actor, "order.pending_approval", order.order_id,
-              f"Order {order.order_id} submitted by {ident.actor}; waiting for {decision.approver_role or 'a human'} approval.",
-              {"quote_id": quote_id, "quote_hash": quote.quote_hash})
+        _log_order(order, quote, ident.actor, "", "order.pending_approval",
+                   f"Order {order.order_id} submitted by {ident.actor}; waiting for "
+                   f"{decision.approver_role or 'a human'} approval.", {"quote_hash": quote.quote_hash})
         return order
-    order = order.model_copy(update={"status": "approved"})
+    order = order.model_copy(update={"status": "approved", "approved_by": f"auto (policy {decision.policy_id})"})
     store.save_order(order)
-    audit("system:policy-engine", "order.auto_approved", order.order_id,
-          f"Order {order.order_id} auto-approved within mandate.", {"quote_id": quote_id})
+    _log_order(order, quote, "system:policy-engine", "within the agent's mandate, no human needed",
+               "order.auto_approved", f"Order {order.order_id} auto-approved within mandate.")
     return _finalize(order, quote, ident.actor)
 
 
@@ -522,7 +555,17 @@ def list_approvals(status: str | None = "pending", customer_id: str | None = Non
     return out
 
 
-def decide(order_id: str, decision: str, approver: str, quote_hash: str, note: str | None = None) -> Order:
+def _directory_role(customer_id: str, approver: str) -> str | None:
+    for c in list_customers():
+        if c.get("customer_id") == customer_id:
+            for a in c.get("approvers", []) or []:
+                if approver in (a.get("id"), a.get("name")):
+                    return a.get("role")
+    return None
+
+
+def decide(order_id: str, decision: str, approver: str, quote_hash: str, note: str | None = None,
+           approver_role: str | None = None) -> Order:
     if decision not in ("approve", "reject"):
         raise ServiceError(400, "bad_decision", "decision must be 'approve' or 'reject'")
     if not approver:
@@ -530,33 +573,52 @@ def decide(order_id: str, decision: str, approver: str, quote_hash: str, note: s
     order = get_order(order_id)
     if order.status != "pending_approval":
         raise ServiceError(409, "not_pending", f"order is {order.status}, not pending_approval")
+    quote = get_quote(order.quote_id)
+    role = approver_role or _directory_role(order.customer_id, approver) or order.decision.approver_role or ""
+    expired = _expired(quote)
+    human = f"human:{approver}"
+
+    t = _trust()
+    try:
+        chk = t.check_approval(quote, order.decision, approver, role, quote_hash,  # type: ignore[union-attr]
+                               decision_kind=decision, note=note or "", order_id=order_id)
+    except _MISSING:
+        chk = None
+        if quote_hash != order.quote_hash:
+            audit(human, "approval.refused", order_id,
+                  f"{approver} tried to {decision} order {order_id} with a different quote_hash.",
+                  {"quote_hash": quote_hash, "expected": order.quote_hash}, related_ids=[quote.quote_id])
+        elif not verify_quote(quote):
+            raise ServiceError(409, "quote_signature_invalid", "quote signature/hash verification failed")
+
     if quote_hash != order.quote_hash:
         raise ServiceError(409, "quote_hash_mismatch",
                            "approval is bound to a different quote_hash: the quote changed, re-review it",
                            {"expected": order.quote_hash})
-    quote = get_quote(order.quote_id)
-    if not verify_quote(quote):
-        raise ServiceError(409, "quote_signature_invalid", "quote signature/hash verification failed")
-    store.record_approval(order_id, decision, approver, note, quote_hash)
-    human = f"human:{approver}"
-    if _expired(quote):
+    if expired and decision == "approve":
         order = order.model_copy(update={"status": "expired", "updated_at": _now()})
         store.save_order(order)
-        audit(human, "order.expired", order_id, f"{approver} tried to {decision} order {order_id}, but its quote expired; re-quote needed.",
-              {"quote_id": quote.quote_id})
+        _log_order(order, quote, human, "the quote's price lock expired before approval; re-quote needed",
+                   "order.expired", f"{approver} tried to approve order {order_id}, but its quote expired; re-quote needed.")
         raise ServiceError(409, "quote_expired", "re-quote needed: the quote's price lock expired before the decision",
                            {"expires_at": quote.expires_at.isoformat()})
+    if chk is not None and not chk.get("ok"):
+        raise ServiceError(403, "approval_refused", chk.get("reason") or "approval refused by trust layer")
+
+    store.record_approval(order_id, decision, approver, note, quote_hash)
+    who = f"{approver} ({role})" if role else approver
     if decision == "reject":
-        order = order.model_copy(update={"status": "rejected", "approved_by": approver, "approval_note": note, "updated_at": _now()})
+        order = order.model_copy(update={"status": "rejected", "approved_by": who, "approval_note": note,
+                                         "updated_at": _now()})
         store.save_order(order)
-        audit(human, "order.rejected_by_human", order_id, f"{approver} rejected order {order_id}." + (f" Note: {note}" if note else ""),
-              {"quote_hash": quote_hash})
+        _log_order(order, quote, human, note or f"rejected by {who}", "order.rejected_by_human",
+                   f"{who} rejected order {order_id}." + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
         return order
-    order = order.model_copy(update={"status": "approved", "approved_by": approver, "approval_note": note, "updated_at": _now()})
+    order = order.model_copy(update={"status": "approved", "approved_by": who, "approval_note": note, "updated_at": _now()})
     store.save_order(order)
-    audit(human, "order.approved", order_id,
-          f"{approver} approved order {order_id} (quote {quote.quote_id}, €{quote.total_net:.2f}, hash {quote_hash[:12]}…)."
-          + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash, "quote_id": quote.quote_id})
+    _log_order(order, quote, human, note or "", "order.approved",
+               f"{who} approved order {order_id} (quote {quote.quote_id}, €{quote.total_net:.2f}, hash {quote_hash[:12]}…)."
+               + (f" Note: {note}" if note else ""), {"quote_hash": quote_hash})
     return _finalize(order, quote, human)
 
 
