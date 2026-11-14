@@ -14,6 +14,17 @@ The review scored each criterion (it was given before the self-approval fix, 433
 | Robustness | 12/15 | 15 |
 | Openness | 13/15 | 15 |
 
+## State of main at session start (Sat 23:00, 773e28e+)
+- **Re-score: about 83/100** (Controls 18/20). Security is done; the remaining points are Demo and User need.
+- **Approvals are human-only.** Humans sign in with `POST /v1/auth/approver-session {"approver": "<directory id or name>"}` + `X-Approver-Pin`, get a session bound to that person, and send it as `X-Approver-Session`.
+  - Scripts may send `X-Approver-Pin` directly with an `approver` name.
+  - Any request with `X-Agent-Id` on the decision route gets 403.
+  - The lockout is per client, plus a global backstop that never blocks sessions.
+- `DecisionRequest.approver` is now optional (it defaults to the session's approver).
+- Quotes and orders (REST and MCP) need explicit identity.
+- `/v1/customers` hides approver ids unless the caller is signed in.
+- The UI signs in with two `window.prompt` calls (name, then PIN). S5 replaces them with a panel.
+
 ## Common rules (every session)
 1. **Work directly. Do NOT spawn subagents, Task agents or workflows**: they burn too many tokens.
 2. **Your own worktree and branch.** From the main checkout:
