@@ -62,6 +62,7 @@ async function boot() {
   renderAudit();
   setInterval(tick, 1000);
   await loadCustomers();
+  if (params.get("customer") && S.customers.find((c) => c.id === params.get("customer"))) selectCustomer(params.get("customer"));
   refreshApprovals();
   // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
   if (params.get("autorun") === "1") startRun();

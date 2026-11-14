@@ -139,8 +139,8 @@ export const flagEl = (code) => {
 export const TIER_LABEL = { preferred: "Preferred", best: "Best", better: "Better", good: "Good", rejected: "Rejected" };
 export const TIER_HINT = {
   preferred: "Your usual item",
-  best: "Same brand and spec, different pack",
-  better: "Same spec, another brand",
+  best: "Closest safe match to the need",
+  better: "Good match with a trade-off",
   good: "Meets the hard constraints only",
   rejected: "Not usable for this order",
 };
