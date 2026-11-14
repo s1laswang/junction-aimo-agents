@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import date
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def test_menu_applies_swaps():
 
 
 def test_ingredients_in_catalog():
-    f = Path("data/valio_aimo_junction26_product_data.json")
+    f = Path(os.environ.get("AIMO_DATA_DIR", "data")) / "valio_aimo_junction26_product_data.json"
     if not f.exists():
         return
     names = " ".join(
