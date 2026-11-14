@@ -27,6 +27,19 @@ Branch `team/pitch`. Last updated Sat 14 Nov 2026, 18:35 Helsinki. Round 2: merg
 
 Untested: the Claude Desktop / Cursor / Gemini CLI configs in the README (formats from each client's documentation; the server side is verified with the MCP Python client). The hospital customer end to end. The UI click path itself (I described it from `web/app.js` and the frontend's screenshots, not by clicking).
 
+## Round 3: Swarm D docs lead (Sat 19:10)
+- **New:**
+  - `docs/ASSUMPTIONS.md`: A1–A10, each with status, evidence, impact and production replacement.
+  - `docs/DECISIONS.md`: D1–D11 ADRs plus production proposals D-P1–D-P4.
+  - `docs/NUMBERS.md`: every number with its command and reproduction status.
+  - A phased "Next steps" table in `docs/ARCHITECTURE.md` §5: owners, exit criteria and risks.
+- **New scripts:**
+  - `docs/pitch/probe_mock_quirks.py` (live, 5 calls) measured three mock-API quirks: availability ignores requestedDate (always one schedule line dated 16 Nov), closingTime is fixed per product, and prices are identical for two customer ids.
+  - `docs/pitch/repro_injection_fp.py` (offline, 3 s) reproduces 0 of 34,159 marketing texts flagged.
+- **Test count:** now 165 passed, 1 skipped. README, SUBMISSION and the deck are updated.
+- **Not reproducible yet:** the unit-parser 93% (702/752) has no committed script. That is either a D-proof card or the catalog lead's job.
+- **D outputs:** no `swarm/D/*` branches on origin as of 19:10, so nothing is folded yet.
+
 ## Round 2 re-test (Sat 14 Nov 18:26, merged main with trust r2, gateway r3, catalog r3, buyer r2–r3; fresh state DB, port 8020)
 - `docs/pitch/qa_milk_flow.py`: **MILK FLOW OK.** The hero verdict now has exactly three needs-approval rows: spend, `substitution:464306` (one row: best tier, outside standing preferences) and `quantity_drift:milk`. Quote creation re-prices live (0.36 s, `served_from: live`, `upstream_calls: 2`).
 - `uv run --extra dev pytest -q`: 138 passed.

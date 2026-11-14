@@ -39,7 +39,7 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q` (138 passed on main, Sat 14 Nov 18:27).
+Tests: `uv run --extra dev pytest -q` (165 passed, 1 skipped on main, Sat 14 Nov 19:05; see docs/NUMBERS.md).
 
 ## What it is: five pillars
 
@@ -86,7 +86,7 @@ flowchart LR
   G -. function calling .-> GEM
 ```
 
-More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (components, milk data flow, production path) and [docs/TRUST.md](docs/TRUST.md) (trust protocol).
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (components, milk data flow, phased path to production), [docs/TRUST.md](docs/TRUST.md) (trust protocol), [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) (every assumption, its impact and its production replacement), [docs/DECISIONS.md](docs/DECISIONS.md) (each choice and the alternatives we rejected) and [docs/NUMBERS.md](docs/NUMBERS.md) (the command behind every number).
 
 ## Connect your own agent
 
@@ -181,7 +181,7 @@ Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULT
 | `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline *(landing)* |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
 | `tests/` | Offline tests for gateway, catalog, trust and buyer |
-| `docs/` | [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
+| `docs/` | [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
 

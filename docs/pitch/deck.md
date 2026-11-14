@@ -44,11 +44,12 @@ Second half (or a build): wind tunnel table, "Trusted gateway vs naive agent wit
 | Policy violations | **TODO (target 0)** | **TODO** |
 | Allergen violations | **TODO (target 0)** | **TODO** |
 | Injection block rate | **TODO** | **TODO** |
-Footnote facts already measured: 0 false positives on 34,159 real supplier texts [docs/TRUST.md]; 138 offline tests pass [pytest, Sat 14 Nov 18:27].
+Footnote facts already measured: 0 false positives on 34,159 real supplier texts [docs/TRUST.md]; 165 offline tests pass [pytest, Sat 14 Nov 19:05; docs/NUMBERS.md].
 **Speaker notes (25 s):** "We didn't test one happy path. Six live scenarios, end to end with the Gemini agent against the real mock API: stock-out, school allergens, prompt injection, standing-order drift, a last-minute event. All six pass. And our wind tunnel replays recorded API data across TODO synthetic customers, scored against an independent oracle." Read the wind-tunnel headline number when it lands.
 
 ## Slide 6: Openness and production path
 **On slide:** left column "Open today": MCP · OpenAPI 3.1 · otap.json discovery · JWS/JWKS · GS1 GTIN · Peppol AP/CA/RE · EU14 allergens. Right column "Production next": SAP adapter behind one interface · OAuth 2.1 (MCP auth spec) · mandates as W3C Verifiable Credentials · KMS keys · Peppol BIS Ordering · WORM audit store.
+**Also on slide (small):** "Every assumption, decision and number is written down": docs/ASSUMPTIONS.md · docs/DECISIONS.md · docs/NUMBERS.md.
 **Speaker notes (20 s):** "Nothing here is proprietary. Any agent connects with a three-line MCP config. To go live, Valio swaps the mock for SAP behind one interface we already have, puts OAuth in front, and moves the key into a KMS." [docs/ARCHITECTURE.md §4]
 
 ## Slide 7: Gemini
