@@ -189,6 +189,7 @@ def _scale_price(pr: dict | None, k: float) -> dict | None:
 
 
 _FILE_CACHE: dict[str, dict] = {}
+MISSING: set[str] = set()          # ids a system under test asked for that the snapshot lacks (see `extend`)
 
 
 class ReplayClient:
@@ -232,11 +233,12 @@ class ReplayClient:
             self.errors += 1
             raise BackendError(self.rng.choice(["429 Too Many Requests", "503 Service Unavailable", "500 Internal Server Error"]))
 
-    def availability(self, product_ids: list[str], requested_date: date) -> dict:
+    def availability(self, product_ids: list[str], requested_date: date, customer: str | None = None) -> dict:
         self._tick()
         js = self._load("availability", requested_date)
         by_id = {p["productId"]: p for p in js["products"]}
         out = []
+        MISSING.update(pid for pid in product_ids if pid not in by_id)
         for pid in product_ids:
             p = deepcopy(by_id.get(pid)) if pid in by_id else {"productId": pid, "salesBlock": False, "scheduleLines": [],
                                                                  "closingTime": None, "logisticModel": None, "_missing": True}
@@ -255,7 +257,7 @@ class ReplayClient:
             out.append(p)
         return {"timeNow": js.get("timeNow"), "requestedDate": js.get("requestedDate"), "products": out}
 
-    def price(self, product_ids: list[str], requested_date: date) -> dict:
+    def price(self, product_ids: list[str], requested_date: date, customer: str | None = None) -> dict:
         self._tick()
         js = self._load("price", requested_date)
         by_id = {p["productId"]: p for p in js["products"]}
@@ -344,7 +346,7 @@ def offers(product_ids: list[str], requested_date: date, client: ReplayClient) -
 
 
 @__import__("functools").lru_cache(maxsize=1)
-def pool() -> dict[str, Any]:
+def pool() -> dict[str, Any]:  # noqa: D103
     return json.loads((SNAPSHOT_DIR / "pool.json").read_text())
 
 
@@ -357,9 +359,47 @@ def fingerprint() -> str:
     return h.hexdigest()[:12]
 
 
+def extend(missing_path: str, pause_s: float = 2.0) -> None:
+    """Laptop only. Fetch ids that systems under test requested but the snapshot lacks (written by
+    `windtunnel.run --collect-missing`), for every recorded date, and merge them into the snapshot files."""
+    import httpx
+    from aimo.config import AIMO_API_KEY, AIMO_BASE_URL
+    from windtunnel import products as P
+    cat = P.catalog()
+    meta = json.loads((SNAPSHOT_DIR / "meta.json").read_text())
+    pl = json.loads((SNAPSHOT_DIR / "pool.json").read_text())
+    have = set(pl["ids"])
+    want = sorted({i for i in json.loads(open(missing_path).read()) if i in cat and i not in have})
+    print(f"extending snapshot with {len(want)} ids x {len(meta['dates'])} dates")
+    if not want:
+        return
+    with httpx.Client(base_url=AIMO_BASE_URL, headers={"X-API-Key": AIMO_API_KEY}, timeout=60) as c:
+        for d in meta["dates"]:
+            for ep in ("availability", "price"):
+                path = SNAPSHOT_DIR / f"{ep}_{d}.json"
+                js = json.loads(path.read_text())
+                for k in range(0, len(want), 1000):
+                    chunk = want[k:k + 1000]
+                    r = c.post(f"/api/{ep}", json={"customer": "windtunnel", "requestedDate": d, "products": chunk})
+                    meta["calls"] = meta.get("calls", 0) + 1
+                    r.raise_for_status()
+                    js["products"] += r.json().get("products", [])
+                    time.sleep(pause_s)
+                path.write_text(json.dumps(js))
+                print(f"{ep} {d}: now {len(js['products'])} products")
+    pl["ids"] = pl["ids"] + want
+    pl["groups"]["sut_requested"] = want
+    (SNAPSHOT_DIR / "pool.json").write_text(json.dumps(pl, indent=1))
+    meta["n_ids"] = len(pl["ids"])
+    meta.setdefault("extended", []).append({"at": time.time(), "n": len(want)})
+    (SNAPSHOT_DIR / "meta.json").write_text(json.dumps(meta, indent=1))
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "info"
-    if cmd == "record":
+    if cmd == "extend":
+        extend(sys.argv[2])
+    elif cmd == "record":
         record(sys.argv[2].split(",") if len(sys.argv) > 2 else None)
     elif cmd == "pool":
         pl = select_pool()

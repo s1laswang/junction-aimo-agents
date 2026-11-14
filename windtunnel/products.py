@@ -181,7 +181,7 @@ def catalog() -> dict[str, P]:
         claims = {v.get("id") for v in cl.get("nutritionalClaim", []) if v.get("id")}
         ingr = _lang(sd.get("keyIngredients"), "en") or _lang(sd.get("keyIngredients"), "fi")
         ing = ingredient_allergens(ingr)
-        if "FREE_FROM_GLUTEN" in claims and ing.get("gluten") and not re.search(r"WHEAT|RYE|BARLEY|SPELT|VEHNÄ|RUIS|OHRA", ingr):
+        if "FREE_FROM_GLUTEN" in claims and ing.get("gluten"):   # EU gluten-free claim (<20 ppm) may use GF wheat starch / barley malt
             ing.pop("gluten")
         al, conflicts = dict(struct), []
         for k, st in ing.items():

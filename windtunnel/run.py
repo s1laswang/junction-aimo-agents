@@ -44,7 +44,7 @@ def _replay_get_client():
     return _CURRENT["client"]
 
 
-def _replay_get_offers(product_ids: list[str], requested_date: date) -> dict[str, Offer]:
+def _replay_get_offers(product_ids: list[str], requested_date: date, *_, **__) -> dict[str, Offer]:
     c = _CURRENT["client"]
     return merge_offers(c.price(list(product_ids), requested_date), c.availability(list(product_ids), requested_date),
                         requested_date, parse_dt(c.time_now))
@@ -141,13 +141,17 @@ class SUT:
 
     def plan(self, need: Need) -> Plan:
         try:
+            if self.parts["catalog"] == "team":
+                return self.plan_fn(need, offers_fn=_replay_get_offers)   # catalog's offline replay hook
             return self.plan_fn(need)
         except NotImplementedError:
             self.plan_fn, self.parts["catalog"] = baseline_plan, "baseline"
             return baseline_plan(need)
 
-    def evaluate(self, quote: Quote, mandate: Mandate) -> PolicyDecision:
+    def evaluate(self, quote: Quote, mandate: Mandate, **ctx) -> PolicyDecision:
         try:
+            if self.parts["trust"] == "team":
+                return self.eval_fn(quote, mandate, **ctx)
             return self.eval_fn(quote, mandate)
         except NotImplementedError:
             self.eval_fn, self.parts["trust"] = baseline_evaluate, "baseline"
@@ -155,7 +159,7 @@ class SUT:
 
     def screen(self, text: str) -> dict:
         try:
-            r = self.screen_fn(text)
+            r = self.screen_fn(text, use_gemini=False) if self.parts["screen"] == "team" else self.screen_fn(text)
             return r if isinstance(r, dict) else {"suspicious": bool(r)}
         except NotImplementedError:
             self.screen_fn, self.parts["screen"] = baseline_screen, "baseline"
@@ -182,6 +186,44 @@ def mandate_for(sc: Scenario, now: datetime) -> Mandate:
                    expires_at=exp)
 
 
+class MemoryAudit:
+    """Per-scenario stand-in for the audit log: trust's period_spend rule reads order.placed events from it,
+    the runner appends one for every auto-approved quote (what the gateway would do when it places the order)."""
+
+    class _E:
+        def __init__(self, action: str, ts: datetime, data: dict):
+            self.action, self.ts, self.data = action, ts, data
+
+    def __init__(self):
+        self.events: list = []
+
+    def events_by_action(self, action: str):
+        return [e for e in self.events if e.action == action]
+
+    def append(self, actor: str = "", action: str = "", subject_id: str = "", summary: str = "", data: dict | None = None,
+               ts: datetime | None = None):
+        self.events.append(MemoryAudit._E(action, ts or datetime.now(timezone.utc), data or {}))
+
+
+def _products_override(sc: Scenario, q: Quote) -> dict | None:
+    """Inject the scenario's untrusted supplier text into the products trust sees (marketing_text)."""
+    if not sc.supplier_text:
+        return None
+    try:
+        from aimo.catalog import get_product
+    except Exception:  # noqa: BLE001
+        return None
+    out = {}
+    for ln in q.lines:
+        p = get_product(ln.product_id)
+        if p is None:
+            continue
+        if ln.product_id in sc.supplier_text:
+            p = p.model_copy(update={"marketing_text": sc.supplier_text[ln.product_id]})
+        out[ln.product_id] = p
+    return out
+
+
 def _plan_with_retry(sut: SUT, need: Need, retries: int = 3) -> Plan:
     last: Exception | None = None
     for _ in range(retries):
@@ -203,20 +245,29 @@ def run_pipeline_one(sc: Scenario, sut: SUT) -> RunResult:
         # injection screening: positives (supplier/request payloads) and negatives (clean request text)
         if sc.supplier_text:
             res.screen["supplier"] = [bool(sut.screen(t).get("suspicious")) for t in sc.supplier_text.values()]
-        res.screen["request"] = bool(sut.screen(sc.request_text).get("suspicious"))
+        rq = sut.screen(sc.request_text)
+        res.screen["request"] = bool(rq.get("suspicious"))
+        if rq.get("suspicious"):
+            # buyer-agent contract: report suspicious instructions in untrusted text via need.preferences
+            for n in [x for seq in (sc.sequence or [sc.needs]) for x in seq]:
+                n.preferences = {**(n.preferences or {}), "injection_flags": rq.get("reasons") or ["suspicious_request"]}
         mandate = mandate_for(sc, now)
+        audit_log = MemoryAudit()
         orders = sc.sequence or [sc.needs]
         auto_total, all_auto, outcomes = 0.0, True, []
         last_quote, last_plans, last_dec = None, [], None
         for needs in orders:
             plans = [_plan_with_retry(sut, n) for n in needs]
             q = build_quote(sc, plans, sc.persona.agent_id, now)
-            dec = sut.evaluate(q, mandate) if q.lines else PolicyDecision(
+            dec = sut.evaluate(q, mandate, now=now, audit_log=audit_log, products=_products_override(sc, q)) \
+                if q.lines else PolicyDecision(
                 outcome="needs_approval", policy_id="windtunnel", policy_version="0",
                 hits=[])  # empty plan: nothing to order -> a human must look
             outcomes.append(dec.outcome)
             if dec.outcome == "auto_approve":
                 auto_total += q.total_net
+                audit_log.append(action="order.placed", subject_id=q.quote_id, ts=now,
+                                 data={"customer_id": q.customer_id, "total_net": q.total_net, "quote_id": q.quote_id})
             else:
                 all_auto = False
             last_quote, last_plans, last_dec = q, plans, dec
@@ -251,6 +302,8 @@ def run_pipeline_one(sc: Scenario, sut: SUT) -> RunResult:
 
 
 def run_pipeline(scs: list[Scenario], sut_kind: str = "team") -> tuple[list[RunResult], dict]:
+    os.environ.setdefault("AIMO_RECIPE_CHECK", "0")     # no Gemini calls inside pipeline mode (offline nodes)
+    os.environ.setdefault("AIMO_SCREEN_GEMINI", "0")
     patched = install_replay() if sut_kind == "team" else []
     sut = SUT(sut_kind)
     out = [run_pipeline_one(sc, sut) for sc in scs]
@@ -376,6 +429,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--model", default=None)
     ap.add_argument("--out", default="")
+    ap.add_argument("--collect-missing", default="", help="write ids the SUT requested but the snapshot lacks")
     a = ap.parse_args(argv)
     scs = load(a.scenarios)
     i, n = map(int, a.shard.split("/"))
@@ -394,6 +448,10 @@ def main(argv: list[str] | None = None) -> None:
     stem = Path(a.scenarios).stem
     out = Path(a.out) if a.out else RUNS_DIR / f"{stem}__{a.mode}__{a.sut}__{i}of{n}.jsonl"
     save_results(rs, out, meta)
+    if a.collect_missing:
+        from windtunnel.snapshot import MISSING
+        Path(a.collect_missing).write_text(json.dumps(sorted(MISSING)))
+        print(f"missing ids: {len(MISSING)} -> {a.collect_missing}", file=sys.stderr)
     errs = sum(1 for r in rs if r.error)
     print(json.dumps({"out": str(out), "n": len(rs), "errors": errs, "sut": meta.get("sut"), "wall_s": meta["wall_s"]}))
 

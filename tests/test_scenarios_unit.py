@@ -64,7 +64,7 @@ def test_spend_label_bands():
     assert spend_label(510, hotel)[0] == ["auto_approve", "needs_approval"]      # within 15% of the limit
     assert spend_label(1010, hotel)[0] == ["needs_approval"]                     # the 1,000 L milk demo
     assert spend_label(9000, hotel)[0] == ["reject"]
-    assert spend_label(100, CUSTOMERS["hospital-meilahti"])[1] == ["spend_threshold_unknown"]
+    assert CUSTOMERS["school-tampere"].auto_limit == 300   # synced from aimo/trust/policies (or interfaces.md)
 
 
 @pytest.mark.needs_data

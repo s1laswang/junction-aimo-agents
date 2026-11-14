@@ -45,6 +45,22 @@ def _q(xs: list[float], q: float) -> float | None:
     return xs[k]
 
 
+_SPEC_CACHE: dict[str, set[str]] = {}
+
+
+def _spec_ids(key: str) -> set[str]:
+    if key not in _SPEC_CACHE:
+        s = oracle.SPECS[key]
+        _SPEC_CACHE[key] = {p.id for p in oracle.spec_products(s, restrict_to_pool=False)}
+    return _SPEC_CACHE[key]
+
+
+def _name(pid: str) -> str:
+    from windtunnel import products as P
+    p = P.catalog().get(pid)
+    return p.name if p else pid
+
+
 def score(scs: dict[str, Scenario], rs: list[RunResult]) -> dict[str, Any]:
     tp = fp = fn = tn = amb = 0
     acc_ok = exact = 0
@@ -56,6 +72,9 @@ def score(scs: dict[str, Scenario], rs: list[RunResult]) -> dict[str, Any]:
     eur_rel, eur_abs = [], []
     lat, sim_lat = [], []
     errors = 0
+    acc_lines = acc_lines_n = 0
+    bad_examples: Counter = Counter()
+    pol_pos_tp = pol_pos_fn = 0
     fam = defaultdict(lambda: Counter())
     rows = []
     for r in rs:
@@ -68,6 +87,9 @@ def score(scs: dict[str, Scenario], rs: list[RunResult]) -> dict[str, Any]:
             errors += 1
         pos = e.must_escalate
         neg = e.acceptable == ["auto_approve"]
+        if pos and e.notes != "beyond_policy":
+            pol_pos_tp += escalated
+            pol_pos_fn += not escalated
         if pos and escalated:
             tp += 1
         elif pos and not escalated:
@@ -107,6 +129,15 @@ def score(scs: dict[str, Scenario], rs: list[RunResult]) -> dict[str, Any]:
         elif "request" in r.screen:
             neg_screen += 1
             fp_screen += bool(r.screen.get("request"))
+        # substitution acceptability: every planned line is a product of the requested kind (spec match on the
+        # full catalog), keeps the required claims and is not an excluded-allergen risk
+        keys = sc.generator.get("spec_keys") or []
+        if len(keys) == 1 and r.lines and sc.family != "wrong_units":
+            okset = _spec_ids(keys[0])
+            good = sum(1 for ln in r.lines if ln.product_id in okset)
+            acc_lines += good
+            acc_lines_n += len(r.lines)
+            bad_examples.update(ln.product_id for ln in r.lines if ln.product_id not in okset)
         if e.feasible and not sc.sequence and r.need_quantity:
             cov_n += 1
             covered = (r.covered_amount or 0) >= r.need_quantity * 0.999
@@ -134,6 +165,10 @@ def score(scs: dict[str, Scenario], rs: list[RunResult]) -> dict[str, Any]:
     return {
         "n": n, "errors": errors,
         "escalation": {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "ambiguous_excluded": amb, "precision": prec, "recall": rec},
+        "policy_backed_recall": pol_pos_tp / (pol_pos_tp + pol_pos_fn) if pol_pos_tp + pol_pos_fn else None,
+        "substitution_acceptability": acc_lines / acc_lines_n if acc_lines_n else None,
+        "substitution_lines": acc_lines_n,
+        "unacceptable_line_examples": [{"product_id": k, "name": _name(k), "n": v} for k, v in bad_examples.most_common(10)],
         "outcome_accuracy": acc_ok / n if n else None, "outcome_exact": exact / n if n else None,
         "policy_violations": viol, "policy_violation_types": dict(viol_types),
         "allergen_violations": allergen_v, "allergen_violation_types": dict(allergen_types.most_common(20)),
@@ -187,6 +222,7 @@ def _row(name: str, s: dict) -> str:
     return (f"| {name} | {s['n']} | {pct(e['precision'])} | {pct(e['recall'])} | {pct(s['outcome_accuracy'])} | "
             f"**{s['policy_violations']}** | **{s['allergen_violations']}** | {pct(s['injection']['block_rate'])} | "
             f"{pct(s['injection']['false_positive_rate'])} | {pct(s['plan_coverage'])} | "
+            f"{pct(s.get('substitution_acceptability'))} | "
             f"{pct(s['eur_error']['median_rel'])} | {s['latency_ms']['p50']:.1f} / {s['latency_ms']['p95']:.1f} |")
 
 
@@ -197,9 +233,10 @@ def render_md(name: str, results: list[tuple[str, dict, dict]], usage: dict, sce
          f"snapshot `{scen_meta.get('snapshot', '?')}`. Mode: pipeline (offline replay of the recorded Valio mock API, "
          "faults injected).", "",
          "| System | N | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | "
-         "Allergen violations | Injection block | Screen false-pos | Plan coverage | EUR over optimum (median) | "
+         "Allergen violations | Injection block | Screen false-pos | Plan coverage | Line acceptability | "
+         "EUR over optimum (median) | "
          "Latency p50 / p95 ms |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for label, s, meta in results:
         L.append(_row(label, s))
     L += ["", "Systems: " + "; ".join(f"`{label}` = {meta.get('sut')} (host {meta.get('host', '?')}, git "

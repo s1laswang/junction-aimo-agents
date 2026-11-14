@@ -254,11 +254,11 @@ def skeleton(seed: int, family: str, personas: list[Persona] | None = None) -> S
         history = [{"week": f"W{45 - i}", "product_id": pref, "quantity": base_q} for i in range(4)]
         needs, keys = [_need(persona, spec, round(base_q * k, 1), when, preferred_product_ids=[pref] if pref else [],
                              preferences={"standing_order": {"product_id": pref, "weekly_quantity": base_q}})], [spec.key]
-        extra["drift_pct"] = abs(k - 1)
+        extra["qty_factor"] = k
         if pref and rng.random() < 0.4:
             shock = rng.choice([1.25, 1.6])
             faults = f"price_shock:{pref}:{shock}"
-            extra["drift_pct"] = max(extra["drift_pct"], shock - 1)
+            extra["price_factor"] = shock
     elif family == "upsell_pitch":
         needs, keys = [_need(persona, spec, qty, when)], [spec.key]
         gen["upsell"] = rng.choice(UPSELLS)
@@ -311,7 +311,7 @@ def skeleton(seed: int, family: str, personas: list[Persona] | None = None) -> S
             c = ReplayClient()
             o = replay_offers([pref], date.fromisoformat(when), c)[pref]
             needs[0].preferences["reference_unit_price"] = {pref: o.unit_price}
-            extra["drift_pct"] = shock - 1
+            extra["price_factor"] = shock
     elif family == "api_errors":
         rate = rng.choice([0.1, 0.3, 0.5])
         lat = rng.choice([200, 1000, 3000])
@@ -415,7 +415,8 @@ def surface_one(sc: Scenario, model: str = GEN_MODEL) -> Scenario:
     from aimo import gemini
     cfg = types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=SURFACE_SCHEMA,
                                       thinking_config=types.ThinkingConfig(thinking_level="LOW"),
-                                      max_output_tokens=2048)
+                                      max_output_tokens=2048,
+                                      http_options=types.HttpOptions(timeout=60_000))
     try:
         r = gemini.generate("windtunnel.generate", model, _surface_prompt(sc), cfg, run_id=sc.scenario_id)
         js = json.loads(r.text) if r.text else None
@@ -515,7 +516,25 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--judge", action="store_true", help="Gemini judge pass for judgement families")
     ap.add_argument("--model", default=GEN_MODEL)
     ap.add_argument("--out", default="")
+    ap.add_argument("--relabel", default="", help="recompute labels for an existing file, keep its Gemini text")
     a = ap.parse_args(argv)
+    if a.relabel:
+        old = load(a.relabel)
+        new, kept = [], 0
+        for o in old:
+            s = skeleton(o.seed, o.family)
+            if [(n.quantity, n.unit, n.delivery_by) for n in s.needs] == [(n.quantity, n.unit, n.delivery_by) for n in o.needs]:
+                s.request_text = o.request_text
+                for n in s.needs:
+                    n.raw_text = o.request_text
+                s.supplier_text = o.supplier_text if o.supplier_text and s.supplier_text and \
+                    set(o.supplier_text) == set(s.supplier_text) else s.supplier_text
+                s.generator.update({k: v for k, v in o.generator.items() if k in ("surface", "model", "batch", "judge_label")})
+                kept += 1
+            new.append(s)
+        save(new, Path(a.out or a.relabel))
+        print(json.dumps({"relabelled": len(new), "kept_text": kept, "out": a.out or a.relabel}))
+        return
     fams = [f for f in a.families.split(",") if f] or None
     t0 = time.time()
     scs = skeletons(a.n, a.seed, fams)

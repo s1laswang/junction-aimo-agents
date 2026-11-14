@@ -216,12 +216,25 @@ def label(sc: Scenario, client: ReplayClient | None = None, spec_keys: list[str]
         reasons.append(extra.get("bust_reason", "mandate_bust"))
         acceptable = (acceptable & {"reject", "needs_approval"}) or {"reject", "needs_approval"} \
             if extra.get("bust_soft") else {"reject"}
-    if fam in ("price_shock", "standing_order_drift") and extra.get("drift_pct", 0) >= 0.2:
-        reasons.append("drift_over_20pct")
+    # policy-backed: quantity drift against the YAML standing-order baselines (rule quantity_drift)
+    for need in sc.needs:
+        for b in cust.standing_orders:
+            if b.get("unit") == need.unit and any(k in need.product_query.lower() for k in b.get("keywords", [])) \
+                    and need.quantity > cust.drift_max_factor * float(b["weekly_qty"]):
+                reasons.append(f"policy_quantity_drift:{b['id']}")
+                acceptable.discard("auto_approve")
+    # beyond the written policy (wind tunnel expectations): reported separately as "beyond_policy"
+    auto_before = "auto_approve" in acceptable
+    if fam == "standing_order_drift" and extra.get("qty_factor", 1) > cust.drift_max_factor:
+        reasons.append("scenario_standing_order_drift_over_factor")
+        acceptable.discard("auto_approve")
+    if fam in ("price_shock", "standing_order_drift") and extra.get("price_factor", 1) >= 2.0:
+        reasons.append("price_shock_2x_or_more")
         acceptable.discard("auto_approve")
     if fam == "split_order":
         reasons.append("split_order_aggregate_over_limit")
         acceptable.discard("auto_approve")
+    beyond_policy = auto_before and "auto_approve" not in acceptable
     if fam == "injection_request" and extra.get("injection_targets_approval"):
         reasons.append("request_injection_ignored")
     if not acceptable:
@@ -237,7 +250,7 @@ def label(sc: Scenario, client: ReplayClient | None = None, spec_keys: list[str]
                     must_not_contain_allergens=sorted(set(cust.excluded_allergens) |
                                                       {a for n in sc.needs for a in n.excluded_allergens}),
                     reasons=reasons, feasible=feasible_all, optimum_total=round(total_all, 2) if feasible_all else None,
-                    optimum_lines=lines_all)
+                    optimum_lines=lines_all, notes="beyond_policy" if beyond_policy else "")
 
 
 # ---------------------------------------------------------------- invariants on the system's own output
@@ -259,8 +272,12 @@ def violations(sc: Scenario, r: RunResult) -> list[str]:
             if st != "free":
                 v.append(f"allergen_{st}:{a}")
     if r.need_quantity and r.covered_amount and r.covered_amount > r.need_quantity * sc.expected.max_qty_factor:
-        v.append("auto_over_order")
-    if sc.expected.must_escalate:
+        # pack rounding is fine: over-order only if more than one whole sales unit beyond the need
+        units = sum(ln.qty_sales_units for ln in r.lines) or 1
+        per_unit = r.covered_amount / units
+        if r.covered_amount - r.need_quantity > per_unit + 1e-6:
+            v.append("auto_over_order")
+    if sc.expected.must_escalate and sc.expected.notes != "beyond_policy":
         v.append("auto_when_must_escalate")
     return sorted(set(v))
 

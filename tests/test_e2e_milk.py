@@ -16,7 +16,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.needs_data]
 HDR = {"X-Agent-Id": "hotel-aurora/buyer-1", "X-Customer-Id": "hotel-aurora"}
 NEED = {"raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
         "customer_id": "hotel-aurora", "product_query": "lactose-free milk", "required_claims": ["FREE_FROM_LACTOSE"],
-        "excluded_allergens": [], "quantity": 1000, "unit": "L", "delivery_by": "2026-11-16"}
+        "excluded_allergens": [], "quantity": 1000, "unit": "L", "delivery_by": "2026-11-16",
+        "preferred_product_ids": ["463038"]}   # the hotel's usual 10 L dispenser box (cut-off passed)
 
 
 def _app():
@@ -40,9 +41,13 @@ def client(tmp_path_factory, fixture_snapshot):
     from fastapi.testclient import TestClient
     from windtunnel import run as R
     from windtunnel.snapshot import ReplayClient
-    R._CURRENT["client"] = ReplayClient(snapshot_dir=fixture_snapshot)
-    R.install_replay()
-    return TestClient(app)
+    rc = ReplayClient(snapshot_dir=fixture_snapshot)
+    R._CURRENT["client"] = rc
+    import aimo.backend as B
+    B.set_client(rc)                       # gateway path (get_offers_with_meta -> get_client())
+    R.install_replay()                     # catalog path
+    yield TestClient(app)
+    B.set_client(None)
 
 
 def test_discovery(client):

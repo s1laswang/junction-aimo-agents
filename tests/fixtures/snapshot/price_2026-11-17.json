@@ -156,6 +156,44 @@
 "error": false
 },
 {
+"productId": "462626",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 13.0,
+"valueWithTax": 14.76,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 14.76,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 2.6,
+"valueWithTax": 2.95,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 1.76
+},
+"listPrice": {
+"value": 15.29,
+"valueWithTax": 17.35,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
 "productId": "462703",
 "quantity": 1.0,
 "catalogPrice": {
@@ -232,6 +270,44 @@
 "error": false
 },
 {
+"productId": "463203",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 15.09,
+"valueWithTax": 17.13,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 17.13,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.55,
+"valueWithTax": 8.57,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 2.04
+},
+"listPrice": {
+"value": 17.75,
+"valueWithTax": 20.15,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
 "productId": "463335",
 "quantity": 1.0,
 "catalogPrice": {
@@ -267,6 +343,44 @@
 "currency": "EUR"
 },
 "netPriceFound": true,
+"error": false
+},
+{
+"productId": "463380",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 2.65,
+"valueWithTax": 3.01,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 3.01,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 2.65,
+"valueWithTax": 3.01,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.36
+},
+"listPrice": {
+"value": 3.12,
+"valueWithTax": 3.54,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
 "error": false
 },
 {
@@ -954,6 +1068,44 @@
 "error": false
 },
 {
+"productId": "473625",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 2.13,
+"valueWithTax": 2.42,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 2.42,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.61,
+"valueWithTax": 8.64,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.29
+},
+"listPrice": {
+"value": 2.51,
+"valueWithTax": 2.85,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
 "productId": "476240",
 "quantity": 1.0,
 "catalogPrice": {
@@ -985,6 +1137,44 @@
 "value": 8.96,
 "valueWithTax": 10.17,
 "validFrom": "2025-01-02T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "477424",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 25.79,
+"valueWithTax": 29.27,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 29.27,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 8.6,
+"valueWithTax": 9.76,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 3.48
+},
+"listPrice": {
+"value": 32.24,
+"valueWithTax": 36.59,
+"validFrom": "2026-05-01T00:00:00+0300",
 "validTo": "9999-12-31T00:00:00+0200",
 "currency": "EUR"
 },
@@ -2505,6 +2695,804 @@
 "value": 43.49,
 "valueWithTax": 49.36,
 "validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "466090",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 12.21,
+"valueWithTax": 13.86,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 13.86,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 4.88,
+"valueWithTax": 5.54,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 1.65
+},
+"listPrice": {
+"value": 14.37,
+"valueWithTax": 16.31,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "466799",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 4.9,
+"valueWithTax": 5.56,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 5.56,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 4.9,
+"valueWithTax": 5.56,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.66
+},
+"listPrice": {
+"value": 5.77,
+"valueWithTax": 6.55,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "468417",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 17.85,
+"valueWithTax": 20.26,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 20.26,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 2.23,
+"valueWithTax": 2.53,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 2.41
+},
+"listPrice": {
+"value": 21.0,
+"valueWithTax": 23.84,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "468683",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 23.18,
+"valueWithTax": 26.31,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 26.31,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 87.8,
+"valueWithTax": 99.65,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 3.13
+},
+"listPrice": {
+"value": 28.97,
+"valueWithTax": 32.88,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "469059",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 66.14,
+"valueWithTax": 75.07,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 75.07,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 14.7,
+"valueWithTax": 16.68,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 8.93
+},
+"listPrice": {
+"value": 82.68,
+"valueWithTax": 93.84,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "470308",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 3.6,
+"valueWithTax": 4.09,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 4.09,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 9.47,
+"valueWithTax": 10.75,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.49
+},
+"listPrice": {
+"value": 4.23,
+"valueWithTax": 4.8,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "470699",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 2.18,
+"valueWithTax": 2.47,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 2.47,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 8.72,
+"valueWithTax": 9.9,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.29
+},
+"listPrice": {
+"value": 2.72,
+"valueWithTax": 3.09,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "470999",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 34.79,
+"valueWithTax": 39.49,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 39.49,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.25,
+"valueWithTax": 8.23,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 4.7
+},
+"listPrice": {
+"value": 43.49,
+"valueWithTax": 49.36,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "471108",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 49.68,
+"valueWithTax": 56.39,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 56.39,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 5.52,
+"valueWithTax": 6.27,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 6.71
+},
+"listPrice": {
+"value": 62.1,
+"valueWithTax": 70.48,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "471112",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 34.79,
+"valueWithTax": 39.49,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 39.49,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.25,
+"valueWithTax": 8.23,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 4.7
+},
+"listPrice": {
+"value": 43.49,
+"valueWithTax": 49.36,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "471178",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 49.68,
+"valueWithTax": 56.39,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 56.39,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 5.52,
+"valueWithTax": 6.27,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 6.71
+},
+"listPrice": {
+"value": 62.1,
+"valueWithTax": 70.48,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "472091",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 10.44,
+"valueWithTax": 11.85,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 11.85,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 4.18,
+"valueWithTax": 4.74,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 1.41
+},
+"listPrice": {
+"value": 12.28,
+"valueWithTax": 13.94,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "472218",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 2.71,
+"valueWithTax": 3.08,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 3.08,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 6.78,
+"valueWithTax": 7.7,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.37
+},
+"listPrice": {
+"value": 3.19,
+"valueWithTax": 3.62,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "473891",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 34.79,
+"valueWithTax": 39.49,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 39.49,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.25,
+"valueWithTax": 8.23,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 4.7
+},
+"listPrice": {
+"value": 43.49,
+"valueWithTax": 49.36,
+"validFrom": "2026-09-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "474033",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 3.38,
+"valueWithTax": 3.84,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 3.84,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 5.63,
+"valueWithTax": 6.39,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.46
+},
+"listPrice": {
+"value": 3.98,
+"valueWithTax": 4.52,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "474235",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 22.92,
+"valueWithTax": 26.01,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 26.01,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 4.58,
+"valueWithTax": 5.2,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 3.09
+},
+"listPrice": {
+"value": 28.65,
+"valueWithTax": 32.52,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "474686",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 18.85,
+"valueWithTax": 21.39,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 21.39,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 6.28,
+"valueWithTax": 7.13,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 2.54
+},
+"listPrice": {
+"value": 22.18,
+"valueWithTax": 25.17,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "474957",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 9.1,
+"valueWithTax": 10.33,
+"validFrom": "2025-08-17T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 10.33,
+"validFrom": "2025-08-17T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 3.03,
+"valueWithTax": 3.44,
+"validFrom": "2025-08-17T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 1.23
+},
+"listPrice": {
+"value": 10.71,
+"valueWithTax": 12.16,
+"validFrom": "2025-08-17T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "475224",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 1.74,
+"valueWithTax": 1.97,
+"validFrom": "2026-06-11T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 1.97,
+"validFrom": "2026-06-11T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 1.74,
+"valueWithTax": 1.97,
+"validFrom": "2026-06-11T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "L",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.23
+},
+"listPrice": {
+"value": 2.05,
+"valueWithTax": 2.33,
+"validFrom": "2026-06-11T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "475275",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 4.49,
+"valueWithTax": 5.1,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 5.1,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.48,
+"valueWithTax": 8.49,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.61
+},
+"listPrice": {
+"value": 5.28,
+"valueWithTax": 5.99,
+"validFrom": "2026-05-01T00:00:00+0300",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"netPriceFound": false,
+"error": false
+},
+{
+"productId": "475795",
+"quantity": 1.0,
+"catalogPrice": {
+"value": 3.71,
+"valueWithTax": 4.21,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"priceWithTax": {
+"value": 4.21,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonPrice": {
+"value": 7.42,
+"valueWithTax": 8.42,
+"validFrom": "2026-01-13T00:00:00+0200",
+"validTo": "9999-12-31T00:00:00+0200",
+"currency": "EUR"
+},
+"comparisonUnit": "KG",
+"tax": {
+"taxRate": 13.5,
+"taxValue": 0.5
+},
+"listPrice": {
+"value": 4.64,
+"valueWithTax": 5.27,
+"validFrom": "2026-01-13T00:00:00+0200",
 "validTo": "9999-12-31T00:00:00+0200",
 "currency": "EUR"
 },

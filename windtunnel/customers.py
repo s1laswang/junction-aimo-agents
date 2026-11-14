@@ -24,6 +24,8 @@ class CustomerSpec:
     unknown_allergen: str = "reject"          # what happens when an excluded allergen's status is unknown
     unknown_allergen_role: Optional[str] = None
     categories: Optional[list[str]] = None    # category scope (names, mapping to codes UNVERIFIED)
+    drift_max_factor: float = 3.0
+    standing_orders: list = field(default_factory=list)
     source: str = "docs/interfaces.md"
 
 
@@ -58,14 +60,23 @@ def sync_from_trust() -> dict[str, str]:
             pol = load(spec.policy_id)
         except Exception:  # noqa: BLE001
             continue
-        flat = _flatten(pol)
-        auto = _first(flat, ("auto_approve_max", "auto_approve_limit", "auto_limit", "auto_approve_eur", "auto_max_eur"))
-        upper = _first(flat, ("reject_above", "approval_limit", "max_order_eur", "hard_limit", "reject_over"))
-        if auto is not None:
-            spec.auto_limit = float(auto)
-            spec.source = "trust-yaml"
-        if upper is not None:
-            spec.approval_limit = float(upper)
+        for r in pol.get("rules", []):
+            t = r.get("type")
+            if t == "spend_threshold":
+                spec.auto_limit = float(r["auto_max"])
+                spec.approval_limit = float(r["approval_max"]) if r.get("approval_max") is not None else None
+                spec.approver_role = r.get("approver_role") or spec.approver_role
+            elif t == "allergen_block":
+                spec.excluded_allergens = list(r.get("excluded") or [])
+                spec.unknown_allergen = r.get("on_unknown", spec.unknown_allergen)
+            elif t == "substitution":
+                tiers = r.get("tiers") or {}
+                spec.substitution = "best_ok" if tiers.get("best") == "allow" else "approval"
+                spec.substitution_role = r.get("approver_role") or spec.substitution_role
+            elif t == "quantity_drift":
+                spec.drift_max_factor = float(r.get("max_factor", 3))
+        spec.standing_orders = list(pol.get("standing_orders") or [])
+        spec.source = f"aimo/trust/policies/{spec.policy_id}.yaml v{pol.get('version')}"
         out[cid] = spec.source
     return out
 
@@ -88,3 +99,6 @@ def _first(flat: dict, keys: tuple[str, ...]):
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             return v
     return None
+
+
+SYNCED = sync_from_trust()

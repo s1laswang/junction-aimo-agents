@@ -59,6 +59,20 @@
 ]
 },
 {
+"productId": "462626",
+"closingTime": "2026-11-12T15:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
 "productId": "462703",
 "closingTime": "2026-11-12T15:00:00+0200",
 "salesBlock": false,
@@ -87,6 +101,20 @@
 ]
 },
 {
+"productId": "463203",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 192.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
 "productId": "463335",
 "closingTime": "2026-11-15T17:00:00+0200",
 "salesBlock": false,
@@ -95,6 +123,20 @@
 {
 "salesBlock": false,
 "availableAmount": 9999999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "463380",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 698.0,
 "availableDate": "2026-11-16",
 "salesUnit": "ST"
 }
@@ -344,6 +386,20 @@
 ]
 },
 {
+"productId": "473625",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 30.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
 "productId": "476240",
 "closingTime": "2026-11-12T15:00:00+0200",
 "salesBlock": false,
@@ -352,6 +408,20 @@
 {
 "salesBlock": false,
 "availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "477424",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 3.0,
 "availableDate": "2026-11-16",
 "salesUnit": "KI"
 }
@@ -860,6 +930,254 @@
 "salesUnit": "KI"
 }
 ]
+},
+{
+"productId": "466090",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 904.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "466799",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 72.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "468417",
+"salesBlock": false,
+"scheduleLines": []
+},
+{
+"productId": "468683",
+"salesBlock": false,
+"scheduleLines": []
+},
+{
+"productId": "469059",
+"salesBlock": false,
+"scheduleLines": []
+},
+{
+"productId": "470308",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 0.0,
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "470699",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 1.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "470999",
+"closingTime": "2026-11-12T14:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "471108",
+"closingTime": "2026-11-12T14:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "471112",
+"closingTime": "2026-11-12T14:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "471178",
+"closingTime": "2026-11-12T14:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "472091",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 149.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "472218",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 95.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "473891",
+"closingTime": "2026-11-12T14:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "474033",
+"closingTime": "2026-11-12T13:30:00+0200",
+"salesBlock": false,
+"logisticModel": "Terminal",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "474235",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 19.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "474686",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 23.0,
+"availableDate": "2026-11-16",
+"salesUnit": "KI"
+}
+]
+},
+{
+"productId": "474957",
+"salesBlock": false,
+"scheduleLines": []
+},
+{
+"productId": "475224",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 130.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "475275",
+"closingTime": "2026-11-15T17:00:00+0200",
+"salesBlock": false,
+"logisticModel": "Stock",
+"scheduleLines": [
+{
+"salesBlock": false,
+"availableAmount": 9999999999.0,
+"availableDate": "2026-11-16",
+"salesUnit": "ST"
+}
+]
+},
+{
+"productId": "475795",
+"salesBlock": false,
+"scheduleLines": []
 }
 ]
 }
