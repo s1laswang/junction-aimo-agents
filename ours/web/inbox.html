@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Approvals - Aimo Trade Gateway</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%231F4E8C%27/%3E%3Cpath d=%27M4 11l4-6 4 6%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%271.5%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/inbox.css">
+</head>
+<body data-view="list">
+<header class="top"><a class="brand" href="/">Aimo Trade Gateway</a><button class="btn btn-quiet menu-btn" type="button" aria-label="Menu" aria-expanded="false"><svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><nav aria-label="Main"><a href="/console.html">Console</a><a href="/inbox.html" aria-current="page">Approvals</a><a href="/audit.html">Audit</a><a href="/admin.html">Mandates</a></nav><div class="right"><span class="tag warn mocktag">mock data</span><select id="customer" aria-label="Customer"></select></div></header>
+<main class="inbox" id="inbox">
+  <section class="pane list" id="listPane" aria-label="Pending approvals">
+    <div class="tools">
+      <h1>Waiting for you <span class="count" id="count">0</span></h1>
+      <span class="tag stop" id="offTag" role="status" hidden>offline, retrying</span>
+      <button class="lk" id="who" type="button"></button>
+    </div>
+    <ol class="cards" id="cards"></ol>
+    <details class="decided" id="decided" hidden><summary>Decided today <span class="count" id="dcount">0</span></summary><ul id="dlist"></ul></details>
+  </section>
+  <section class="pane detail" id="detailPane" aria-label="Order detail"></section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="whoDlg" aria-label="Who is approving?">
+  <form method="dialog">
+    <h2>Who is approving?</h2>
+    <p>Your name is recorded in the audit trail with every decision.</p>
+    <div id="whoField"></div>
+    <div class="row">
+      <button class="act quiet" value="cancel" formnovalidate>Cancel</button>
+      <button class="act primary" value="ok">Continue</button>
+    </div>
+  </form>
+</dialog>
+<script src="/shell.js"></script>
+<script src="/inbox.js"></script>
+</body>
+</html>

@@ -1,0 +1,323 @@
+import argparse
+import asyncio
+import contextlib
+import os
+import json
+import math
+import sys
+import time
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+
+from agents import llm
+
+DEMO = [
+    ("hotel-aurora", "I need 1000 litres of lactose-free milk by Monday"),
+    ("hotel-aurora", "I need 3000 litres of lactose-free milk by Monday for a big event"),
+    ("hospital-tays", "I need 40 kg of gluten-free pasta and 200 litres of oat drink without milk allergens by Friday"),
+    ("school-hervanta", "We need 300 kg of potatoes and 120 kg of minced meat for school lunches by Thursday"),
+]
+
+MCP_CONFIG = """Claude Code:
+  claude mcp add --transport http aimo http://127.0.0.1:8080/mcp --header "X-Agent-Key: <KEY>"
+
+Claude Desktop (claude_desktop_config.json, stdio):
+{
+  "mcpServers": {
+    "aimo": {
+      "command": "<REPO>/.venv/bin/python",
+      "args": ["-m", "aimo.mcp_server"],
+      "cwd": "<REPO>",
+      "env": {"AIMO_AGENT_KEY": "demo-hotel-aurora"}
+    }
+  }
+}"""
+
+
+ALLERGEN_ALIASES = {
+    "nuts": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
+    "nut": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
+    "peanut": {"peanut", "peanuts"},
+    "peanuts": {"peanut", "peanuts"},
+    "tree nuts": {"tree nuts", "tree nut"},
+    "tree nut": {"tree nuts", "tree nut"},
+    "milk": {"milk", "lactose"},
+    "dairy": {"dairy", "milk", "lactose"},
+    "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
+    "egg": {"egg", "eggs"},
+    "eggs": {"egg", "eggs"},
+    "soy": {"soy", "soya"},
+    "soya": {"soy", "soya"},
+    "shellfish": {"shellfish", "crustaceans"},
+    "crustaceans": {"shellfish", "crustaceans"},
+}
+
+
+def _day(s):
+    return str(s)[:10] if s else None
+
+
+def _allergen(a):
+    s = str(a).strip().lower()
+    for p in ("may_contain:", "may:"):
+        if s.startswith(p):
+            return s[len(p):].strip()
+    return s
+
+
+def usable(offer, need_item, deliver_by):
+    if offer.get("sales_block"):
+        return False
+    if offer.get("unit_price_net") is None:
+        return False
+    amt = offer.get("available_amount")
+    if amt is not None and amt <= 0:
+        return False
+    d = _day(offer.get("available_date"))
+    if d and deliver_by and d > _day(deliver_by):
+        return False
+    banned = set()
+    for a in (need_item.get("constraints") or {}).get("exclude_allergens") or []:
+        k = _allergen(a)
+        if k:
+            banned |= {k} | ALLERGEN_ALIASES.get(k, set())
+    if banned & {_allergen(a) for a in (offer.get("product") or {}).get("allergens") or [] if _allergen(a)}:
+        return False
+    return True
+
+
+BASE = {"kg": 1, "g": 0.001, "l": 1, "dl": 0.1, "cl": 0.01, "ml": 0.001}
+
+
+def units_for(offer, need_item):
+    us = (offer.get("product") or {}).get("unit_size") or {}
+    f, n = BASE.get(str(us.get("unit", "")).lower()), BASE.get(str(need_item.get("unit", "")).lower())
+    val, qty = us.get("value"), need_item.get("quantity")
+    if f and n and val and val > 0 and qty and qty > 0:
+        return max(1, math.ceil(qty * n / (val * f) - 1e-9))
+    return max(1, math.ceil(offer.get("units_needed") or 0))
+
+
+def rank(offers, need_item):
+    return sorted(
+        offers,
+        key=lambda o: (
+            (o["unit_price_net"] if o.get("unit_price_net") is not None else float("inf")) * units_for(o, need_item),
+            -(o.get("reliability") or 0),
+        ),
+    )
+
+
+def pick(need_item, offers, deliver_by, first=None):
+    ok = rank([o for o in offers if usable(o, need_item, deliver_by)], need_item)
+    if first is not None:
+        ok.sort(key=lambda o: o["product_id"] != first)
+    chosen, left = [], 1.0
+    for o in ok:
+        if left <= 1e-9:
+            break
+        need_units = units_for(o, need_item)
+        amt = o.get("available_amount")
+        cap = 1.0 if amt is None else min(1.0, amt / need_units)
+        take = min(cap, left)
+        qty = math.ceil(take * need_units - 1e-9)
+        if amt is not None:
+            qty = min(qty, math.floor(amt))
+        if qty < 1:
+            continue
+        item = {"product_id": o["product_id"], "quantity": qty, "offer": o}
+        if o.get("substitute_for"):
+            item["substitute_for"] = o["substitute_for"]
+        chosen.append(item)
+        left -= min(qty / need_units, left)
+    return chosen, max(left, 0.0)
+
+
+def _err_info(e):
+    while hasattr(e, "exceptions") and e.exceptions:
+        e = e.exceptions[0]
+    msg = str(e).strip()
+    idx = msg.find("{")
+    if idx >= 0:
+        try:
+            d = json.loads(msg[idx:])
+            if isinstance(d, dict) and "code" in d:
+                return str(d["code"]), d.get("text") or msg
+        except Exception:
+            pass
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            d = resp.json()
+            if isinstance(d, dict) and "code" in d:
+                return str(d["code"]), d.get("text") or msg
+        except Exception:
+            pass
+        return f"HTTP_{resp.status_code}", msg
+    return None, msg
+
+
+def _data(res):
+    if res.is_error:
+        raise RuntimeError("".join(getattr(c, "text", "") for c in res.content))
+    sc = res.structured_content
+    if sc is not None:
+        return sc["result"] if set(sc) == {"result"} else sc
+    return json.loads("".join(c.text for c in res.content))
+
+
+async def _call(s, name, args):
+    return _data(await s.call_tool(name, args))
+
+
+@contextlib.asynccontextmanager
+async def _session(url, key, stdio):
+    if stdio:
+        params = StdioServerParameters(command=sys.executable, args=["-m", "aimo.mcp_server"],
+                                       env={**os.environ, "AIMO_AGENT_KEY": key})
+        async with stdio_client(params) as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                yield s
+        return
+    async with create_mcp_http_client(headers={"X-Agent-Key": key}) as http:
+        async with streamable_http_client(url, http_client=http) as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                yield s
+
+
+async def _run(text, customer, key, url, log, poll, interval, stdio=False, ask_human=False):
+    out = {"need": None, "chosen": [], "quote": None, "order": None, "log": log}
+    async with _session(url, key, stdio) as s:
+        need = await _call(s, "parse_request", {"text": text, "customer": customer})
+        out["need"] = need
+        deliver_by = need.get("deliver_by")
+        log.append(f"Understood the request for {customer}: " + "; ".join(
+            f"{i['quantity']:g} {i['unit']} {i['query']}" for i in (need.get("items") or [])) + f", delivery by {_day(deliver_by)}.")
+        try:
+            res = await _call(s, "get_offers", need)
+        except RuntimeError as e:
+            if _err_info(e)[0]:
+                raise
+            res = await _call(s, "get_offers", {"need": need})
+        chosen, shortfalls = [], []
+        for entry in (res or {}).get("items") or []:
+            ni, offers = entry["need_item"], entry.get("offers") or []
+            log.append(f"Found {len(offers)} offers for {ni['query']}.")
+            first = llm.choose(text, [o for o in offers if usable(o, ni, deliver_by)])
+            got, left = pick(ni, offers, deliver_by, first)
+            if not got:
+                log.append(f"No offer for {ni['query']} is available in time and within constraints.")
+            for c in got:
+                o = c["offer"]
+                rel = o.get("reliability")
+                log.append(f"Chose {c['quantity']} x {o['product']['name']} at {o['unit_price_net']:.2f} {o['currency']} net"
+                           + (f", delivery reliability {rel:.0%}" if rel is not None else "")
+                           + f", available {_day(o.get('available_date'))}.")
+            sf = entry.get("shortfall") or 0
+            if left > 1e-6:
+                msg = f"Shortfall: {left:.0%} of {ni['query']} cannot be covered."
+                log.append(msg)
+                shortfalls.append(msg)
+            elif sf > 1e-6:
+                pct = f"{sf / ni['quantity']:.0%}" if ni.get("quantity") else f"{sf:g}"
+                msg = f"Shortfall: {pct} of {ni['query']} cannot be covered."
+                log.append(msg)
+                shortfalls.append(msg)
+            chosen += got
+        out["chosen"] = chosen
+        if not chosen:
+            log.append("Nothing to order.")
+            return out
+        merged = {}
+        for c in chosen:
+            k = (c["product_id"], c.get("substitute_for"))
+            if k in merged:
+                merged[k]["quantity"] += c["quantity"]
+            else:
+                merged[k] = {
+                    "product_id": c["product_id"],
+                    "quantity": c["quantity"],
+                    **({"substitute_for": c["substitute_for"]} if c.get("substitute_for") else {}),
+                }
+        lines = list(merged.values())
+        quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(deliver_by)})
+        out["quote"] = quote
+        log.append(f"Signed quote {quote['quote_id']}: {quote['total_net']:.2f} {quote['currency']} net, valid until {quote['valid_until']}.")
+        place_args = {"quote_id": quote["quote_id"], "jws": quote["jws"]}
+        if ask_human or shortfalls:
+            place_args["ask_human"] = True
+            if shortfalls:
+                place_args["note"] = "; ".join(shortfalls)
+        order = await _call(s, "place_order", place_args)
+        out["order"] = order
+        d = order["decision"]
+        why = " ".join(r["text"] for r in (d.get("reasons") or []))
+        if d["outcome"] == "auto":
+            log.append(f"Order {order['order_id']} placed automatically within mandate. {why}".strip())
+        elif d["outcome"] == "blocked":
+            log.append(f"Order {order['order_id']} blocked. {why}".strip())
+        else:
+            log.append(f"Order {order['order_id']} needs human approval. {why}".strip())
+            for _ in range(max(0, poll)):
+                if order["status"] != "pending_approval":
+                    break
+                await asyncio.sleep(interval)
+                order = await _call(s, "get_order", {"order_id": order["order_id"]})
+            out["order"] = order
+            log.append(f"Order {order['order_id']} is now {order['status']}.")
+    return out
+
+
+def run(text, customer, key=None, url="http://127.0.0.1:8080/mcp", poll=0, interval=2.0, stdio=False, ask_human=False):
+    log = []
+    out = asyncio.run(_run(text, customer, key or "demo-" + customer, url, log, poll, interval, stdio, ask_human=ask_human))
+    summary = llm.explain({"request": text, "log": log})
+    if summary:
+        log.append(summary)
+    return out
+
+
+def main():
+    p = argparse.ArgumentParser(prog="agents.buyer")
+    p.add_argument("text", nargs="?")
+    p.add_argument("--customer", default="hotel-aurora")
+    p.add_argument("--key")
+    p.add_argument("--url", default="http://127.0.0.1:8080/mcp")
+    p.add_argument("--poll", type=int, default=30)
+    p.add_argument("--demo", action="store_true")
+    p.add_argument("--stdio", action="store_true")
+    p.add_argument("--mcp-config", action="store_true")
+    p.add_argument("--ask-human", action="store_true")
+    a = p.parse_args()
+    if a.mcp_config:
+        print(MCP_CONFIG)
+        return
+    if a.demo:
+        for c, t in DEMO:
+            print(f"== {c}: {t}")
+            try:
+                print("\n".join(run(t, c, a.key, a.url, min(a.poll, 2), stdio=a.stdio)["log"]))
+            except Exception as e:
+                code, txt = _err_info(e)
+                print(f"failed ({code}): {txt}" if code else f"failed: {txt}")
+        return
+    if not a.text:
+        p.error("text is required")
+    kw = {"stdio": a.stdio, **({"ask_human": True} if a.ask_human else {})}
+    try:
+        out = run(a.text, a.customer, a.key, a.url, a.poll, **kw)
+    except Exception as e:
+        code, txt = _err_info(e)
+        print(f"failed ({code}): {txt}" if code else f"failed: {txt}")
+        sys.exit(1)
+    print("\n".join(out["log"]))
+    o = out["order"]
+    sys.exit(0 if o and o.get("status") not in ("blocked", "rejected", "expired") and (o.get("decision") or {}).get("outcome") != "blocked" else 1)
+
+
+if __name__ == "__main__":
+    main()
