@@ -1,25 +1,28 @@
 # Pitch, QA and docs report
 
-Branch `team/pitch`. Last updated Sat 14 Nov 2026, 18:35 Helsinki. Round 2: merged origin/main at 18:20 (trust r2, gateway r3, catalog r3, buyer r2–r3; 138 tests).
+> **From Sat 14 Nov 23:25 the submit session (S4, [submit.md](submit.md)) and `fr8/valio/docs` coordinate these docs.** Gate runs and sanitized montage evidence: [submit.md](submit.md).
+
+Branch `team/pitch` / `fr8/valio/docs`. Last updated Sat 14 Nov 2026, 23:45 Helsinki. Round 4 truth pass: reconciled all docs against merged `main` + `fr8/valio/main` (human-only approvals with `X-Approver-Pin` / `X-Approver-Session`, known-customer enforcement across `/v1`, catalog search, MCP and buyer runs, `injection_screen` on plan lines and candidates, 13 MCP tools, 44/44 conformance on two wholesalers, keyless scripted buyer fallback, `409 requote_needed` price-change beat, S5 UI/voice approval, wind tunnel `wt640` + `wt2560` tables, and `docs/pitch/QA.md`).
 
 ## Status
 | Deliverable | File | State |
 |---|---|---|
-| README (quickstart, five pillars, mermaid architecture, connect your own agent, curl walkthrough, repo map, team) | `README.md` | done; commands verified (see below) |
-| Live demo script, click by click, criteria mapping, fallbacks, robustness montage beat (`aimo demo --montage`) | `docs/DEMO.md` | done; wind-tunnel line TODO |
-| DeepMind write-up | `docs/GEMINI.md` | done; montage, cost per order, caching and escalation share from docs/demo-montage.md; usage over 8 ledgers at Sat 18:27; wind tunnel TODO |
-| Junction submission text + short version (425 chars) | `docs/SUBMISSION.md` | done; live montage table in; wind tunnel numbers and links TODO |
-| Architecture, milk data flow, trust summary, production path | `docs/ARCHITECTURE.md` | done |
-| Deck outline, 8 slides with speaker notes (for Chintufp) | `docs/pitch/deck.md` | done; slide 5 has the 6/6 montage, wind tunnel table TODO; slide 7 has cost per order |
+| README (quickstart, five pillars, mermaid architecture, connect your own agent, curl walkthrough, repo map, team) | `README.md` | done; 13 MCP tools, human approval header fixed, reconciled pytest + conformance counts |
+| Live demo script, click by click, criteria mapping, fallbacks, permissions attack, `409 requote_needed` beat, montage | `docs/DEMO.md` | done; sign-in chip, voice confirm, wind-tunnel line, `AIMO_NOW` / `AIMO_REPLAY` |
+| DeepMind write-up | `docs/GEMINI.md` | done; montage, cost per order, caching, escalation share, windtunnel `wt640`/`wt2560`, thinking benchmark, judge rubric |
+| Junction submission text + short version (425 chars) | `docs/SUBMISSION.md` | done; public repo URL, recipe/seller MCP + windtunnel citations, reconciled counts |
+| Architecture, milk data flow, trust summary, production path | `docs/ARCHITECTURE.md` | done; human-only approvals, windtunnel + openness components |
+| Deck outline, 8 slides with speaker notes (for Chintufp) | `docs/pitch/deck.md` | done; slide 5 `wt640`/`wt2560` table, slide 7 cost per order, slide 8 repo URL |
+| Judge Q&A (20 hard questions citing `aimo/` files and `NUMBERS.md`) | `docs/pitch/QA.md` | done |
 | Gemini ledger summariser | `docs/pitch/ledger_stats.py` | done |
 | HTTP QA of the milk flow (no Gemini, about 3 s) | `docs/pitch/qa_milk_flow.py` | done, passes on merged main |
-| README screenshot | `docs/pitch/img/approval-ui.png` | copied from the frontend's live run; re-capture after the freeze |
+| README screenshot | `docs/pitch/img/approval-ui.png` (`docs/reports/frontend/s5-*.png` captured in S5) | done |
 
 ## Verified (on merged main, Sat 14 Nov 14:55–15:05, port 8020, fresh state DB in /tmp)
 - `uv run aimo serve`: healthz shows every integration live; `/ui/` returns 200.
 - `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8020`: MILK FLOW OK (search, offers with `served_from=live`, plan best 464306 × 1000 = €1,010, signed quote, pending_approval with spend and 3.3× drift, wrong hash → 409, approve → placed AP, 38-line audit report, verify ok).
 - `uv run aimo demo --base-url http://localhost:8020 --auto-approve-as anna@hotel-aurora.example`: placed in 38 s, escalated to gemini-4-hydrogen HIGH, 3 needs-approval reasons.
-- `uv run aimo mcp-check` (HTTP) and `uv run aimo mcp-check stdio`: 9 tools listed, search and offers return data.
+- `uv run aimo mcp-check` (HTTP) and `uv run aimo mcp-check stdio`: 9 trade tools listed at M1 (now 13 tools on merged main after adding recipes, drift and `propose_offer`), search and offers return data.
 - README curl commands in both bash and zsh (array form `"${H[@]}"`).
 - `POST /v1/demo/tamper/3` → verify reports `broken_at: 3`; `untamper` → ok.
 - `uv run --extra dev pytest -q`: 106 passed.
@@ -88,8 +91,8 @@ All reproduced over HTTP on merged main with headers `X-Customer-Id: hotel-auror
 2. ~~Fix issues 1 and 2 before the freeze?~~ Done in round 2 and verified.
 3. Public repo link, video link and whether there is a live URL, for `docs/SUBMISSION.md`.
 
-## Pending
-- Wind tunnel numbers (DEMO 2:35–2:50 line, deck slide 5 table, SUBMISSION "Robustness", GEMINI scenario count, judge results and thinking comparison). All marked TODO.
-- Note on run times: the CEO brief said about 30–39 s per scenario; docs/demo-montage.md measures 22.13–36.85 s (drift is the 22 s one, because it stops before ordering). The docs quote the file: 22–37 s.
-- Final Gemini ledger numbers: re-run `docs/pitch/ledger_stats.py` with every worktree's ledger before submitting (command in GEMINI.md §5).
-- Re-capture screenshots from main after the freeze; video link.
+## Closed in Round 4
+- Wind tunnel numbers folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md`, and `NUMBERS.md` from `docs/windtunnel-results.md`.
+- Note on run times: `docs/demo-montage.md` measures 22.13-36.85 s (drift stops before ordering at 22.13 s); docs quote 22-37 s.
+- Reconciled test and conformance counts across all docs (`pytest -q`, `scenarios.run_all` 8/8, `conformance` 44/44 on two wholesalers).
+- Human-only slots remaining for freeze: backup video URL and live `cloudflared` tunnel URL in `docs/SUBMISSION.md`.
