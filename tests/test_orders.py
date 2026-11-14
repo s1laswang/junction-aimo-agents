@@ -1,7 +1,9 @@
 import sqlite3
 import sys
+import threading
 import time
 import types
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -264,3 +266,34 @@ def test_zero_connection_or_lock_leaks(env, monkeypatch, tmp_path):
     finally:
         probe.close()
     assert real_audit.verify() == (True, None)
+
+
+def test_concurrent_place_respects_weekly_cap(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "weekly_race.db"))
+
+    def decide_weekly(q, mandate, products, spent=0.0, substitutions=()):
+        time.sleep(0.01)
+        if spent + q.total_net > 250.0:
+            return Decision(outcome="needs_approval", reasons=[Reason(code="OVER_WEEK_LIMIT", text="over weekly limit")])
+        return Decision(outcome="auto", reasons=[Reason(code="WITHIN_MANDATE", text="within mandate")])
+
+    stub(monkeypatch, "policy", decide=decide_weekly)
+    quotes_in = [quote(f"q_race_{i}", 100.0) for i in range(5)]
+    for q in quotes_in:
+        env[q.quote_id] = q
+    barrier = threading.Barrier(len(quotes_in))
+
+    def run_place(q):
+        barrier.wait()
+        return orders.place("hotel-aurora", "a1", req(q))
+
+    with ThreadPoolExecutor(max_workers=len(quotes_in)) as ex:
+        placed = list(ex.map(run_place, quotes_in))
+
+    confirmed = [o for o in placed if o.status == "confirmed"]
+    held = [o for o in placed if o.status == "pending_approval"]
+    assert len(confirmed) == 2
+    assert len(held) == 3
+    assert all(o.decision.reasons[0].code == "OVER_WEEK_LIMIT" for o in held)
+    assert orders.spent_this_week("hotel-aurora") == 200.0
+
