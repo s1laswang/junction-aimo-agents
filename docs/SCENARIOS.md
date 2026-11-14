@@ -5,20 +5,21 @@ These scenarios are ported from Momin's `junction26-valio` (`scenarios/s0..s7`, 
 ## Run it
 ```bash
 uv run python -m scenarios.run_all                  # boot fresh gateway (free port 88xx, scratch data dir), run s0..s7
+AIMO_REPLAY=tests/fixtures/snapshot uv run python -m scenarios.run_all   # keyless against recorded replay snapshot
 uv run python -m scenarios.run_all --only s2 -v     # one scenario, every check and narrative line
 uv run python -m scenarios.run_all --base http://127.0.0.1:8000   # against a server you already run
 uv run python -m scenarios.s6_proactive_seller --base http://127.0.0.1:8000   # a single script
 AIMO_LIVE=1 uv run pytest -q tests/test_scenarios_momin.py -k live   # the same suite as a pytest test
 uv run pytest -q tests/test_scenarios_momin.py      # offline unit tests (fake offers, temp state DB)
 ```
-- **Requirements:** `AIMO_API_KEY` in `.env`, because offers come from the live Valio Aimo mock API, and `data/catalog.sqlite` (run `uv run aimo serve` once to build it).
+- **Requirements:** `scenarios.run_all` runs live against the Valio Aimo mock API with `AIMO_API_KEY` in `.env` (**8/8 PASS, 88 checks**; see [docs/NUMBERS.md](NUMBERS.md)), and also supports recorded replay (`AIMO_REPLAY=tests/fixtures/snapshot` or `data/windtunnel/snapshot`) when keyless; needs `data/catalog.sqlite` (run `uv run aimo serve` once to build it).
 - **Scratch data dir:** the runner symlinks the data files, catalog, embeddings and cache into a temp dir. The state DB and signing key there are new for each run, so no one's state is touched. `--keep` keeps the dir, including `server.log`.
-- **App the runner serves:** `scenarios.app_with_extras:app`, which is our gateway plus the ported extras. Once the 2-line hook in `aimo/gateway/extras.py` is applied to app.py and mcp_server.py, this is identical to `aimo serve`.
+- **App the runner serves:** `scenarios.app_with_extras:app`, which is identical to `aimo serve`: `aimo/gateway/extras.py` is wired directly into `aimo/gateway/app.py` (HTTP routes) and `aimo/gateway/mcp_server.py` (13 MCP tools in total), and `extras.install()` / `register_mcp_tools()` are idempotent.
 
-## Result (Sat 14 Nov, ~19:00 Helsinki, live mock API)
+## Result (re-verified Sun 15 Nov, 00:18 Helsinki, live mock API)
 | | Scenario | What it shows | Checks |
 |---|---|---|---|
-| PASS | s0_guardrails | 1,000 L milk (€1,010) is over the €500 limit, so the order goes to `pending_approval` (procurement_manager) and appears in the inbox. A tampered quote_hash gets 409. An agent as approver gets 403. A named human approves and the order is placed (AP). Unregistered `mallory` gets 403 when quoting. The audit chain verifies. | 11 |
+| PASS | s0_guardrails | 1,000 L milk (€1,010) is over the €500 limit, so the order goes to `pending_approval` (procurement_manager) and appears in the inbox. A tampered quote_hash gets 409. An agent as approver gets 403 (even when naming a real human approver). A named human approves and the order is placed (AP). Unregistered `mallory` gets 403 when quoting. The audit chain verifies. | 12 |
 | PASS | s1_milk | Hero flow: the plan covers 1,000 L and every line keeps FREE_FROM_LACTOSE. The usual 463038 is rejected because its cut-off passed. Offers carry live provenance. A third party verifies the quote against `/.well-known/jwks.json`. The decision has rule hits, the audit report is readable, and MCP lists the core and ported tools. | 11 |
 | PASS | s2_recipe_order | "Lasagne for 120 on Friday at Hotel Aurora" becomes 8 ingredient Needs. Quantities scale with portions and the hotel's lactose-free house dairy is applied. One batched offers call feeds an 8-line signed quote (€341). Verdict: **needs_approval** (out-of-scope categories, unverified substitutes), then the procurement manager approves and the order is placed. | 11 |
 | PASS | s3_event_substitution | Carbonara for 400 on the next delivery day. The planned cream is stocked out with `X-Aimo-Faults`, so the planner substitutes (with reasons), the gateway re-verifies the tiers, and a human approves before placement. | 9 |
@@ -27,7 +28,7 @@ uv run pytest -q tests/test_scenarios_momin.py      # offline unit tests (fake o
 | PASS | s6_proactive_seller | The seller proposes a cheaper equivalent (464306 for 463038, saves about €11/week) with a why and a non-binding policy preview (needs_approval). The seller gets 403 on accept (`seller_cannot_order`) and 403 on quoting. The buyer accepts, which produces a signed quote and a policy decision, and the order belongs to `buyer-1`. A second accept gets 409. Audit shows `agent:valio-aimo/seller-1` and the refused attempt. A milk product proposed to the school previews as reject. | 14 |
 | PASS | s7_drift | Milk volume +50% ("8 → 12 cases"). A croissant price shock (+12%, injected) is flagged with route approval, and the faulted price never becomes the baseline. School and hospital flags are plain language, allergen flags never route to auto, checks are audit-logged, and an unknown customer gets 404. | 13 |
 
-**8/8 passed, about 11 s in total.** The suite was run several times. Upstream is the live mock API, so a cut-off can move results: after Sun 17:00 Monday delivery closes for stock milk, and s0, s1 and s4 then need a later date (`next_monday()` in `_common.py`).
+**8/8 passed (88 checks), about 11 s in total.** The suite was run several times. Upstream is the live mock API unless `AIMO_REPLAY` is set, so a live cut-off can move results: after Sun 17:00 Monday delivery closes for stock milk, and s0, s1 and s4 then need a later date (`next_monday()` in `_common.py`) or `AIMO_REPLAY` / `AIMO_NOW`.
 
 ## Differences from Momin's suite
 - **API and identity:** his checks used his API (`/v1/needs/parse`, `X-Agent-Key`, his customers `hospital-tays` / `school-hervanta`). Ours use `X-Customer-Id` / `X-Agent-Id`, `Need` → `/v1/plan`, signed `Quote` → `quote_hash` orders, and our customers.
@@ -37,7 +38,8 @@ uv run pytest -q tests/test_scenarios_momin.py      # offline unit tests (fake o
 ## Openness: conformance suite and a second wholesaler
 Besides s0–s7, which test *our* behaviour, the conformance suite tests *the profile*. Any wholesaler gateway can be checked from the outside with the suite's own crypto checks. See [docs/OPENNESS.md](OPENNESS.md).
 ```bash
-AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8000                        # Valio Aimo gateway: 44/44 PASS
+AIMO_APPROVER_PIN=<12-char-pin> make conformance                                                                  # Valio Aimo gateway (:8000): 44/44 PASS
+AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8000                        # explicit --base equivalent
 uv run uvicorn toywholesaler.app:app --port 8820                                                                  # Nordic Bakery Supply (synthetic, offline)
 AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"    # 44/44 PASS
 uv run pytest -q tests/test_openness.py                                                                           # all 44 checks, offline, in pytest
