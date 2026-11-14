@@ -89,3 +89,15 @@ def test_audit_trail_verified(client):
     assert r.status_code == 200
     d = r.json()
     assert d["verified"] == {"ok": True, "bad_seq": None} and d["checkpoint"]
+
+
+def test_products_endpoints_graceful_when_catalog_file_missing(client, tmp_path, monkeypatch):
+    from aimo import catalog
+
+    monkeypatch.setenv("AIMO_DATA_DIR", str(tmp_path / "empty_data"))
+    catalog.reset()
+    r_list = client.get("/v1/products?q=milk")
+    assert r_list.status_code == 200 and r_list.json() == []
+    r_one = client.get("/v1/products/464073")
+    assert r_one.status_code == 404 and r_one.json()["code"] == "not_found"
+

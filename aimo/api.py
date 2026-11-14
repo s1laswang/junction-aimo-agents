@@ -134,12 +134,18 @@ def scope(p, customer):
 
 def search_products(q="", constraints=None, limit=50):
     from aimo import catalog
-    return jsonable_encoder(catalog.search(q, constraints or Constraint(), limit))
+    try:
+        return jsonable_encoder(catalog.search(q, constraints or Constraint(), limit))
+    except FileNotFoundError:
+        return []
 
 
 def get_product(product_id):
     from aimo import catalog
-    pr = catalog.get(product_id)
+    try:
+        pr = catalog.get(product_id)
+    except FileNotFoundError:
+        pr = None
     if pr is None:
         raise Err(404, {"code": "not_found", "text": f"No product {product_id}."})
     return jsonable_encoder(pr)

@@ -9,12 +9,29 @@ CODE_NAMES = {
     "NL": "lupin", "UM": "molluscs", "ML": "lactose", "UW": "wheat", "GB": "barley", "GO": "oats", "NR": "rye",
 }
 ALIASES = {
-    "milk": {"milk", "lactose"}, "maito": {"milk", "lactose"}, "dairy": {"milk", "lactose"}, "lactose": {"milk", "lactose"},
-    "egg": {"egg"}, "eggs": {"egg"}, "fish": {"fish"}, "crustaceans": {"crustaceans"}, "shellfish": {"crustaceans", "molluscs"},
-    "soy": {"soy"}, "soya": {"soy"}, "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
-    "wheat": {"wheat", "gluten"}, "barley": {"barley", "gluten"}, "rye": {"rye", "gluten"}, "oat": {"oats"}, "oats": {"oats"},
-    "mustard": {"mustard"}, "sesame": {"sesame"}, "celery": {"celery"}, "peanut": {"peanuts"}, "peanuts": {"peanuts"},
-    "nuts": {"tree nuts", "peanuts"}, "tree nuts": {"tree nuts"}, "sulphites": {"sulphites"}, "lupin": {"lupin"},
+    "milk": {"milk", "lactose"}, "maito": {"milk", "lactose"}, "mjölk": {"milk", "lactose"},
+    "dairy": {"milk", "lactose"}, "lactose": {"milk", "lactose"}, "laktoosi": {"milk", "lactose"},
+    "laktos": {"milk", "lactose"},
+    "egg": {"egg"}, "eggs": {"egg"}, "muna": {"egg"}, "kananmuna": {"egg"}, "ägg": {"egg"},
+    "fish": {"fish"}, "kala": {"fish"}, "fisk": {"fish"},
+    "crustaceans": {"crustaceans"}, "äyriäiset": {"crustaceans"},
+    "shellfish": {"crustaceans", "molluscs"}, "molluscs": {"molluscs"}, "nilviäiset": {"molluscs"},
+    "soy": {"soy"}, "soya": {"soy"}, "soija": {"soy"},
+    "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
+    "gluteeni": {"gluten", "wheat", "barley", "rye", "oats"},
+    "wheat": {"wheat", "gluten"}, "vehnä": {"wheat", "gluten"},
+    "barley": {"barley", "gluten"}, "ohra": {"barley", "gluten"},
+    "rye": {"rye", "gluten"}, "ruis": {"rye", "gluten"},
+    "oat": {"oats"}, "oats": {"oats"}, "kaura": {"oats"},
+    "mustard": {"mustard"}, "sinappi": {"mustard"},
+    "sesame": {"sesame"}, "seesami": {"sesame"},
+    "celery": {"celery"}, "selleri": {"celery"},
+    "peanut": {"peanuts"}, "peanuts": {"peanuts"}, "maapähkinä": {"peanuts"},
+    "nuts": {"tree nuts", "peanuts"}, "nut": {"tree nuts", "peanuts"},
+    "pähkinä": {"tree nuts", "peanuts"}, "pähkinät": {"tree nuts", "peanuts"},
+    "tree nuts": {"tree nuts"}, "tree nut": {"tree nuts"},
+    "sulphites": {"sulphites"}, "sulfites": {"sulphites"}, "sulfiitit": {"sulphites"},
+    "lupin": {"lupin"}, "lupiini": {"lupin"},
 }
 GLUTEN_HARD = {"gluten", "wheat", "barley", "rye"}
 LACTOSE_NAME = re.compile(r"lactose[- ]free|laktoositon|laktosfri")
@@ -25,7 +42,7 @@ def _present(product):
     out = set()
     for a in product.allergens:
         a = str(a).strip()
-        a = a.split(":", 1)[-1] if a.lower().startswith("may_contain:") else a
+        a = a.split(":", 1)[-1] if a.lower().startswith(("may_contain:", "may:")) else a
         out.add(CODE_NAMES.get(a.upper(), a.lower()))
     return out
 
@@ -35,7 +52,7 @@ def _labels(product):
 
 
 def allergen_safe(product: Product, constraints: Constraint, exclude_allergens: list[str]) -> bool:
-    names = {str(a).strip().lower() for a in [*constraints.exclude_allergens, *exclude_allergens]}
+    names = {str(a).strip().lower() for a in [*constraints.exclude_allergens, *exclude_allergens] if str(a).strip()}
     if not (names or constraints.lactose_free or constraints.gluten_free):
         return True
     if not product.allergens and not product.labels:
@@ -43,10 +60,11 @@ def allergen_safe(product: Product, constraints: Constraint, exclude_allergens: 
     present, labels, name = _present(product), _labels(product), product.name.lower()
     lf = "free_from_lactose" in labels or bool(LACTOSE_NAME.search(name))
     for a in names:
+        a = CODE_NAMES.get(a.upper(), a)
         mapped = ALIASES.get(a, {a})
         if a not in ALIASES and a not in CODE_NAMES.values():
             return False
-        if mapped & present and not (a in ("lactose",) and lf):
+        if mapped & present and not (a in ("lactose", "laktoosi", "laktos") and lf):
             return False
     if constraints.lactose_free and not lf:
         return False
@@ -279,9 +297,10 @@ def rank_substitutes(item: NeedItem, offers: list[Offer], exclude_allergens: lis
             cands.append(o.model_copy(update={"match_score": m}))
     if not cands:
         return []
+    max_up = max(_unit_price(x, item)[0] for x in cands) or 1.0
     key_best = lambda o: (-o.match_score, -(o.reliability or 0), _unit_price(o, item)[0])
     key_good = lambda o: (_unit_price(o, item)[0], -o.match_score)
-    key_better = lambda o: (-(o.match_score * 0.5 + (o.reliability or 0) * 0.3 - _unit_price(o, item)[0] / max(_unit_price(x, item)[0] for x in cands) * 0.2), o.product_id)
+    key_better = lambda o: (-(o.match_score * 0.5 + (o.reliability or 0) * 0.3 - _unit_price(o, item)[0] / max_up * 0.2), o.product_id)
     picked = []
     for tier, key in (("good", key_good), ("best", key_best), ("better", key_better)):
         pool = [o for o in cands if o.product_id not in {p.product_id for p, _ in picked}]
@@ -302,6 +321,10 @@ def safe_alternatives(item: NeedItem, exclude_allergens: list[str]) -> list[tupl
     out = []
     for o in recipe_swaps(item.query, c):
         alt = item.model_copy(update={"query": o["query"], "quantity": item.quantity * o["ratio"], "constraints": c})
-        if any(allergen_safe(p, c, []) and match_score(alt, p) >= MIN_MATCH for p in catalog.search(alt.query, c, limit=50)):
+        try:
+            found = catalog.search(alt.query, c, limit=50)
+        except FileNotFoundError:
+            found = []
+        if any(allergen_safe(p, c, []) and match_score(alt, p) >= MIN_MATCH for p in found):
             out.append((alt, o["why"]))
     return out
