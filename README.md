@@ -6,8 +6,8 @@ Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" chall
 
 > A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L dispenser box missed its order cut-off (Thu 12 Nov 15:00, real mock-API data). The gateway plans a same-brand substitute (Valio Eila 1 L, 464306, €1.01/L, €1,010 total), issues an Ed25519-signed quote, and the hotel's own policy says **needs approval**: €1,010 is over the €500 auto limit and 3.3× the usual weekly milk volume. The procurement manager approves the exact quote hash. The order is placed (Peppol response `AP`), and the whole story is in a hash-chained, signed audit log that anyone can verify.
 
-![Approval UI: signed quote, policy verdict, approve](docs/pitch/img/approval-ui.png)
-<!-- TODO(screenshot): capture /ui approval tab after the frontend merge. Frontend has candidate shots on team/frontend in docs/reports/frontend/*.png -->
+![Approval UI: the agent paused for the procurement manager, every rule explained, order placed with Peppol AP](docs/pitch/img/approval-ui.png)
+<!-- Screenshot from the frontend engineer's live integration run (team/frontend, Sat 14 Nov 14:45). TODO: re-capture from main after the freeze. -->
 
 ## Quickstart (one command)
 
