@@ -35,7 +35,7 @@ Nothing here is live. This is the plan for exposing the gateway after the demo, 
 - [ ] Serve https only so `X-Agent-Key` and `X-Admin-Key` headers never travel in cleartext.
 - [ ] Rate-limit `/v1/*` and `/mcp` at the edge, and keep `AIMO_CACHE_DIR` (`var/cache`) persistent so `aimo/valio.py` continues batching (1,000 products per call) and caching shared Valio API responses.
 - [ ] Persist `AIMO_DB` and `AIMO_KEY_DIR` on a volume so single-use quote state, the hash-chained audit ledger, and Ed25519 keys survive container restarts.
-- [ ] Run `.venv/bin/python scripts/smoke_demo.py --url https://<public-host>` before opening traffic to verify `/health`, `/.well-known/*`, `/openapi.json`, all 5 UI views, `/mcp`, and signed checkpoint verification.
+- [ ] Run `.venv/bin/python scripts/smoke_demo.py --url https://<public-host>` (or `make smoke` locally) before rotating demo keys and opening traffic to verify `/health`, `/.well-known/*`, `/openapi.json`, all 5 UI views, `/v1/mandate` auth boundary, `/mcp`, and signed checkpoint verification.
 
 ## Key rotation
 

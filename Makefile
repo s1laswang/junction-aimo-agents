@@ -3,7 +3,7 @@ PY = .venv/bin/python
 DEMO_DB = var/demo.db
 SCEN_PORT = $(shell echo $$(($(PORT)+1)))
 
-.PHONY: setup check run test unit mcp scenarios demo scen stage
+.PHONY: setup check run test unit smoke mcp scenarios demo scen stage
 
 check:
 	@test -e data || { echo "missing data/: run ln -s ~/aimo-agents/data data"; exit 1; }
@@ -21,6 +21,9 @@ test: setup
 
 unit:
 	$(PY) -m pytest -q
+
+smoke:
+	$(PY) scripts/smoke_demo.py --inprocess
 
 mcp: setup
 	$(PY) -m aimo.mcp_server
