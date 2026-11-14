@@ -116,6 +116,9 @@ cleanup() {
 main() {
   cd "$ROOT"
   export PATH="${PATH}:${HOME}/.local/bin"
+  if [ -n "${UV_PROJECT_ENVIRONMENT:-}" ]; then
+    export UV_PROJECT_ENVIRONMENT
+  fi
   TMP_ACCEPT="$(mktemp -d)"
   trap cleanup EXIT INT TERM
 
@@ -148,6 +151,8 @@ main() {
 
   if has_aimo_key; then
     record PASS "AIMO_API_KEY" "set (value not printed)"
+  elif [ -f tests/fixtures/snapshot/replay/meta.json ]; then
+    record SKIP "AIMO_API_KEY" "unset - keyless: replay snapshot + committed catalog subset (tests/fixtures/snapshot/replay)"
   else
     record SKIP "AIMO_API_KEY" "unset - challenge data cannot be downloaded; catalog-backed tests and live milk flow are blocked"
   fi
@@ -175,15 +180,42 @@ main() {
       record FAIL "pytest" "exit $pec - $summary"
     fi
 
-    say "-- aimo serve --"
     if [ -z "${AIMO_APPROVER_PIN:-}" ]; then
       AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(9))')"
     fi
     export AIMO_APPROVER_PIN
-    if ! has_aimo_key && [ -z "${AIMO_REPLAY:-}" ] && [ -d tests/fixtures/snapshot ]; then
-      export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot"
-      say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot"
+    if ! has_aimo_key && [ -z "${AIMO_REPLAY:-}" ]; then
+      if [ -f tests/fixtures/snapshot/replay/meta.json ]; then
+        export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot/replay"
+        say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot/replay (served_from: replay)"
+      elif [ -d tests/fixtures/snapshot ]; then
+        export AIMO_REPLAY="$ROOT/tests/fixtures/snapshot"
+        say "no AIMO_API_KEY: replay mode from tests/fixtures/snapshot"
+      fi
     fi
+    replay_on=0
+    if [ -n "${AIMO_REPLAY:-}" ] && [ "${AIMO_REPLAY}" != "0" ] && [ -f "${AIMO_REPLAY}/meta.json" ]; then
+      replay_on=1
+    fi
+    mode_label=$([ "$replay_on" -eq 1 ] && echo replay || echo live)
+
+    if { has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
+      say "-- scenarios s0..s7 ($mode_label) --"
+      set +e
+      uv run python -m scenarios.run_all > /tmp/aimo-accept-scenarios.txt 2>&1
+      sec=$?
+      set -e
+      ssum=$(grep -E "^[0-9]+/[0-9]+ passed" /tmp/aimo-accept-scenarios.txt | tail -1 || true)
+      if [ "$sec" -eq 0 ] && [ -n "$ssum" ]; then
+        record PASS "scenarios.run_all" "$ssum ($mode_label)"
+      else
+        record FAIL "scenarios.run_all" "exit $sec - ${ssum:-no table} ($mode_label; see /tmp/aimo-accept-scenarios.txt)"
+      fi
+    else
+      record SKIP "scenarios.run_all" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
+    fi
+
+    say "-- aimo serve --"
     mkdir -p "$TMP_ACCEPT/keys"
     export AIMO_STATE_DB="$TMP_ACCEPT/state.sqlite" AIMO_KEY_DIR="$TMP_ACCEPT/keys"
     PORT=$(python3 - <<'PY'
@@ -224,7 +256,7 @@ PY
         record FAIL "otap.json profile fields" "missing required keys"
       fi
 
-      if has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; then
+      if { has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
         set +e
         uv run python -m conformance --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-conf.txt 2>&1
         cec=$?
@@ -238,32 +270,51 @@ PY
         uv run python docs/pitch/qa_milk_flow.py --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-milk.txt 2>&1
         mec=$?
         set -e
+        order_line=$(grep -E "^ORDER " /tmp/aimo-accept-milk.txt | tail -1 || true)
         if [ "$mec" -eq 0 ]; then
-          record PASS "qa_milk_flow.py" "MILK FLOW OK"
+          record PASS "qa_milk_flow.py" "MILK FLOW OK ($mode_label)"
+          if [ -n "$order_line" ]; then
+            oid=$(sed -E 's/^ORDER ([^ ]+).*/\1/' <<<"$order_line")
+            pcode=$(sed -nE 's/.*Peppol OrderResponseCode ([A-Z]+).*/\1/p' <<<"$order_line")
+            aver=$(sed -nE 's/.*audit verify (ok=[^;]+).*/\1/p' <<<"$order_line")
+            record PASS "order placed" "$oid"
+            record PASS "Peppol Order Response" "OrderResponseCode ${pcode:-?} (UBL 2.3, T116)"
+            record PASS "audit verify" "${aver:-ok}"
+            say "  $order_line"
+          fi
         else
-          record FAIL "qa_milk_flow.py" "exit $mec"
+          record FAIL "qa_milk_flow.py" "exit $mec (see /tmp/aimo-accept-milk.txt)"
         fi
       else
-        record SKIP "conformance suite" "needs downloaded catalog data (AIMO_API_KEY)"
-        record SKIP "qa_milk_flow.py" "needs downloaded catalog data (AIMO_API_KEY)"
+        record SKIP "conformance suite" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
+        record SKIP "qa_milk_flow.py" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
       fi
 
       if has_gemini_key; then
         record SKIP "aimo demo" "key is set but live Gemini demo is not run inside this keyless-safe accept (run: uv run aimo demo --auto-approve-as anna@hotel-aurora.example)"
       else
         set +e
-        if has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; then
+        if { has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
+          demo_mode="http ($mode_label)"
           uv run aimo demo --base-url "http://127.0.0.1:${PORT}" --auto-approve-as anna@hotel-aurora.example --approve-delay 0.5 --approval-timeout 30 > /tmp/aimo-accept-demo.txt 2>&1
           dec=$?
         else
+          demo_mode="fake"
           uv run aimo demo --transport fake --auto-approve-as anna@hotel-aurora.example --approve-delay 0.2 --approval-timeout 20 > /tmp/aimo-accept-demo.txt 2>&1
           dec=$?
         fi
         set -e
+        demo_ok=0
         if [ "$dec" -eq 0 ]; then
-          record PASS "aimo demo (scripted buyer)" "completed end-to-end (see /tmp/aimo-accept-demo.txt)"
+          if ! grep -q "status=" /tmp/aimo-accept-demo.txt || grep -q "status=placed" /tmp/aimo-accept-demo.txt; then
+            demo_ok=1
+          fi
+        fi
+        if [ "$demo_ok" -eq 1 ]; then
+          record PASS "aimo demo (scripted buyer)" "completed end-to-end via $demo_mode (see /tmp/aimo-accept-demo.txt)"
         else
-          record FAIL "aimo demo (scripted buyer)" "exit $dec (see /tmp/aimo-accept-demo.txt)"
+          dstatus=$(grep -oE "status=[a-z_]+" /tmp/aimo-accept-demo.txt | tail -1 || true)
+          record FAIL "aimo demo (scripted buyer)" "exit $dec ${dstatus:+$dstatus }via $demo_mode (see /tmp/aimo-accept-demo.txt)"
         fi
       fi
       kill "$spid" 2>/dev/null || true

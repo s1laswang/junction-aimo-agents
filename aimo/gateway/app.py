@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import os
 from typing import Any, Optional
 
@@ -212,16 +213,18 @@ def build_router() -> APIRouter:
 
     @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary], responses=ERR)
     def search_products(
-        q: str = Query(..., description="Free text (English or Finnish)", examples=["lactose free milk"]),
-        claims: Optional[str] = Query(None, description="Comma-separated required claims", examples=["FREE_FROM_LACTOSE"]),
-        category: Optional[str] = Query(None, description="Category code, e.g. 10400"),
-        content_unit: Optional[str] = Query(None, description="L | KG | PCS"),
+        q: str = Query(..., min_length=1, max_length=500, description="Free text (English or Finnish)", examples=["lactose free milk"]),
+        claims: Optional[str] = Query(None, max_length=500, description="Comma-separated required claims", examples=["FREE_FROM_LACTOSE"]),
+        category: Optional[str] = Query(None, max_length=64, description="Category code, e.g. 10400"),
+        content_unit: Optional[str] = Query(None, max_length=16, description="L | KG | PCS"),
         limit: int = Query(20, ge=1, le=100),
         customer_id: Optional[str] = Query(None, description="Customer id (defaults to X-Customer-Id)"),
         x_customer_id: Optional[str] = Header(None),
         x_agent_key: Optional[str] = Header(None),
     ):
         auth.resolve_customer_identity(x_customer_id=x_customer_id, body_customer_id=customer_id, x_agent_key=x_agent_key)
+        if not q.strip():
+            raise service.ServiceError(422, "empty_query", "q must not be blank")
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
         return JSONResponse([p.model_dump(mode="json") for p in res])
@@ -270,6 +273,18 @@ def build_router() -> APIRouter:
             x_agent_id=x_agent_id,
             x_agent_key=x_agent_key,
         )
+        if not math.isfinite(need.quantity) or need.quantity > 1_000_000:
+            raise service.ServiceError(
+                422,
+                "absurd_quantity",
+                f"quantity {need.quantity:g} is not plausible (max 1,000,000 {need.unit} per request)",
+            )
+        if len(need.product_query or "") > 500:
+            raise service.ServiceError(422, "query_too_long", "product_query exceeds 500 characters")
+        if not (need.product_query or "").strip() and not need.preferred_product_ids:
+            raise service.ServiceError(422, "empty_need", "product_query or preferred_product_ids is required")
+        if len(need.raw_text or "") > 4000:
+            raise service.ServiceError(422, "invalid_need", "raw_text exceeds 4,000 characters")
         return service.plan_need(need.model_copy(update={"customer_id": who.customer_id}), identity=who)
 
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
@@ -402,15 +417,22 @@ def build_router() -> APIRouter:
     @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
     def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
                                                                                  "'approved' to 'rejected')"),
+                    x_agent_id: Optional[str] = Header(None),
                     cred: HumanCred = Depends(human_cred)):
         """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
         broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs a signed-in approver; 404 when
         AIMO_ENV=production."""
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(f"audit:{seq}", f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, f"audit:{seq}", "human:demo-tamper")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
-    def demo_untamper(seq: int, cred: HumanCred = Depends(human_cred)):
+    def demo_untamper(seq: int, x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(f"audit:{seq}", f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, f"audit:{seq}", "human:demo-untamper")
         return service.demo_untamper(seq)
 
@@ -425,7 +447,7 @@ def build_router() -> APIRouter:
         triggers a brute-force lock."""
         if x_agent_id:
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
-        who = str((body or {}).get("approver") or "").strip()
+        who = str((body or {}).get("approver") or "").strip()[:200]
         canonical = service.directory_approver_id(who) if who else None
         if canonical:
             _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{canonical}",
@@ -496,6 +518,8 @@ def create_app(with_mcp: bool = True) -> FastAPI:
         license_info={"name": "MIT"},
     )
     app.add_middleware(FaultsMiddleware)
+    from aimo.gateway.schemas import install_error_handlers
+    install_error_handlers(app)
 
     @app.exception_handler(service.ServiceError)
     async def _svc_err(_: Request, e: service.ServiceError):
