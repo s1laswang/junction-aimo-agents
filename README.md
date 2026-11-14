@@ -67,7 +67,7 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **591 passed, 7 skipped, 2 xfailed** (600 tests in `tests/`). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8** with the live mock API). Conformance suite: `uv run python -m conformance` (**44/44** checks on both Valio Aimo and `toywholesaler`, and offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **609 passed, 7 skipped, 2 xfailed** (618 tests in `tests/`). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8** with the live mock API). Conformance suite: `uv run python -m conformance` (**44/44** checks on both Valio Aimo and `toywholesaler`, and offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
 
 ## What it is: five pillars
 
@@ -245,14 +245,15 @@ Pilot KPIs:
 | `aimo/backend/` | Valio mock API client (cache, retry, chunking, fault injection), SQLite catalog store, order store with Peppol AP/CA/RE |
 | `aimo/catalog/` | Search (FTS5 trigram + gemini-embedding-2, RRF), units, allergens (GS1 to EU14), good-better-best, `plan_need`, Gemini allergen and recipe checks |
 | `aimo/trust/` | Policy engine and YAML policies, Ed25519 JWS signing, approvals, hash-chained signed audit, injection screening |
-| `aimo/buyer/` | Gemini buyer agent + deterministic regex parser and scripted keyless fallback, tool transports (MCP / in-process / fake), terminal demo, `POST /v1/agent/runs` + SSE |
+| `aimo/buyer/` | Gemini buyer agent + deterministic regex parser and scripted keyless fallback, vision intake, tool transports (MCP / in-process / fake), terminal demo, `POST /v1/agent/runs` + SSE |
+| `aimo/voice/` | Voice approval assistant (`/v1/voice/*`, ElevenLabs TTS/STT with browser Web Speech fallback, Gemini intent + negation guard, one-click human confirmation bound to `quote_hash`) |
 | `conformance/` | External `otap/0.1` conformance suite (`python -m conformance`, 44/44 checks across discovery, JWKS, OpenAPI, MCP, signed quotes, approvals, Peppol and audit) |
 | `toywholesaler/` | Second synthetic wholesaler (*Nordic Bakery Supply*) passing the same 44/44 conformance suite |
 | `scenarios/` | End-to-end HTTP acceptance scenarios `s0`..`s7` (`python -m scenarios.run_all`, 8/8) |
-| `web/` | No-build approval UI served at `/ui`, with `?mock=1` offline mode |
+| `web/` | No-build approval UI served at `/ui` (approver sign-in, voice confirm, recipes, Valio ops, `?mock=1` offline mode) |
 | `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | 600 pytest cases across gateway, catalog, trust, buyer, openness and scenarios |
+| `tests/` | 618 pytest cases across gateway, catalog, trust, buyer, voice, openness and scenarios |
 | `docs/` | [OPENNESS](docs/OPENNESS.md), [COMBINE](docs/COMBINE.md), [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.

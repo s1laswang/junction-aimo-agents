@@ -57,7 +57,7 @@ Status: **R** = reproduced by the person or card named; **S** = single source (a
 | MCP tools advertised by gateway | README, SUBMISSION, ARCHITECTURE, OPENNESS | `uv run python -c "import asyncio; from aimo.gateway.mcp_server import build_mcp; print(len(asyncio.run(build_mcp().list_tools())))"` | 13 | R docs, Sat 23:05 |
 | Conformance suite on Valio Aimo gateway | README, OPENNESS, SCENARIOS, SUBMISSION | `AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0.0.1:8000` (**live** catalog + offers) | 44/44 PASS (43/43 in initial Sat 19:10 run before check A6) | R port + auth, Sat 23:05 |
 | Conformance suite on second wholesaler (`toywholesaler`, Nordic Bakery Supply, 30 synthetic products) | README, OPENNESS, SCENARIOS, SUBMISSION | `uv run pytest -q tests/test_openness.py` (offline, boots `toywholesaler` on a scratch dir with PIN and runs `conformance`) | 44/44 PASS (4 pytest checks) | R docs, Sat 23:06 |
-| Offline test count | README, SUBMISSION, deck, COMBINE | `uv run --extra dev pytest -q` | 591 passed, 7 skipped, 2 xfailed (600 collected in `tests/`; standalone `ours/tests` suite adds 525 passed) | R docs, Sat 23:08 (D-proof-006/016) |
+| Offline test count | README, SUBMISSION, deck, COMBINE | `uv run --extra dev pytest -q` | 609 passed, 7 skipped, 2 xfailed (618 collected in `tests/`, incl. 18 in `tests/test_voice.py`; standalone `ours/tests` suite adds 525 passed) | R docs, Sat 23:28 (D-proof-006/016) |
 
 ## Wind tunnel (`docs/windtunnel-results.md`)
 | Number | Claimed in | Command | Value | Status |

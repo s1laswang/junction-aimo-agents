@@ -7,7 +7,7 @@ Sat 14 Nov 2026. Branch `combined` in `s1laswang/junction-aimo-agents` = Silas's
 | | Silas's build (`aimo/`) | Ours (`ours/`) |
 |---|---|---|
 | Size | 14.8k Python lines in `aimo/` (27.7k across 136 `.py` files, 241 tracked files; 157 commits on `main`, 834 on `fr8/valio/main`) | 6.5k app/scenario Python lines (51.1k incl. tests across 133 `.py` files, 176 tracked files; 349 pre-merge commits) |
-| Tests | 600 collected in `tests/` (`pytest -q`: 591 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
+| Tests | 618 collected in `tests/` (`pytest -q`: 609 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
 | Run | `uv run aimo serve` (one command, downloads data when `AIMO_API_KEY` is set); `make accept` for keyless judge check | `make demo` (boots, runs 8 scenarios, keeps a stage server) |
 | Agent interface | MCP (13 tools in both `build_mcp().list_tools()` and README), OpenAPI 3.1, OTAP discovery manifest, JWKS | MCP (12 tools) + REST, agent card, JWKS |
 | Buyer | Gemini buyer agent (escalates to gemini-4-hydrogen) + scripted/mock offline fallback when `GEMINI_API_KEY` is absent (`0f86383`, `a5e3881`) | Rule-based parser (en/fi, works offline) + scripted buyer, seller and drift agents |
@@ -43,13 +43,13 @@ Ours: everything that works with no key, strict input models, per-customer auth 
 6. **[DONE: `502572e`, squad `docs`]** README says 9 MCP tools, server has 13: README and architecture diagram now state 13 MCP tools, matching `build_mcp().list_tools()`.
 7. **[DONE: `0b33695` / `502572e`]** Approved alternatives always need a human, even for a 10 EUR line: gateway learned approvals (`4e6d82d`: `remember` / `remember_scope`, `/v1/customers/{id}/learned`) let customers pre-authorize recurring substitutions within policy.
 8. **[ACTIVE in squad `auth` / `docs`]** Catalog search works without a customer header: read-only catalog/discovery remains open while mutating `/v1` routes require a known customer; documented alongside auth rules.
-9. **[DONE: `502572e`, `46e30df`]** Five `team/*` branches hold unmerged commits: all 8 `origin/team/*` branches (plus `origin/justSilas-aimo-integration`) are now 100% merged into `main` (`502572e`) and `fr8/valio/main` (`46e30df`) with `0` unmerged commits remaining (see disposition table below).
+9. **[DONE: `502572e`, `bf8189c`]** `team/*` branches hold unmerged commits: all 9 `origin/team/*` branches (including `origin/team/ui` at `4ae14c6`, plus `origin/justSilas-aimo-integration`) are 100% merged into `main` and `fr8/valio/main` with `0` unmerged commits remaining (see disposition table below).
 10. **[OPEN: post-freeze]** README screenshot: re-capture from `main` after the freeze.
-11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest -q` runs 591 passed, 7 skipped, 2 xfailed across 600 tests; `ours/` remains intact with nothing deleted yet.
+11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest -q` runs 609 passed, 7 skipped, 2 xfailed across 618 tests; `ours/` remains intact with nothing deleted yet.
 
 ## Disposition of stale team/* branches
 
-Audited with `git rev-list --left-right --count origin/fr8/valio/main...origin/<branch>`, `git log -1 --oneline origin/<branch>`, and `git log --merges --oneline origin/main`. Every `origin/team/*` branch (all 8) and `origin/justSilas-aimo-integration` has **0 unmerged commits** relative to both `origin/main` and `origin/fr8/valio/main` (and `0` relative to `HEAD` on `fr8/valio/docs`). All round-5 branch merges were rolled into `main` at `502572e` and synced into `fr8/valio/main` at `46e30df`.
+Audited with `git rev-list --left-right --count origin/fr8/valio/main...origin/<branch>`, `git log -1 --oneline origin/<branch>`, and `git log --merges --oneline origin/main`. Every `origin/team/*` branch (all 9) and `origin/justSilas-aimo-integration` has **0 unmerged commits** relative to both `origin/main` and `origin/fr8/valio/main` (and `0` relative to `HEAD` on `fr8/valio/docs`). All round-5 branch merges were rolled into `main` at `502572e` (synced at `46e30df`), and `team/ui` landed on `main` at `4ae14c6` (synced at `bf8189c`).
 
 | Remote branch | Tip SHA | Ahead / behind vs `fr8/valio/main` | Unmerged commits | Direct merge on `main` | Round-5 rollup on `main` | Disposition |
 |---|---|---:|---:|---|---|---|
@@ -60,10 +60,11 @@ Audited with `git rev-list --left-right --count origin/fr8/valio/main...origin/<
 | `origin/team/pitch` | `59a44b6` | `0 / 719` | `0` | `50ea268` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
 | `origin/team/port` | `b333e1e` | `0 / 716` | `0` | `7313679` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
 | `origin/team/trust` | `2b21faf` | `0 / 725` | `0` | `a6c21c8` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
+| `origin/team/ui` | `4ae14c6` | `0` | `0` | `4ae14c6` | `4ae14c6` | 100% merged on `main` (`bf8189c` on `fr8/valio/main`); safe to close/delete once `fr8/valio/main` lands on `combined` |
 | `origin/team/windtunnel` | `4dfb6ad` | `0 / 745` | `0` | `0f39945` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
 | `origin/justSilas-aimo-integration` | `6449bf5` | `0 / 708` | `0` | `502572e` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
 
-All 8 `team/*` branches (plus `justSilas-aimo-integration`) are 100% merged into `main` (`502572e`) and `fr8/valio/main` (`46e30df`), so no cherry-picks or backports remain; each branch is safe to close and delete after `fr8/valio/main` lands on `combined`.
+All 9 `team/*` branches (plus `justSilas-aimo-integration`) are 100% merged into `main` and `fr8/valio/main`, so no cherry-picks or backports remain; each branch is safe to close and delete after `fr8/valio/main` lands on `combined`.
 
 ## Rules for the port
 
