@@ -3,6 +3,7 @@ scripted fake model and the fake gateway (aimo.buyer.fakes)."""
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 import time
 from datetime import date, datetime
 
@@ -350,3 +351,144 @@ def test_mcp_transport_lists_and_calls_tools():
         assert offers[0]["cutoff_passed"] is True
     finally:
         t.close()
+
+
+# ---------------------------------------------------------------- ask instead of guessing
+AMBIGUOUS = "We need 100 litres of lactose-free milk next week."
+
+
+def _kinds(agent):
+    return [s.kind for s in agent.steps]
+
+
+def test_hero_does_not_ask():
+    gw = FakeGateway()
+    _approve_soon(gw)
+    asked = []
+    agent = _agent(gw, ScriptedModel(), answer_fn=lambda q: asked.append(q) or {"option_id": q["options"][0]["id"]})
+    r = agent.run(HERO)
+    assert asked == [] and "needs_clarification" not in _kinds(agent) and r["status"] == "placed"
+
+
+def test_ambiguous_need_asks_with_catalog_options_and_resumes():
+    gw = FakeGateway("cafe-x", "cafe-x/buyer-1")  # unknown customer: no usual product, no standing order
+    _approve_soon(gw)
+    seen = []
+
+    def answer(q):
+        seen.append(q)
+        if q["type"] == "date":
+            return {"option_id": "d0"}
+        return {"option_id": next(o["id"] for o in q["options"] if o["label"].startswith("semi"))}
+
+    agent = _agent(gw, ScriptedModel(), answer_fn=answer)
+    r = agent.run(AMBIGUOUS)
+    assert [q["type"] for q in seen] == ["date", "variant"]
+    variant = seen[1]
+    assert 2 <= len(variant["options"]) <= 4
+    from aimo.buyer.fakes import PRODUCTS
+    assert all(o["product_id"] in PRODUCTS for o in variant["options"])  # options are real catalog hits
+    assert _kinds(agent).count("needs_clarification") == 2
+    need = r["need"]
+    assert need["delivery_by"] == "2026-11-16"  # Monday of next week
+    chosen = next(o["product_id"] for o in variant["options"] if o["label"].startswith("semi"))
+    assert chosen in need["preferred_product_ids"]
+    assert r["status"] in ("placed", "approved")
+
+
+def test_unanswered_question_stops_without_ordering():
+    gw = FakeGateway("cafe-x", "cafe-x/buyer-1")
+    agent = _agent(gw, ScriptedModel(), answer_fn=lambda q: None)
+    r = agent.run(AMBIGUOUS)
+    assert r["status"] == "needs_clarification"
+    assert not any(n in ("create_quote", "place_order") for n, _ in gw.calls)
+
+
+def test_answer_endpoint_resumes_run():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from aimo.buyer import runs
+    app = FastAPI()
+    app.include_router(runs.router)
+    gw = FakeGateway("cafe-x", "cafe-x/buyer-1")
+    _approve_soon(gw)
+    orig = runs.registry.start
+
+    def start(req, **kw):
+        return orig(req, transport_factory=lambda r: FakeTransport(gw), image=kw.get("image"),
+                    agent_kwargs={"generate_fn": ScriptedModel(), "use_gemini_parse": False, "poll_s": 0.05, "now": SAT})
+
+    runs.registry.start = start
+    try:
+        client = TestClient(app)
+        run_id = client.post("/v1/agent/runs", json={"text": AMBIGUOUS, "customer_id": "cafe-x"}).json()["run_id"]
+        for _ in range(2):  # date, then variant
+            for _ in range(200):
+                v = client.get(f"/v1/agent/runs/{run_id}").json()
+                if v["pending_question"]:
+                    break
+                time.sleep(0.02)
+            q = v["pending_question"]
+            assert v["status"] == "waiting_for_answer" and q["options"]
+            assert client.post(f"/v1/agent/runs/{run_id}/answer", json={"option_id": "nope"}).status_code == 422
+            assert client.post(f"/v1/agent/runs/{run_id}/answer",
+                               json={"option_id": q["options"][0]["id"]}).json()["ok"]
+            time.sleep(0.05)
+        with client.stream("GET", f"/v1/agent/runs/{run_id}/events") as resp:
+            kinds = [line.split(":", 1)[1].strip() for line in resp.iter_lines() if line.startswith("event:")]
+        assert kinds.count("needs_clarification") == 2 and kinds[-1] == "final"
+    finally:
+        runs.registry.start = orig
+
+
+# ---------------------------------------------------------------- multimodal intake
+def test_image_intake_feeds_the_same_pipeline():
+    import json as _json
+    extracted = {"document_type": "handwritten_order", "language": "fi",
+                 "lines": [{"product": "lactose-free milk", "original_text": "Maito laktoositon 200 l",
+                            "quantity": 200, "unit": "l", "notes": ""}],
+                 "delivery_expression": "ma", "request_text": "We need 200 litres of lactose-free milk by Monday.",
+                 "unreadable": []}
+
+    class Model(ScriptedModel):
+        def __call__(self, feature, model, contents, config):
+            if feature == "buyer.vision":
+                assert any(getattr(p, "inline_data", None) for p in contents if not isinstance(p, str))
+                return _txt(_json.dumps(extracted))
+            return super().__call__(feature, model, contents, config)
+
+    gw = FakeGateway()
+    agent = _agent(gw, Model(), image=(b"\x89PNG fake", "image/png"))
+    r = agent.run("")
+    assert any(s.kind == "thought" and "Gemini vision" in s.title for s in agent.steps)
+    assert r["need"]["quantity"] == 200 and r["need"]["required_claims"] == ["FREE_FROM_LACTOSE"]
+    assert r["need"]["delivery_by"] == "2026-11-16"
+    assert r["status"] == "placed"  # EUR 202 is within the hotel's auto-approve limit
+
+
+def test_gold_scoring():
+    from aimo.buyer.eval_gold import load_gold, score
+    ex = {"id": "x", "gold": {"acceptable_product_ids": [["A", "B"], ["C"]], "qty_range": [[100, 110], [20, 22]],
+                              "must_escalate": True, "forbidden_allergens": ["milk"]}}
+    res = {"status": "placed",
+           "quote": {"lines": [{"product_id": "A", "qty_sales_units": 100}, {"product_id": "C", "qty_sales_units": 40}]},
+           "plan": {"lines": [{"product_id": "A", "covered_amount": 100}, {"product_id": "C", "covered_amount": 20}]},
+           "steps": [{"kind": "decision", "data": {"decision": {"outcome": "needs_approval"}}}]}
+    lookup = {"A": {"milk": "free"}, "C": {}}.get
+    s = score(ex, res, lambda pid: lookup(pid) or {})
+    assert s["zero_correction"] and s["escalation_match"]
+    assert not s["allergen_safe"] and s["unsafe"] == ["C:milk=unknown"]  # unknown is never safe
+    res["plan"]["lines"][0]["covered_amount"] = 90
+    assert not score(ex, res, lambda pid: {"milk": "free"})["zero_correction"]
+    none_ok = score({"gold": {"acceptable_product_ids": [], "must_escalate": False}}, {"status": "no_order", "steps": []},
+                    lambda pid: {})
+    assert none_ok["zero_correction"] and none_ok["escalation_match"]
+    gold = load_gold([str(Path(__file__).parent / "fixtures" / "gold" / "gold-buyer-20.jsonl")])
+    assert len(gold) == 20 and all({"id", "request", "customer_id", "gold"} <= set(g) for g in gold)
+
+
+def test_fixture_images_exist():
+    from pathlib import Path
+    imgs = sorted((Path(__file__).parent / "fixtures" / "images").glob("*.png"))
+    assert len(imgs) >= 3 and all(p.read_bytes()[:4] == b"\x89PNG" for p in imgs)
