@@ -18,7 +18,7 @@ from __future__ import annotations
 import contextvars
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 _START = time.time()
 _ctx: contextvars.ContextVar[datetime | None] = contextvars.ContextVar("aimo_now", default=None)
@@ -90,3 +90,27 @@ def simulated() -> bool:
 def describe() -> dict:
     mode = "header" if _ctx.get() is not None else _anchor()[1]
     return {"mode": mode, "now": now().isoformat(), "frozen": os.environ.get("AIMO_NOW_FROZEN", "0") == "1"}
+
+
+HELSINKI_TZ = timezone(timedelta(hours=2))
+STOCK_CUTOFF_HOUR = 17
+
+
+def today_local(at: datetime | None = None):
+    """Today's date in Helsinki on the simulated clock."""
+    return (at or now()).astimezone(HELSINKI_TZ).date()
+
+
+def next_delivery_day(at: datetime | None = None, min_days: int = 1, weekday: int | None = None):
+    """The next feasible delivery date: a weekday (optionally a given weekday, 0=Mon) at least `min_days`
+    after today whose Stock cut-off (the day before at 17:00 Helsinki) is still ahead of `at` (default now())."""
+    from datetime import time as _time
+
+    n = (at or now()).astimezone(HELSINKI_TZ)
+    d = n.date() + timedelta(days=max(1, int(min_days)))
+    for _ in range(21):
+        cutoff = datetime.combine(d - timedelta(days=1), _time(STOCK_CUTOFF_HOUR), HELSINKI_TZ)
+        if d.weekday() < 5 and (weekday is None or d.weekday() == weekday) and n < cutoff:
+            return d
+        d += timedelta(days=1)
+    return d

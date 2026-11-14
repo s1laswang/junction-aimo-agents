@@ -27,8 +27,8 @@ Status words: **VERIFIED** = we measured it; **ASSUMED** = our choice, not given
 - **Production:** an order adapter behind the same seam (`aimo/backend/__init__.py`, `BackendClient`) that writes to SAP or the webshop, and Peppol BIS Order / Order Response documents over the Peppol network. The gateway, trust layer and agents do not change.
 
 ### A2. Customers, policies, approvers and usual products are invented
-- **Evidence:** `aimo/trust/policies/hotel-aurora.yaml`, `school-tampere.yaml`, `hospital-meilahti.yaml` (v1.1.0). Hotel usual product 463038 with 464306 pre-approved as best; school usual 472833 and hospital usual 473328 are demo assumptions (trust report, round 2). Standing orders (hotel milk 300 L/week) and approver names (`anna@hotel-aurora.example`) are invented.
-- **Impact:** the €500 / €5,000 thresholds, the 3× drift rule and the approver roles are illustrative examples (not validated with Valio or a customer); customer procurement leads and clinical dietitians set real thresholds during Phase 1 pilot onboarding ([ARCHITECTURE.md](ARCHITECTURE.md) §5).
+- **Evidence:** `aimo/trust/policies/hotel-aurora.yaml`, `school-tampere.yaml`, `hospital-meilahti.yaml` (v1.2.0 in S3 `need`, updated from v1.1.0). Hotel usual product 463038 with 464306 pre-approved as best; school usual product updated to 470889 in S3 v1.2.0 (Oatly Oat Drink Whole 1 L with structured `FREE_FROM` milk and nuts, replacing v1.1.0 472833 which lacked structured allergen data; [reports/need.md](reports/need.md)) and hospital usual 473328 are demo assumptions (trust report, round 2). Standing orders (hotel milk 300 L/week) and approver names (`anna@hotel-aurora.example`) are invented.
+- **Impact:** the €500 / €5,000 thresholds, the 3× drift rule, the €50 auto-approved alternative, the 15% price-jump rule, the 7-day split-order window and the approver roles are illustrative examples. They have not been validated with Valio or a customer; we present them as examples of what a customer would set during Phase 1 pilot onboarding ([ARCHITECTURE.md](ARCHITECTURE.md) §5), never as recommended values.
 - **Production:** each customer authors and versions its own policy (or brings OPA/Cedar), maintains its approver directory in its identity provider, and issues mandates to its agents.
 
 ### A3. Category groupings are inferred from category codes
@@ -66,5 +66,5 @@ Measured with `uv run python docs/pitch/probe_mock_quirks.py` (Sat 14 Nov 18:59 
 
 ## Not measured
 - Gold set: zero-correction rate on fi/sv/en requests. Only a 20-request set exists (`tests/fixtures/gold_smoke.jsonl` / `tests/fixtures/gold/gold-buyer-20.jsonl`), with no committed live run, so we claim no accuracy number.
-- Wind tunnel scale: the largest run is 2,560 template scenarios (`wt2560`) plus 640 Gemini-written ones (`wt640`) and 48 live-gateway agent runs ([windtunnel-results.md](windtunnel-results.md)), not ≥10k attacks.
+- Wind tunnel scale: the largest run is 2,560 template scenarios (`wt2560`) plus 640 Gemini-written ones (`wt640`) and 48 live-gateway agent runs ([windtunnel-results.md](windtunnel-results.md)), not ≥10k attacks. The 2,560 run (`wt2560`) and the naive baseline were not re-run after the Sun 00:30 policy changes; only the gateway on `wt640` was.
 - Photo intake (`aimo/buyer/vision.py`): built (with deterministic keyless fallback), 4 development calls, no accuracy number.

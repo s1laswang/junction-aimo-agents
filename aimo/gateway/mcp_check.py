@@ -30,7 +30,9 @@ async def main(target: str) -> None:
         print(f"{len(names)} tools:", ", ".join(names))
         res = await client.call_tool("search_products", {"query": "lactose free milk 1 l", "limit": 3})
         print("search_products ->", _text(res))
-        res = await client.call_tool("get_offers", {"product_ids": ["463038", "464306"], "requested_date": "2026-11-16"})
+        from aimo.backend.clock import next_delivery_day
+        res = await client.call_tool("get_offers", {"product_ids": ["463038", "464306"],
+                                                    "requested_date": next_delivery_day().isoformat()})
         print("get_offers ->", _text(res))
 
 
