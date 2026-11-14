@@ -116,7 +116,16 @@ def cmd_serve(a: argparse.Namespace) -> None:
         print(f"warning: data download failed: {e}")
     _build_catalog("skip" if a.no_build else "sync" if a.build_sync else "background")
     print(f"Valio Aimo Trusted Trade gateway on http://{a.host}:{a.port}  (docs /docs, MCP /mcp, UI /ui)")
-    uvicorn.run("aimo.gateway.app:app", host=a.host, port=a.port, reload=a.reload, log_level="info")
+    try:
+        from aimo.gateway.human_auth import credential_warning
+        w = credential_warning()
+        if w:
+            print(f"warning: {w}")
+    except Exception:  # noqa: BLE001
+        pass
+    # proxy_headers=False: never trust X-Forwarded-For, so per-client approver lockouts cannot be dodged by spoofing
+    uvicorn.run("aimo.gateway.app:app", host=a.host, port=a.port, reload=a.reload, log_level="info",
+                proxy_headers=False)
 
 
 def cmd_demo(a: argparse.Namespace, rest: list[str]) -> None:

@@ -16,11 +16,15 @@ export function createLiveApi(base) {
     let s = null;
     try { s = forceAsk ? null : sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
     if (s) return s;
-    const pin = window.prompt("Approver sign-in: enter the approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "";
+    const who = window.prompt("Approver sign-in: your name or email from the approver directory (e.g. Anna Virtanen)") || "";
+    const pin = who ? (window.prompt("Approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "") : "";
     if (!pin) return "";
-    const r = await req("POST", "/v1/auth/approver-session", null, { "X-Approver-Pin": pin });
-    try { sessionStorage.setItem(PIN_KEY, r.session); } catch { /* storage blocked */ }
+    const r = await req("POST", "/v1/auth/approver-session", { approver: who }, { "X-Approver-Pin": pin });
+    try { sessionStorage.setItem(PIN_KEY, r.session); sessionStorage.setItem(PIN_KEY + ".who", r.approver); } catch { /* storage blocked */ }
     return r.session;
+  }
+  function signedInApprover() {
+    try { return sessionStorage.getItem(PIN_KEY + ".who"); } catch { return null; }
   }
   async function humanReq(method, path, body) {
     try {
@@ -99,7 +103,13 @@ export function createLiveApi(base) {
     },
 
     approvals: (status = "pending") => humanReq("GET", `/v1/approvals?status=${encodeURIComponent(status)}`),
-    decide: (orderId, body) => humanReq("POST", `/v1/approvals/${encodeURIComponent(orderId)}/decision`, body),
+    // the session is bound to one approver: the decision is always recorded under the signed-in person
+    decide: async (orderId, body) => {
+      const r = await humanReq("POST", `/v1/approvals/${encodeURIComponent(orderId)}/decision`,
+                               { ...body, approver: signedInApprover() || "", approver_role: undefined });
+      return r;
+    },
+    signedInApprover,
     getOrder: (id) => req("GET", `/v1/orders/${encodeURIComponent(id)}`),
     getQuote: (id) => req("GET", `/v1/quotes/${encodeURIComponent(id)}`),
     audit: (subjectId) => req("GET", subjectId ? `/v1/audit?subject_id=${encodeURIComponent(subjectId)}` : "/v1/audit"),

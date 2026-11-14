@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
+from fastapi import APIRouter, Body, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.routing import Route
 
@@ -308,8 +308,21 @@ def build_router() -> APIRouter:
             service.audit_refusal(order_id, f"agent:{x_agent_id}", "agent identity on the approval endpoint")
             raise service.ServiceError(403, "agent_cannot_approve",
                                        "Agents can never approve orders; a human approver must decide in the inbox.")
-        _require_human(cred, order_id, f"human:{body.approver}")
-        return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role,
+        approver = body.approver
+        bound = human_auth.session_approver(cred.session)
+        if bound:  # a session is bound to one person: decisions are recorded under that person only
+            if approver and service.directory_approver_id(approver) != bound:
+                service.audit_refusal(order_id, f"human:{bound}", f"session of {bound} tried to decide as {approver}")
+                raise service.ServiceError(403, "approver_mismatch",
+                                           f"This session belongs to {bound}; it cannot decide as {approver}.")
+            approver = bound
+        else:
+            # demo path: shared PIN + self-declared name (production: per-person SSO; see docs/TRUST.md)
+            _require_human(cred, order_id, f"human:{body.approver}")
+            if not approver:
+                raise service.ServiceError(422, "approver_required", "Name the approver, or sign in with "
+                                           "POST /v1/auth/approver-session to bind decisions to you.")
+        return service.decide(order_id, body.decision, approver, body.quote_hash, body.note, body.approver_role,
                               remember=body.remember, remember_scope=body.remember_scope)
 
     # ---------------------------------------------------------- audit
@@ -345,14 +358,21 @@ def build_router() -> APIRouter:
     # ---------------------------------------------------------- human sign-in
     @r.post("/v1/auth/approver-session", tags=["approvals"], summary="Human approver sign-in (returns a session token)",
             responses=ERR)
-    def approver_session(x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
-        """Exchange the approver credential (`X-Approver-Pin`) for an 8-hour signed session token to send as
-        `X-Approver-Session`. Agents are refused. A session keeps working even if someone else triggers the
-        per-client brute-force lock."""
+    def approver_session(body: dict[str, Any] = Body(default={}, examples=[{"approver": "anna@hotel-aurora.example"}]),
+                         x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
+        """Sign in as ONE named human approver: `{"approver": "<directory id or name>"}` + `X-Approver-Pin` returns
+        an 8-hour signed session token bound to that person, to send as `X-Approver-Session`. Decisions made with
+        it are recorded under that approver only. Agents are refused. A session keeps working even if someone else
+        triggers a brute-force lock."""
         if x_agent_id:
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
-        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", "human:sign-in")
-        return human_auth.issue_session()
+        who = str((body or {}).get("approver") or "").strip()
+        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{who or '?'}")
+        canonical = service.directory_approver_id(who) if who else None
+        if not canonical:
+            raise service.ServiceError(404, "unknown_approver",
+                                       "Name a human from a customer's approver directory, e.g. anna@hotel-aurora.example.")
+        return human_auth.issue_session(canonical)
 
     # ---------------------------------------------------------- customers
     @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)")
