@@ -1,9 +1,9 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 import httpx
 import pytest
 
-from agents.seller import accept, allowed, delivery_day, explain, propose, rank, usable, usual_items
+from agents.seller import accept, allowed, delivery_day, explain, main, propose, rank, show, usable, usual_items
 
 
 def offer(pid, price, avail, rel, allergens=(), cat="dairy", need=100, co2=1.0):
@@ -320,3 +320,95 @@ def test_usual_items_malformed_events_and_quantities():
         assert got[pid]["quantity"] == 1.0
     assert got["10"]["query"] == "milk"
     assert got["17"] == {"product_id": "17", "query": "kefir", "quantity": 4.5, "unit": "l"}
+
+
+def test_sales_block_cutoff_and_synkka_allergen_codes():
+    ref = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+    for blk in (True, "blocked", "X"):
+        b = {**offer("2", 3, 500, 0.95), "sales_block": blk}
+        assert not usable(b, now=ref) and not allowed(b, M)
+
+    past_z = {**offer("3", 3, 500, 0.95), "closing_time": "2026-11-16T11:59:00Z"}
+    exact_now = {**offer("4", 3, 500, 0.95), "closing_time": "2026-11-16T12:00:00"}
+    bad_iso = {**offer("5", 3, 500, 0.95), "closing_time": "not-a-timestamp"}
+    future_z = {**offer("6", 3, 500, 0.95), "closing_time": "2026-11-16T14:00:00Z"}
+    for bad in (past_z, exact_now, bad_iso):
+        assert not usable(bad, now=ref)
+    assert usable(future_z, now=ref)
+
+    hospital = {"per_order_eur": 1500, "exclude_allergens": ["peanut", "nuts", "egg", "soy", "shellfish"], "allowed_categories": None}
+    for code in ("AP", "AN", "AE", "AY", "AC", "UM", "may_contain:AP", "may:AN", "soya", "crustaceans"):
+        assert not allowed(offer("9", 3, 500, 0.95, [code]), hospital)
+
+
+def test_dry_run_vs_accept_and_cli_http_errors(monkeypatch, capsys):
+    import agents.seller as sl
+
+    calls = []
+
+    def fake_call(method, path, key, url, **kw):
+        calls.append((method, path, key))
+        if path == "/mandate":
+            return {"per_order_eur": 1500, "exclude_allergens": ["nuts"], "allowed_categories": ["dairy"]}
+        if path == "/orders" and method == "GET":
+            return [{"lines": [{"product_id": "1", "name": "milk", "quantity": 100}]}]
+        if path == "/offers":
+            return {"items": [{"offers": [offer("1", 5, 500, 0.8), {**offer("2", 4, 500, 0.9), "available_date": delivery_day().isoformat()}]}]}
+        if path == "/quotes":
+            return {"quote_id": "q_demo", "jws": "hdr.pay.sig"}
+        if path == "/orders" and method == "POST":
+            return {"order_id": "ord_demo", "status": "placed", "decision": {"outcome": "auto"}}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(sl, "_call", fake_call)
+
+    ps = show("hotel-aurora", "demo-hotel-aurora", "http://gw.test")
+    out = capsys.readouterr().out
+    assert len(ps) == 1 and "[from your order history]" in out
+    assert ("POST", "/quotes", "demo-hotel-aurora") not in calls
+    assert ("POST", "/orders", "demo-hotel-aurora") not in calls
+
+    calls.clear()
+    rc = main(["--demo", "--url", "http://gw.test"])
+    demo_out = capsys.readouterr().out
+    assert rc == 0 and "== hotel-aurora" in demo_out and "== hospital-tays" in demo_out
+    assert not any(m == "POST" and p in ("/quotes", "/orders") for m, p, _ in calls)
+
+    calls.clear()
+    rc = main(["--demo", "--accept", "--url", "http://gw.test"])
+    acc_out = capsys.readouterr().out
+    assert rc == 0 and "ord_demo placed" in acc_out
+    assert ("POST", "/quotes", "demo-hotel-aurora") in calls
+    assert ("POST", "/orders", "demo-hotel-aurora") in calls
+
+    rc_bad_idx = main(["--customer", "hotel-aurora", "--accept", "9", "--url", "http://gw.test"])
+    err = capsys.readouterr().err
+    assert rc_bad_idx == 1 and "out of range" in err
+
+    with pytest.raises(SystemExit):
+        main([])
+    capsys.readouterr()
+
+    flaky_calls = []
+
+    def flaky_call(method, path, key, url, **kw):
+        flaky_calls.append(path)
+        if path == "/mandate":
+            return M
+        if path in ("/orders", "/audit"):
+            raise httpx.ConnectError("history unavailable")
+        if path == "/offers":
+            if kw["json"]["items"][0]["query"] == "Valio maito":
+                raise httpx.ReadTimeout("upstream slow")
+            return {"items": [{"offers": [offer("10", 4, 500, 0.9)]}]}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(sl, "_call", flaky_call)
+    res_props = propose("hotel-aurora", "demo-hotel-aurora", "http://gw.test")
+    assert res_props and res_props[0]["origin"] == "catalog suggestion"
+    assert "/orders" in flaky_calls and "/audit" in flaky_calls
+
+    monkeypatch.setattr(sl, "_call", lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectError("gateway down")))
+    rc_down = main(["--customer", "hotel-aurora", "--url", "http://gw.test"])
+    err_down = capsys.readouterr().err
+    assert rc_down == 1 and "gateway down" in err_down
