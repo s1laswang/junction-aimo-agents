@@ -1,0 +1,99 @@
+# Buyer mandate / purchasing policy for Hotel Aurora Helsinki (demo customer).
+# Evaluated by aimo.trust.policy.evaluate() on every quote before an order is placed.
+# Outcome = strictest rule: reject > needs_approval > auto_approve.
+policy_id: hotel-aurora
+version: "1.0.0"
+effective_from: "2026-11-01"
+customer:
+  id: hotel-aurora
+  name: Hotel Aurora Helsinki
+  segment: hotel
+  description: 180-room city hotel; breakfast buffet and restaurant.
+
+# Ordered by authority, most specific first. Approval needs one of the roles the decision names.
+approver_roles: [procurement_manager]
+override_roles: [general_manager]   # may approve anything that is not a hard reject
+approvers:
+  - {id: anna@hotel-aurora.example, name: Anna Virtanen, role: procurement_manager}
+  - {id: mikko@hotel-aurora.example, name: Mikko Laine, role: general_manager}
+
+agents:
+  - agent_id: hotel-aurora/buyer-1
+    label: Gemini purchasing agent
+    scopes: [catalog:read, quote:create, order:submit]
+  - agent_id: hotel-aurora/planner-1
+    label: Menu planning assistant (may quote, may not order)
+    scopes: [catalog:read, quote:create]
+
+# Standing-order baselines used by quantity_drift (typical weekly volume).
+standing_orders:
+  - id: milk
+    label: milk
+    keywords: [milk, maito, mjölk]
+    weekly_qty: 300
+    unit: L
+  - id: butter
+    label: butter
+    keywords: [butter, voi, smör]
+    weekly_qty: 25
+    unit: KG
+
+rules:
+  - id: mandate_scope
+    type: scope
+    required_scopes: [order:submit]
+
+  - id: quote_freshness
+    type: quote_freshness
+
+  - id: spend
+    type: spend_threshold
+    auto_max: 500
+    approval_max: 5000
+    approver_role: procurement_manager
+
+  - id: weekly_budget
+    type: period_spend
+    period_days: 7
+    limit: 8000
+    outcome: needs_approval
+    approver_role: procurement_manager
+
+  - id: category_scope
+    type: category_scope
+    # Category names are not in the Valio Aimo data set (only codes). Groups below are inferred from
+    # sampled product names per code prefix. UNVERIFIED against Valio's category tree.
+    allowed:
+      - {prefix: "10", label: dairy and chilled}
+      - {prefix: "11", label: bakery}
+      - {prefix: "17", label: chilled food and produce}
+    on_violation: needs_approval
+    on_unknown: needs_approval
+    approver_role: procurement_manager
+
+  - id: substitution
+    type: substitution
+    require_claims: true          # a substitute must keep every required claim (e.g. FREE_FROM_LACTOSE)
+    tiers: {preferred: allow, best: allow, better: needs_approval, good: needs_approval, rejected: reject}
+    outside_preference: needs_approval
+    approver_role: procurement_manager
+
+  - id: allergens
+    type: allergen_block
+    excluded: []                  # plus any excluded_allergens the buyer put in the Need
+    on_contains: reject
+    on_may_contain: reject
+    on_unknown: needs_approval
+    approver_role: procurement_manager
+
+  - id: delivery
+    type: delivery
+
+  - id: quantity_drift
+    type: quantity_drift
+    max_factor: 3
+    approver_role: procurement_manager
+
+  - id: injection
+    type: injection
+    approver_role: procurement_manager
