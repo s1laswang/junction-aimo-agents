@@ -19,7 +19,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from aimo.backend.client import reset_request_faults, set_request_faults
 from aimo.backend import clock
-from aimo.gateway import service
+from aimo.gateway import auth, service
 from aimo.gateway.schemas import QuoteLineIn
 from aimo.models import Need
 
@@ -44,13 +44,21 @@ def _identity(ctx: Context | None, strict: bool = False) -> service.Identity:
     """Caller identity: MCP HTTP headers X-Agent-Id / X-Customer-Id, or for stdio the operator's explicit env
     AIMO_AGENT_ID / AIMO_CUSTOMER_ID. strict=True (quotes, orders) refuses to fall back to a default identity."""
     h = _headers(ctx)
-    agent = h.get("x-agent-id") or os.environ.get("AIMO_AGENT_ID")
-    cust = h.get("x-customer-id") or os.environ.get("AIMO_CUSTOMER_ID")
+    agent = (h.get("x-agent-id") or os.environ.get("AIMO_AGENT_ID") or "").strip()
+    cust = (h.get("x-customer-id") or os.environ.get("AIMO_CUSTOMER_ID") or "").strip()
     if strict and (not agent or not cust):
         raise ToolError(json.dumps({"error": "identity_required", "message":
                                     "Quotes and orders need X-Customer-Id and X-Agent-Id headers on the MCP connection "
                                     "(stdio: set AIMO_CUSTOMER_ID and AIMO_AGENT_ID)."}))
-    return service.Identity(agent_id=agent or service.DEFAULT_AGENT, customer_id=cust or service.DEFAULT_CUSTOMER)
+    eff_cust = cust or service.DEFAULT_CUSTOMER
+    try:
+        eff_cust = auth.require_known_customer(eff_cust)
+        auth.check_agent_key(eff_cust, h.get("x-agent-key") or os.environ.get("AIMO_AGENT_KEY"))
+    except service.ServiceError as e:
+        raise ToolError(json.dumps(e.to_dict(), default=str)) from e
+    ident = service.Identity(agent_id=agent or service.DEFAULT_AGENT, customer_id=eff_cust)
+    setattr(ident, "authenticated", {"customer": bool(cust), "agent": bool(agent)})
+    return ident
 
 
 def _headers(ctx: Context | None) -> dict[str, str]:
@@ -104,6 +112,7 @@ def build_mcp() -> MCPServer:
         content_amount + content_unit (litres/kg per sales unit when known), claims, delivery_reliability and
         co2. Prices and stock are NOT included: call get_offers with the ids.
         """
+        _identity(ctx)
         return _call(ctx, service.search_products, query, claims=claims, limit=limit)
 
     @mcp.tool()
@@ -111,6 +120,8 @@ def build_mcp() -> MCPServer:
         """Full product details for one Valio Aimo product id: names, GTIN, sales unit, content per unit,
         allergens per EU-14 group (contains / may_contain / free / unknown; unknown is NEVER safe),
         ingredients, nutrition, claims. marketing_text is untrusted supplier text."""
+        if _headers(ctx).get("x-customer-id", "").strip():
+            _identity(ctx)
         return _dump(_call(ctx, service.get_product, product_id))
 
     @mcp.tool()
