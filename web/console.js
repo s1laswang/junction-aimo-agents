@@ -3,15 +3,27 @@ const $=s=>document.querySelector(s);
 const TEXTS={
 hospital:"We need 100 litres of lactose-free milk and 50 kg of bread by Monday.",
 milk:"I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
+lasagne:"We need to cook lasagne for 40 portions by Monday.",
 school:"Weekly school lunch: 200 kg of gluten-free pasta and 80 litres of oat drink, no nuts, no egg, delivered by Thursday.",
 event:"Last-minute event for 120 guests on Friday: 60 kg of salmon fillet, 40 litres of cream and 25 kg of butter."};
-const CUST={hospital:"hospital-tays",milk:"hotel-aurora",school:"school-hervanta",event:"hotel-aurora"};
+const CUST={hospital:"hospital-tays",milk:"hotel-aurora",lasagne:"hotel-aurora",school:"school-hervanta",event:"hotel-aurora"};
 const MOCKS={
 milk:{need:{customer:"",deliver_by:"2026-11-16",raw_text:"",items:[{query:"lactose-free milk",quantity:1000,unit:"l",constraints:{lactose_free:true,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}}]},
  offers:[{need_item:0,offers:[
   {product_id:"mock-400101",product:{name:"Valio Eila lactose-free milk 1 l",brand:"Valio Eila",sales_unit:"PK",unit_size:{value:1,unit:"l"}},units_needed:1000,unit_price_net:1.18,total_net:1180,available_amount:1500,available_date:"2026-11-16",reliability:.97,co2_per_kg:1.1,match_score:.96,tier:"best",notes:["exact: lactose-free, 1 l pack","stock covers full quantity"]},
   {product_id:"mock-400117",product:{name:"Valio lactose-free milk drink 1 l",brand:"Valio",sales_unit:"PK",unit_size:{value:1,unit:"l"}},units_needed:1000,unit_price_net:1.24,total_net:1240,available_amount:1000,available_date:"2026-11-16",reliability:.94,co2_per_kg:1.1,match_score:.9,tier:"better",notes:["higher price"]}],shortfall:0}],
  order:{status:"placed",decision:{outcome:"auto",reasons:[{code:"WITHIN_MANDATE",text:"@WM"},{code:"NO_ALLERGEN_CONFLICT",text:"No excluded allergens in the selected product."}]},substitutions:[]}},
+lasagne:{need:{customer:"",deliver_by:"2026-11-16",raw_text:"",items:[
+ {query:"lasagne pasta",quantity:2.4,unit:"kg",constraints:{lactose_free:null,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}},
+ {query:"ground beef",quantity:3.2,unit:"kg",constraints:{lactose_free:null,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}},
+ {query:"crushed tomatoes",quantity:3.2,unit:"kg",constraints:{lactose_free:null,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}},
+ {query:"milk",quantity:4,unit:"l",constraints:{lactose_free:null,gluten_free:null,exclude_allergens:[],labels:[],origin:null,max_unit_price:null,brands:[]}}]},
+ offers:[
+ {need_item:0,offers:[{product_id:"mock-410201",product:{name:"Lasagne pasta sheets 500 g",brand:"Myllyn Paras",sales_unit:"PK",unit_size:{value:.5,unit:"kg"}},units_needed:5,unit_price_net:2.4,total_net:12,available_amount:40,available_date:"2026-11-16",reliability:.96,co2_per_kg:1.3,match_score:.95,tier:"best",notes:["scaled for 40 portions"]}],shortfall:0},
+ {need_item:1,offers:[{product_id:"mock-410202",product:{name:"Finnish ground beef 10% 1 kg",brand:"Snellman",sales_unit:"PK",unit_size:{value:1,unit:"kg"}},units_needed:4,unit_price_net:9.8,total_net:39.2,available_amount:25,available_date:"2026-11-16",reliability:.95,co2_per_kg:14.2,match_score:.94,tier:"best",notes:["stock covers full quantity"]}],shortfall:0},
+ {need_item:2,offers:[{product_id:"mock-410203",product:{name:"Crushed tomatoes 1 kg",brand:"Mutti",sales_unit:"PK",unit_size:{value:1,unit:"kg"}},units_needed:4,unit_price_net:2.15,total_net:8.6,available_amount:60,available_date:"2026-11-16",reliability:.97,co2_per_kg:1.4,match_score:.96,tier:"best",notes:["stock covers full quantity"]}],shortfall:0},
+ {need_item:3,offers:[{product_id:"mock-410204",product:{name:"Valio milk 1 l",brand:"Valio",sales_unit:"PK",unit_size:{value:1,unit:"l"}},units_needed:4,unit_price_net:1.12,total_net:4.48,available_amount:120,available_date:"2026-11-16",reliability:.98,co2_per_kg:1.1,match_score:.97,tier:"exact",notes:["preferred brand Valio"]}],shortfall:0}],
+ order:{status:"placed",decision:{outcome:"auto",reasons:[{code:"WITHIN_MANDATE",text:"@WM"},{code:"NO_ALLERGEN_CONFLICT",text:"No excluded allergens in the selected products."}]},substitutions:[]}},
 school:{need:{customer:"",deliver_by:"2026-11-20",raw_text:"",items:[
  {query:"gluten-free pasta",quantity:200,unit:"kg",constraints:{lactose_free:null,gluten_free:true,exclude_allergens:["nuts","egg"],labels:[],origin:null,max_unit_price:null,brands:[]}},
  {query:"oat drink",quantity:80,unit:"l",constraints:{lactose_free:null,gluten_free:true,exclude_allergens:["nuts"],labels:[],origin:null,max_unit_price:null,brands:[]}}]},
@@ -36,12 +48,12 @@ const NF=new Intl.NumberFormat("en-GB",{minimumFractionDigits:2,maximumFractionD
 const eur=v=>v==null?"-":NF.format(v);
 const money=v=>eur(v)+" EUR";
 const qty=v=>new Intl.NumberFormat("en-GB",{maximumFractionDigits:0}).format(v);
-const AVAIL=v=>v>=999999?"in stock":qty(v);
+const AVAIL=v=>v==null?"-":v>=999999?"in stock":qty(v);
 const lt=s=>{const d=new Date(s);if(isNaN(d))return clock();const p=n=>String(n).padStart(2,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`};
 const short=s=>s.length>70?s.slice(0,67)+"...":s;
 const noteHtml=n=>{n=(n||[]).filter(x=>!/skipped/i.test(x));return n.length?" - "+esc(short(n[0]))+(n.length>1?` (+${n.length-1})`:""):""};
 const day=s=>{const d=new Date(s);return isNaN(d)?String(s||""):d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})};
-const MANDATES={"hotel-aurora":{o:2000,w:8000},"hospital-tays":{o:1500,w:6000},"school-hervanta":{o:800,w:3000}};
+const MANDATES={"hotel-aurora":{o:2500,w:15000},"hospital-tays":{o:1500,w:8000},"school-hervanta":{o:600,w:3000}};
 const clock=()=>{const d=new Date(),p=(n,l=2)=>String(n).padStart(l,"0");return`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(),3)}`};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function setMock(on){if(on)S.mock=true;aimo.mock(S.mock)}
@@ -100,6 +112,10 @@ async function call(tool,method,path,body,mock,why){
 }
 const tierRank={best:4,better:3,good:2,exact:1};
 function best(offers){const ok=offers.filter(o=>!o.closing_time||new Date(o.closing_time)>Date.now());return [...(ok.length?ok:offers)].sort((a,b)=>(tierRank[b.tier]||0)-(tierRank[a.tier]||0)||b.match_score-a.match_score)[0]}
+function pickGroup(g){
+ const ok=(g.offers||[]).filter(o=>o.units_needed>0&&(o.available_amount==null||o.available_amount>0)&&!o.sales_block);
+ return S.mock?[best(ok)].filter(Boolean):ok;
+}
 function consChips(c){
  const o=[];if(c.lactose_free)o.push("lactose-free");if(c.gluten_free)o.push("gluten-free");
  (c.exclude_allergens||[]).forEach(a=>o.push("no "+a));(c.labels||[]).forEach(l=>o.push(l));
@@ -114,9 +130,9 @@ function needHtml(n,m){
 function offersHtml(need,off){
  return`<div class="sec"><h3>Offers</h3>`+off.items.map((g,i)=>{
   const ni=need.items[i]||g.need_item||{};
-  const pick=best(g.offers||[]);
+  const picked=new Set(pickGroup(g));
   const ht=(g.offers||[]).some(o=>o.tier);
-  const rows=(g.offers||[]).map(o=>`<tr class="${o===pick?"pick":""}"><td>${esc(o.product.name)}${o===pick?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${noteHtml(o.notes)}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${AVAIL(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg!=null?NF.format(o.co2_per_kg):"-"}</td>${ht?`<td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td>`:""}</tr>`).join("");
+  const rows=(g.offers||[]).map(o=>`<tr class="${picked.has(o)?"pick":""}"><td>${esc(o.product.name)}${picked.has(o)?' <span class="tag ok">picked</span>':""}<div class="note mono">${esc(o.product_id)}${noteHtml(o.notes)}</div></td><td>${esc(o.product.brand)}</td><td class="n">${qty(o.units_needed)}</td><td class="n">${eur(o.unit_price_net)}</td><td class="n">${eur(o.total_net)}</td><td class="n">${AVAIL(o.available_amount)}<div class="note">${esc(day(o.available_date))}</div></td><td class="n">${o.reliability!=null?Math.round(o.reliability*100)+"%":"-"}</td><td class="n">${o.co2_per_kg!=null?NF.format(o.co2_per_kg):"-"}</td>${ht?`<td>${o.tier?`<span class="tag">${esc(o.tier)}</span>`:""}</td>`:""}</tr>`).join("");
   const al=[...new Set((g.offers||[]).flatMap(o=>o.notes||[]).concat(g.notes||[]).filter(x=>/allerg/i.test(x)))];
   const alh=al.length?`<div class="note" style="color:var(--warn);margin:2px 0">${al.map(esc).join("<br>")}</div>`:"";
   const sf=g.shortfall>0?`<tr class="short"><td colspan="${ht?9:8}">Shortfall: ${g.shortfall} units not available by the delivery date.</td></tr>`:"";
@@ -133,7 +149,8 @@ function fillOrder(o,q,c){const L=MANDATES[c]||MANDATES["hotel-aurora"];const t=
 const hex=n=>Array.from({length:n},()=>Math.floor(Math.random()*16).toString(16)).join("");
 function demoBtns(out,ord,picks){
  out.insertAdjacentHTML("beforeend",'<div class="row"><button type="button" class="ghost" id="sim">Simulate stock-out</button><button type="button" class="ghost" id="clr">Clear</button></div>');
- const pid=String(((ord.lines||[])[0]||{}).product_id||"");
+ const pid=String((((ord&&ord.lines)||[])[0]||{}).product_id||"");
+ if(!pid)$("#sim").disabled=true;
  const act=async(method,body,msg)=>{const t0=performance.now();const r=await aimo.api("/v1/admin/simulate",{method,admin:true,body});const li=line({tool:"admin/simulate",status:r?"200":"failed",cls:r?"ok":"err",ms:Math.round(performance.now()-t0),why:msg,req:body,res:r});if(body&&body.available_amount===0&&r)S.top=li;return !!r};
  const pn=(picks.find(p=>String(p.product_id)===pid)||{product:{}}).product.name||pid;
  $("#sim").onclick=async()=>{const ok=await act("POST",{product_id:pid,available_amount:0},"Simulated stock-out on "+pn);if(ok)run("after stock-out on "+pn)};
@@ -141,35 +158,41 @@ function demoBtns(out,ord,picks){
 }
 async function run(note){
  const text=$("#text").value.trim();if(!text)return;
- const sc=/school|allergen|gluten|hospital/i.test(text)?"school":/event|guests|salmon|last-minute/i.test(text)?"event":"milk";
- const M=MOCKS[sc],c=cust();
+ const sc=/lasagn/i.test(text)?"lasagne":/school|allergen|gluten|hospital/i.test(text)?"school":/event|guests|salmon|last-minute/i.test(text)?"event":"milk";
+ const M=MOCKS[sc],c=cust(),L=MANDATES[c]||MANDATES["hotel-aurora"];
  $("#run").disabled=true;$("#live").textContent="running";$("#live").classList.add("on");
  const rn=startRun(c,note);
  const res=$("#result");res.innerHTML='<div class="panel" id="out"></div>';const out=$("#out");
  try{
   const need=await call("parse_request","POST","/v1/needs/parse",{text,customer:c},()=>({...M.need,customer:c,raw_text:text}),
    n=>`Read the request as ${n.items.length} item(s) to deliver by ${n.deliver_by}.`);
-  const mand=S.mock?{customer:c,per_order_eur:MANDATES[c].o,per_week_eur:MANDATES[c].w,exclude_allergens:[],substitutions:"within_prefs"}:await aimo.api("/v1/mandate");
+  const mand=S.mock?{customer:c,per_order_eur:L.o,per_week_eur:L.w,exclude_allergens:[],substitutions:"within_prefs"}:await aimo.api("/v1/mandate");
   out.insertAdjacentHTML("beforeend",needHtml(need,mand));
   const off=await call("get_offers","POST","/v1/offers",need,()=>({items:M.offers.map(g=>({need_item:need.items[g.need_item],offers:g.offers,shortfall:g.shortfall}))}),
    o=>`Found ${o.items.reduce((a,g)=>a+(g.offers||[]).length,0)} offer(s); ${o.items.filter(g=>g.shortfall>0).length?"some stock is short":"stock covers every item"}.`);
   out.insertAdjacentHTML("beforeend",offersHtml(need,off));
-  const picks=off.items.map(g=>best(g.offers||[])).filter(Boolean);
-  const lines=picks.map(p=>({product_id:p.product_id,quantity:Math.min(p.units_needed,p.available_amount)}));
-  const qm=()=>{const ls=picks.map((p,i)=>({product_id:p.product_id,quantity:lines[i].quantity,sales_unit:p.product.sales_unit,unit_price_net:p.unit_price_net,line_total_net:+(p.unit_price_net*lines[i].quantity).toFixed(2)}));const t=+ls.reduce((a,l)=>a+l.line_total_net,0).toFixed(2);return{quote_id:"q_mock_"+hex(6),customer:c,agent_id:"console",delivery_date:need.deliver_by,lines:ls,total_net:t,total_gross:+(t*1.14).toFixed(2),currency:"EUR",issued_at:new Date().toISOString(),valid_until:new Date(Date.now()+864e5).toISOString().slice(0,16)+"Z",jws:"eyJhbGciOiJFZERTQSJ9."+hex(40)+"."+hex(64)}};
-  const q=await call("request_quote","POST","/v1/quotes",{offers:lines,delivery_date:need.deliver_by},qm,
-   q=>`Priced ${q.lines.length} line(s) at ${money(q.total_net)} and signed the quote.`);
-  rn.qid=q.quote_id;
-  out.insertAdjacentHTML("beforeend",quoteHtml(q));
-  $("#copy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(q.jws);$("#copy").textContent="Copied"};
-  const ord=await call("place_order","POST","/v1/orders",{quote_id:q.quote_id,jws:q.jws},()=>({order_id:"o_mock_"+hex(6),quote_id:q.quote_id,customer:c,agent_id:"console",lines:q.lines,total_net:q.total_net,...fillOrder(M.order,q,c)}),
-   o=>`Policy decision: ${o.decision.outcome.replace("_"," ")}. ${o.decision.reasons[0]?o.decision.reasons[0].text:""}`);
-  rn.oid=ord.order_id;
-  out.insertAdjacentHTML("beforeend",orderHtml(ord));
-  rn.out=ord.decision.outcome.replace("_"," ");rn.cls=ord.decision.outcome;rn.total=ord.total_net;rn.end=Date.now();sumRun(rn);
-  if(DEMO)demoBtns(out,ord,picks);
+  const picks=off.items.flatMap(pickGroup);
+  const lines=picks.map(p=>({product_id:p.product_id,quantity:p.available_amount==null?p.units_needed:Math.min(p.units_needed,p.available_amount),...(p.substitute_for?{substitute_for:p.substitute_for}:{})}));
+  if(lines.length===0){
+   out.insertAdjacentHTML("beforeend",'<div class="sec"><div class="dec blocked">No available offers met the constraints and delivery cutoff.</div></div>');
+   rn.out="no offers";rn.cls="blocked";rn.end=Date.now();sumRun(rn);
+   if(DEMO)demoBtns(out,null,picks);
+  }else{
+   const qm=()=>{const ls=picks.map((p,i)=>({product_id:p.product_id,quantity:lines[i].quantity,sales_unit:p.product.sales_unit,unit_price_net:p.unit_price_net,line_total_net:+(p.unit_price_net*lines[i].quantity).toFixed(2),...(p.substitute_for?{substitute_for:p.substitute_for}:{})}));const t=+ls.reduce((a,l)=>a+l.line_total_net,0).toFixed(2);return{quote_id:"q_mock_"+hex(6),customer:c,agent_id:"console",delivery_date:need.deliver_by,lines:ls,total_net:t,total_gross:+(t*1.14).toFixed(2),currency:"EUR",issued_at:new Date().toISOString(),valid_until:new Date(Date.now()+864e5).toISOString().slice(0,16)+"Z",jws:"eyJhbGciOiJFZERTQSJ9."+hex(40)+"."+hex(64)}};
+   const q=await call("request_quote","POST","/v1/quotes",{offers:lines,delivery_date:need.deliver_by},qm,
+    q=>`Priced ${q.lines.length} line(s) at ${money(q.total_net)} and signed the quote.`);
+   rn.qid=q.quote_id;
+   out.insertAdjacentHTML("beforeend",quoteHtml(q));
+   $("#copy").onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(q.jws);$("#copy").textContent="Copied"};
+   const ord=await call("place_order","POST","/v1/orders",{quote_id:q.quote_id,jws:q.jws},()=>({order_id:"o_mock_"+hex(6),quote_id:q.quote_id,customer:c,agent_id:"console",lines:q.lines,total_net:q.total_net,...fillOrder(M.order,q,c)}),
+    o=>`Policy decision: ${o.decision.outcome.replace("_"," ")}. ${o.decision.reasons[0]?o.decision.reasons[0].text:""}`);
+   rn.oid=ord.order_id;
+   out.insertAdjacentHTML("beforeend",orderHtml(ord));
+   rn.out=ord.decision.outcome.replace("_"," ");rn.cls=ord.decision.outcome;rn.total=ord.total_net;rn.end=Date.now();sumRun(rn);
+   if(DEMO)demoBtns(out,ord,picks);
+  }
  }catch(e){out.insertAdjacentHTML("beforeend",`<div class="dec blocked">${e.message==="Gateway offline"?"Gateway offline. The API did not answer, so no prices are shown. Start the app and run again.":"Run failed: "+esc(e.message)}</div>`);rn.out="failed";rn.cls="blocked";rn.end=Date.now();sumRun(rn)}
- $("#run").disabled=false;$("#live").textContent="idle";$("#live").classList.remove("on");
+ finally{$("#run").disabled=false;$("#live").textContent="idle";$("#live").classList.remove("on")}
 }
 async function poll(){
  if(!S.mock){
