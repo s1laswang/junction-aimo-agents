@@ -277,7 +277,8 @@ def check_trade(s: Suite, query: str, day: date, product: Optional[str], approve
 
 
 def find_approver(s: Suite, role: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    r = s.get("/v1/customers")
+    # approver ids are only shown to a signed-in human approver (the operator running this suite)
+    r = s.h.get("/v1/customers", headers={"X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "")})
     if r.status_code != 200:
         return None, None
     for c in r.json():

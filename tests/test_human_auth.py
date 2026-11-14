@@ -37,6 +37,31 @@ def test_human_without_pin_gets_401_with_pin_places(api):
     assert r.status_code == 200 and r.json()["status"] == "placed"
 
 
+def test_pin_brute_force_locks_out(api):
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    q, o = _pending(api)
+    anon = _anon()
+    body = {"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER}
+    codes = [anon.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Approver-Pin": f"guess{i}"},
+                       json=body).status_code for i in range(7)]
+    assert codes[:4] == [401] * 4 and codes[4] == 429 and codes[5] == 429, codes
+    # even the right credential is refused while locked
+    assert api.post(f"/v1/approvals/{o['order_id']}/decision", json=body).status_code == 429
+    human_auth.reset_for_tests()
+    assert api.post(f"/v1/approvals/{o['order_id']}/decision", json=body).status_code == 200
+
+
+def test_approver_ids_hidden_from_agents(api):
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    for c in _anon().get("/v1/customers").json():
+        for a in c.get("approvers") or []:
+            assert "id" not in a and "@" not in str(a), a
+    full = api.get("/v1/customers").json()
+    assert any("@" in str(a.get("id", "")) for c in full for a in c.get("approvers") or [])
+
+
 def test_quotes_and_orders_need_identity_and_inbox_is_scoped(api):
     anon = _anon()
     r = anon.post("/v1/quotes", json={"delivery_date": D.isoformat(), "lines": [{"product_id": "464306", "qty_sales_units": 10}]})
