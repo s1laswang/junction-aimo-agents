@@ -299,3 +299,34 @@ def test_offline_tradeoff():
     same = tradeoff(base, base)
     assert "\n" not in same
     assert same == "same price per l"
+
+
+def test_offline_may_prefix_finnish_allergens_and_missing_catalog(tmp_path, monkeypatch):
+    from aimo import catalog
+    from aimo.substitute import safe_alternatives
+
+    short_trace = Product(product_id="st1", name="Snack bar", allergens=["may:AP"])
+    assert not allergen_safe(short_trace, Constraint(), ["peanut"])
+    assert not allergen_safe(short_trace, Constraint(), ["pähkinä"])
+    assert not allergen_safe(short_trace, Constraint(), ["maapähkinä"])
+    assert not allergen_safe(short_trace, Constraint(), ["AP"])
+
+    egg_p = Product(product_id="eg1", name="Mayonnaise", allergens=["AE"])
+    assert not allergen_safe(egg_p, Constraint(), ["kananmuna"])
+    assert not allergen_safe(egg_p, Constraint(), ["ägg"])
+    assert allergen_safe(egg_p, Constraint(), ["kala"])
+
+    lf_milk = Product(product_id="lfm", name="Laktoositon maito", allergens=["AM", "ML"])
+    assert allergen_safe(lf_milk, Constraint(), ["laktoosi"])
+    assert not allergen_safe(lf_milk, Constraint(), ["maito"])
+
+    free_a = _offer("fa", "Valio lactose free milk 1 l", price=0.0)
+    free_b = _offer("fb", "Valio lactose free milk carton 1 l", price=0.0, reliability=0.99)
+    ranked_zero = rank_substitutes(MILK, [free_a, free_b], [])
+    assert len(ranked_zero) == 2
+
+    monkeypatch.setenv("AIMO_DATA_DIR", str(tmp_path / "no_catalog_here"))
+    catalog.reset()
+    item = NeedItem(query="milk", quantity=10, unit="l", constraints=Constraint(exclude_allergens=["milk"]))
+    assert safe_alternatives(item, ["milk"]) == []
+
