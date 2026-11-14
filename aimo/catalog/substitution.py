@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from aimo.catalog import units as U
-from aimo.catalog.allergens import blocking
+from aimo.catalog.allergens import blocking, effective_excluded_allergens, normalize_allergens
 from aimo.catalog.textsearch import summary_from_row
 from aimo.models import Candidate, Need, Offer
 
@@ -110,7 +110,8 @@ def reference_spec(need: Need, rows: dict[str, dict[str, Any]], fallback_row: Op
     shaping = {k: v for k, v in sp.items() if k in ("brand", "fat_pct", "organic")}
     ref = None
     for pid in need.preferred_product_ids:
-        if pid in rows:
+        if pid in rows and not blocking(rows[pid].get("allergens") or {}, need.excluded_allergens,
+                                        allergen_source=rows[pid].get("allergen_source")):
             ref = rows[pid]
             break
     src = "preferred" if ref else "none"
@@ -154,27 +155,39 @@ GENERIC_CONCEPTS = {"drink", "drinks", "product", "products", "food", "mix", "pa
 def missing_query_concepts(query: str, d: dict[str, Any]) -> list[str]:
     """Distinguishing query concepts the product does not have. A concept is satisfied by the product
     name (any language, synonyms) or, for claim words like 'lactose free', by the product's claims."""
-    from aimo.catalog.textsearch import IMPLIED_CLAIMS, parse_query
-    names = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi"), d.get("name_sv"))).lower()
+    from aimo.catalog.textsearch import IMPLIED_CLAIMS, clean_query, parse_query
+    name_parts = (d.get("name_en") or d.get("name"), d.get("name_fi"), d.get("name_sv"))
+    raw_names = " ".join(x or "" for x in name_parts).lower()
+    cleaned_names = " ".join(clean_query(x).lower() for x in name_parts if x)
     claims = set(d.get("claims") or [])
     out = []
     for c, forms in parse_query(query):
         if c in GENERIC_CONCEPTS:
             continue
-        if IMPLIED_CLAIMS.get(c) in claims:
+        if IMPLIED_CLAIMS.get(c):
+            if IMPLIED_CLAIMS[c] in claims or any(f.lower() in raw_names for f in forms):
+                continue
+            out.append(c)
             continue
-        if not any(f.lower() in names for f in forms):
+        if not any(f.lower() in cleaned_names for f in forms):
             out.append(c)
     return out
 
 
 def _query_coverage(query: str, d: dict[str, Any]) -> float:
-    from aimo.catalog.textsearch import parse_query
+    from aimo.catalog.textsearch import IMPLIED_CLAIMS, clean_query, parse_query
     concepts = parse_query(query)
     if not concepts:
         return 1.0
-    names = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi"), d.get("name_sv"))).lower()
-    return sum(1 for _c, forms in concepts if any(f.lower() in names for f in forms)) / len(concepts)
+    name_parts = (d.get("name_en") or d.get("name"), d.get("name_fi"), d.get("name_sv"))
+    raw_names = " ".join(x or "" for x in name_parts).lower()
+    cleaned_names = " ".join(clean_query(x).lower() for x in name_parts if x)
+    hits = 0
+    for c, forms in concepts:
+        target = raw_names if IMPLIED_CLAIMS.get(c) else cleaned_names
+        if any(f.lower() in target for f in forms):
+            hits += 1
+    return hits / len(concepts)
 
 
 def _same_brand(a: Optional[str], b: Optional[str]) -> bool:
@@ -223,6 +236,12 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                      rows: dict[str, dict[str, Any]] | None = None, relevance: dict[str, float] | None = None,
                      inferred_allergens: dict[str, dict[str, str]] | None = None) -> list[Candidate]:
     """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates()."""
+    caller_excl = normalize_allergens(need.excluded_allergens)
+    excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    if rows is not None and rows and caller_excl and all("allergen_source" not in d for d in rows.values()):
+        excl = [a for a in excl if a in caller_excl or any(a in (d.get("allergens") or {}) for d in rows.values())]
+    if excl != list(need.excluded_allergens):
+        need = need.model_copy(update={"excluded_allergens": excl})
     if rows is None:
         from aimo.catalog.plan import find_candidates
         rows, relevance = find_candidates(need)
@@ -240,7 +259,8 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             d0 = rows.get(pid)
             if d0 is None or not set(need.required_claims) <= set(d0.get("claims") or []):
                 continue
-            if level >= 1 and (blocking(d0.get("allergens") or {}, need.excluded_allergens)
+            if level >= 1 and (blocking(d0.get("allergens") or {}, need.excluded_allergens,
+                                        allergen_source=d0.get("allergen_source"))
                                or d0.get("content_unit") != need.unit
                                or missing_query_concepts(need.product_query, d0)):
                 continue
@@ -273,7 +293,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         conflicts = d.get("allergen_conflicts") or {}
         if conflicts:
             flags.append("allergen_data_conflict")
-        blk = blocking(d.get("allergens") or {}, need.excluded_allergens)
+        blk = blocking(d.get("allergens") or {}, need.excluded_allergens, allergen_source=d.get("allergen_source"))
         for g, st in blk:
             if st == "unknown" and g in conflicts:
                 flags.append("allergen_unknown")
