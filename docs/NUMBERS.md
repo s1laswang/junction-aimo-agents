@@ -63,8 +63,14 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | s0–s7: 8/8 PASS | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 | R submit, see docs/reports/pitch.md "Gate runs" for the latest |
-| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **285 passed, 7 skipped, 2 xfailed** in 58 s | R submit, Sat 23:29, 4ae14c6. Re-run at the freeze. |
+| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **344 passed, 7 skipped, 1 xfailed, 1 xpassed** in 34 s | R submit, Sun 00:29, 89bc3db. Re-run at the freeze. |
 | `make accept` | README | `make accept` | RESULT: PASS (table in docs/reports/pitch.md "Gate runs") | R submit |
+
+## Input hardening
+| Number | Claimed in | Command | Value | Status |
+|---|---|---|---|---|
+| About 2,600 fuzzed requests over every `/v1` route, 0 server errors | SUBMISSION, QA | `uv run --extra dev pytest -q tests/test_fuzz.py` (offline, about 45 s) | 0 × 5xx | S harden, Sat night (docs/reports/harden.md); passes inside the full pytest run below |
+| 2.5 ST → 422 `fractional_quantity`; > 1e6 → 422; unknown stock or > 50× baseline → needs approval | SUBMISSION | `uv run --extra dev pytest -q tests/test_harden.py` | as stated | S harden |
 
 ## Trust
 | Number | Claimed in | Command | Value | Status |
@@ -78,7 +84,8 @@ All wind-tunnel commands are in [docs/reports/windtunnel.md](reports/windtunnel.
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | 640 Gemini-written scenarios, 16 families × 40, 3 policy archetypes | GEMINI, SUBMISSION, deck | `uv run python -m windtunnel.generate --n 640 --gemini --out data/windtunnel/scenarios/wt640_gem.jsonl` (**live**) | 640 | S windtunnel, Sat 18:24 (git dfecb2a) |
-| Gateway vs naive: policy violations 1 vs 372, allergen 0 vs 193, recall 98.8% vs 17.8%, precision 54.0% vs 90.8%, injection block 56.2% vs 0% | SUBMISSION, DEMO, deck | `uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team` (and `--sut baseline`), then `windtunnel.score` and `uv run python -m windtunnel.report --main wt640 --scale wt2560` | as stated | S windtunnel, Sat 18:24. Escalation precision is being reworked by the need session; this row changes when its re-run lands. |
+| Gateway after the S3 policy changes: 0 policy / 0 allergen violations, recall 99.7%, precision 68.2%, outcome accuracy 73.4% (before: 1 / 0, 98.8%, 54.0%, 55.0%) | SUBMISSION, DEMO, deck, QA, DECISIONS | `AIMO_SEMANTIC=0 uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team`, then `uv run python -m windtunnel.score --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --runs data/windtunnel/runs/wt640_gem__pipeline__team__0of1.jsonl --labels after --name need_after --no-md` (offline, about 3 min) | as stated | S need, Sun 15 Nov 00:30 (docs/reports/need.md) |
+| Naive agent: policy violations 372, allergen 193, recall 17.8%, precision 90.8%; injection block gateway 56.2% vs naive 0% | SUBMISSION, DEMO, deck | `uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team` (and `--sut baseline`), then `windtunnel.score` and `uv run python -m windtunnel.report --main wt640 --scale wt2560` | as stated | S windtunnel, Sat 18:24, against the earlier policy version (not re-run after S3) |
 | 2,560 template scenarios: 11 vs 1,452 policy violations, 0 vs 728 allergen | SUBMISSION | same, `--scale wt2560` | as stated | S windtunnel, Sat 18:24 |
 | Injection screen: regex 44.4% recall, regex + Gemini 94.4%; Gemini false positives 42/60 buyer requests, 0/60 supplier texts | SUBMISSION, GEMINI | `uv run python -m windtunnel.screen_eval --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --neg 120` (**live**) | as stated | S windtunnel |
 | Thinking level: parse flash LOW 85.4% (93.2% of answered), hydrogen HIGH 100%; substitute flash LOW 93.8% (100% of answered), hydrogen HIGH 100% at p50 3.5 s / p95 6.2 s; flash HIGH p95 69.5 s on parse | GEMINI, DECISIONS | `uv run python -m windtunnel.thinking --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --n 48` (**live**, 384 calls) | as stated | S windtunnel |
@@ -95,4 +102,4 @@ All wind-tunnel commands are in [docs/reports/windtunnel.md](reports/windtunnel.
 |---|---|---|
 | Gold set: zero-correction rate on fi/sv/en requests | Only a 20-request set exists (`tests/fixtures/gold/gold-buyer-20.jsonl`) and no committed run | `uv run python -m aimo.buyer.eval_gold tests/fixtures/gold/gold-buyer-20.jsonl` (**live**) |
 | Photo intake accuracy | 4 development calls only (`buyer.vision` in the ledger) | a labelled photo set; none exists |
-| Escalation precision ≥90% at recall ≥99% | Current measured value is 54.0% (above); the need session is working on it | `windtunnel.run pipeline` + `windtunnel.score`, as above |
+| Escalation precision ≥90% at recall ≥99% | Target not met: 68.2% at 99.7% recall (above). Remaining causes in docs/reports/need.md | as above |
