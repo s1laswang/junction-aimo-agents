@@ -439,13 +439,13 @@ def test_r_allergen_block_school_tampere_hard_rejects_contains_may_contain_and_u
     assert rule["on_unknown"] == "reject"
 
     safe_prod = make_product(
-        "472833",
-        name="Fazer Aito oat drink 1 L UHT",
+        "470889",
+        name="Oatly Oat Drink Whole 1 L",
         allergens={"milk": "free", "nuts": "free"},
         source={"milk": "structured", "nuts": "structured"},
     )
-    q_safe = make_quote("school-tampere", [make_line("472833", "Fazer Aito oat drink 1 L UHT", qty=50, price=1.8)])
-    dec_safe = evaluate(q_safe, mandate, products={"472833": safe_prod}, now=NOW, audit_log=log)
+    q_safe = make_quote("school-tampere", [make_line("470889", "Oatly Oat Drink Whole 1 L", qty=50, price=1.8)])
+    dec_safe = evaluate(q_safe, mandate, products={"470889": safe_prod}, now=NOW, audit_log=log)
     assert dec_safe.outcome == "auto_approve"
     hits_safe = allergen_hits(dec_safe)
     assert len(hits_safe) == 1 and hits_safe[0].outcome == "allow"
@@ -457,25 +457,25 @@ def test_r_allergen_block_school_tampere_hard_rejects_contains_may_contain_and_u
         ("unknown", "Unknown is never treated as safe, so the line cannot be ordered."),
     ]:
         prod = make_product(
-            "472833",
-            name="Fazer Aito oat drink 1 L UHT",
+            "470889",
+            name="Oatly Oat Drink Whole 1 L",
             allergens={"milk": "free", "nuts": bad_status},
             source={"milk": "structured", "nuts": "structured" if bad_status != "unknown" else "none"},
         )
-        dec = evaluate(q_safe, mandate, products={"472833": prod}, now=NOW, audit_log=log)
+        dec = evaluate(q_safe, mandate, products={"470889": prod}, now=NOW, audit_log=log)
         assert dec.outcome == "reject"
         hit = allergen_hits(dec)[0]
-        assert hit.rule_id == "allergens:472833"
+        assert hit.rule_id == "allergens:470889"
         assert hit.outcome == "reject"
         assert expected_phrase in hit.message
 
     inferred_prod = make_product(
-        "472833",
-        name="Fazer Aito oat drink 1 L UHT",
+        "470889",
+        name="Oatly Oat Drink Whole 1 L",
         allergens={"milk": "free", "nuts": "free"},
         source={"milk": "structured", "nuts": "inferred:gemini"},
     )
-    dec_inf = evaluate(q_safe, mandate, products={"472833": inferred_prod}, now=NOW, audit_log=log)
+    dec_inf = evaluate(q_safe, mandate, products={"470889": inferred_prod}, now=NOW, audit_log=log)
     assert dec_inf.outcome == "reject"
     assert "AI-inferred" in allergen_hits(dec_inf)[0].message
 
@@ -496,13 +496,13 @@ def test_r_allergen_block_hospital_meilahti_unknown_needs_dietitian_while_contai
     line = make_line("473328", "Schar Vital dark sliced bread 350 g gluten-free", qty=20, price=3.5)
     q = make_quote("hospital-meilahti", [line], claims=("FREE_FROM_GLUTEN",), unit="KG", product_query="bread")
 
-    st_claim, src_claim, _ = derive(make_cls(claims=["FREE_FROM_GLUTEN"]))
+    st_decl, src_decl, _ = derive(make_cls(non_allergen=["AW"], claims=["FREE_FROM_GLUTEN"]))
     safe_bread = make_product(
         "473328",
         name="Schar Vital dark sliced bread 350 g gluten-free",
         category="11000",
-        allergens=st_claim,
-        source=src_claim,
+        allergens=st_decl,
+        source=src_decl,
         claims=("FREE_FROM_GLUTEN",),
         content=0.35,
         unit="KG",
@@ -510,6 +510,13 @@ def test_r_allergen_block_hospital_meilahti_unknown_needs_dietitian_while_contai
     dec_safe = evaluate(q, mandate, products={"473328": safe_bread}, now=NOW, audit_log=log)
     assert dec_safe.outcome == "auto_approve"
     assert allergen_hits(dec_safe)[0].outcome == "allow"
+
+    st_claim, src_claim, _ = derive(make_cls(claims=["FREE_FROM_GLUTEN"]))
+    claim_only_bread = safe_bread.model_copy(update={"allergens": st_claim, "allergen_source": src_claim})
+    dec_claim = evaluate(q, mandate, products={"473328": claim_only_bread}, now=NOW, audit_log=log)
+    assert dec_claim.outcome == "needs_approval"
+    assert dec_claim.approver_role == "dietitian"
+    assert "nutrition claim" in allergen_hits(dec_claim)[0].message
 
     st_sub_free, src_sub_free, _ = derive(make_cls(non_allergen=["UW"]))
     unknown_bread = safe_bread.model_copy(update={"allergens": st_sub_free, "allergen_source": src_sub_free})
