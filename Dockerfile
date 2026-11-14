@@ -1,11 +1,12 @@
 FROM python:3.13-slim
-ENV PYTHONUNBUFFERED=1 AIMO_DATA_DIR=/app/data AIMO_DB=/app/var/aimo.db AIMO_KEY_DIR=/app/var/keys
+ENV PYTHONUNBUFFERED=1 AIMO_DATA_DIR=/app/data AIMO_DB=/app/var/aimo.db AIMO_KEY_DIR=/app/var/keys AIMO_CACHE_DIR=/app/var/cache
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY aimo aimo
 COPY agents agents
 COPY scenarios scenarios
+COPY scripts scripts
 COPY web web
 COPY data_extra data_extra
 RUN useradd -r -u 10001 aimo && mkdir -p var && chown aimo var
