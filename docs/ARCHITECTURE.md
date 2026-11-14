@@ -36,7 +36,8 @@ sequenceDiagram
   V-->>C: 463038 cut-off passed Thu 12 Nov 15:00; 464306 in stock at 1.01; 469363 only 384 units
   C-->>G: plan: best 464306 x 1000 = EUR 1,010 (flag outside_preference); better 469363 (partial_stock); 463038 rejected
   A->>G: create_quote(lines)
-  G->>V: re-check price and availability (served from the 5-minute cache if fresh)
+  G->>V: re-fetch price and availability live (provenance served_from: live)
+  G->>C: recompute tier and substitution flags server-side
   G->>T: sign_quote: sha256 over canonical JSON, Ed25519 JWS, expires in 15 min
   G-->>A: signed Quote (quote_id, quote_hash, signature, kid)
   A->>G: place_order(quote_id, quote_hash)

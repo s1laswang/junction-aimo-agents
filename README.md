@@ -149,9 +149,9 @@ curl -s -X POST http://localhost:8000/v1/plan "${H[@]}" \
   -d '{"customer_id":"hotel-aurora","product_query":"lactose-free milk","required_claims":["FREE_FROM_LACTOSE"],
        "quantity":1000,"unit":"L","delivery_by":"2026-11-16","preferred_product_ids":["463038"]}'
 
-# 4. Signed quote (fixed price for 15 min): note quote_id and quote_hash
+# 4. Signed quote (live re-priced, fixed for 15 min; the gateway sets tier and flags): note quote_id and quote_hash
 curl -s -X POST http://localhost:8000/v1/quotes "${H[@]}" \
-  -d '{"delivery_date":"2026-11-16","lines":[{"product_id":"464306","qty_sales_units":1000,"tier":"best","flags":["outside_preference"]}]}'
+  -d '{"delivery_date":"2026-11-16","lines":[{"product_id":"464306","qty_sales_units":1000}]}'
 
 # 5. Order: returns status pending_approval with every rule's reason
 curl -s -X POST http://localhost:8000/v1/orders "${H[@]}" -d '{"quote_id":"Q-...","quote_hash":"..."}'
