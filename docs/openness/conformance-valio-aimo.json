@@ -1,0 +1,290 @@
+{
+ "profile": "otap/0.1",
+ "target": "http://127.0.0.1:8830",
+ "name": "Valio Aimo Trusted Trade Gateway",
+ "customer": "hotel-aurora",
+ "agent": "buyer-1",
+ "ran_at": "2026-11-14T17:03:18+00:00",
+ "duration_s": 1.3,
+ "mcp_tools": [
+  "check_standing_order_drift",
+  "create_quote",
+  "get_audit_trail",
+  "get_offers",
+  "get_order_status",
+  "get_product",
+  "list_policies",
+  "list_recipes",
+  "place_order",
+  "plan_need",
+  "plan_recipe",
+  "propose_offer",
+  "search_products"
+ ],
+ "summary": {
+  "pass": 43,
+  "fail": 0,
+  "skip": 0,
+  "total": 43
+ },
+ "results": [
+  {
+   "id": "D1",
+   "check": "otap.json served",
+   "status": "PASS",
+   "detail": "200"
+  },
+  {
+   "id": "D2",
+   "check": "otap.json has the profile fields",
+   "status": "PASS",
+   "detail": "missing []"
+  },
+  {
+   "id": "D3",
+   "check": "otap.json protocol is otap/0.1",
+   "status": "PASS",
+   "detail": "otap/0.1"
+  },
+  {
+   "id": "D4",
+   "check": "otap.json lists the profile endpoints",
+   "status": "PASS",
+   "detail": "missing []"
+  },
+  {
+   "id": "D5",
+   "check": "otap.json names a streamable-HTTP MCP endpoint",
+   "status": "PASS",
+   "detail": "{'url': 'http://127.0.0.1:8830/mcp', 'transport': 'streamable-http', 'server_name': 'valio-aimo-trusted-trade', 'stdio': 'python -m aimo.gateway.mcp_server'}"
+  },
+  {
+   "id": "D6",
+   "check": "JWKS has Ed25519 OKP keys with kid",
+   "status": "PASS",
+   "detail": "[{'kty': 'OKP', 'crv': 'Ed25519', 'x': 'gv1fjZyCa_g990Vfn1BYBPGiJmFzpHok2jkFRD_qQ9Q', 'kid': 'Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM', 'alg': 'EdDSA', 'use': 'sig'}]"
+  },
+  {
+   "id": "D7",
+   "check": "every kid is the RFC 7638 thumbprint",
+   "status": "PASS",
+   "detail": "[('Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM', 'Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM')]"
+  },
+  {
+   "id": "D8",
+   "check": "no private key material in JWKS",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "D9",
+   "check": "OpenAPI 3.x document served",
+   "status": "PASS",
+   "detail": "3.1.0"
+  },
+  {
+   "id": "D10",
+   "check": "OpenAPI has the profile paths",
+   "status": "PASS",
+   "detail": "[]"
+  },
+  {
+   "id": "M1",
+   "check": "MCP tools/list over streamable HTTP",
+   "status": "PASS",
+   "detail": "13"
+  },
+  {
+   "id": "M2",
+   "check": "MCP has the profile tools",
+   "status": "PASS",
+   "detail": "missing []"
+  },
+  {
+   "id": "M3",
+   "check": "MCP tool schemas declare the required arguments + descriptions",
+   "status": "PASS",
+   "detail": "[]"
+  },
+  {
+   "id": "M4",
+   "check": "MCP exposes no approval tool (agents can never approve)",
+   "status": "PASS",
+   "detail": "[]"
+  },
+  {
+   "id": "T1",
+   "check": "product search 'lactose free milk' returns products with id, name, sales_unit",
+   "status": "PASS",
+   "detail": "200"
+  },
+  {
+   "id": "T2",
+   "check": "offers carry price, availability and provenance",
+   "status": "PASS",
+   "detail": "200"
+  },
+  {
+   "id": "T3",
+   "check": "an orderable product was found for the delivery date",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "Q1",
+   "check": "POST /v1/quotes returns a quote with quote_hash, signature, kid, expires_at",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "Q2",
+   "check": "quote signature verifies against JWKS (independent EdDSA check)",
+   "status": "PASS",
+   "detail": "[]"
+  },
+  {
+   "id": "Q3",
+   "check": "quote_hash binds the quote content (recomputed)",
+   "status": "PASS",
+   "detail": "[]"
+  },
+  {
+   "id": "Q4",
+   "check": "a tampered quote no longer verifies",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "Q5",
+   "check": "JWS header alg EdDSA, kid matches quote.kid",
+   "status": "PASS",
+   "detail": "{'alg': 'EdDSA', 'kid': 'Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM', 'typ': 'quote+jws'}"
+  },
+  {
+   "id": "Q6",
+   "check": "price lock: expires_at after created_at",
+   "status": "PASS",
+   "detail": "('2026-11-14T17:03:18Z', '2026-11-14T17:18:18Z')"
+  },
+  {
+   "id": "Q7",
+   "check": "GET /v1/quotes/{id} returns the same signed quote",
+   "status": "PASS",
+   "detail": "200"
+  },
+  {
+   "id": "O1",
+   "check": "order with a wrong quote_hash is refused (409)",
+   "status": "PASS",
+   "detail": "409"
+  },
+  {
+   "id": "O2",
+   "check": "another agent cannot submit this agent's quote (403)",
+   "status": "PASS",
+   "detail": "403"
+  },
+  {
+   "id": "O3",
+   "check": "another customer cannot submit the quote (403)",
+   "status": "PASS",
+   "detail": "403"
+  },
+  {
+   "id": "O4",
+   "check": "the quoting agent's order is decided by policy",
+   "status": "PASS",
+   "detail": "{\"order_id\":\"ORD-20261114-acc1f9c8\",\"quote_id\":\"Q-20261114-5a4a5dba\",\"quote_hash\":\"89d9d55db30aba0f50d240cdaad2e9af365c40ff31fc7e0758d2ff2e81465128\",\"customer_id\":\"hotel-aurora\",\"agent_id\":\"buyer-1\",\""
+  },
+  {
+   "id": "O5",
+   "check": "the intruder attempt did not consume the quote (order belongs to the quoting agent)",
+   "status": "PASS",
+   "detail": "buyer-1"
+  },
+  {
+   "id": "O6",
+   "check": "decision hits are plain-language messages",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "O7",
+   "check": "order placement is idempotent per quote",
+   "status": "PASS",
+   "detail": "200"
+  },
+  {
+   "id": "A0",
+   "check": "an order reached pending_approval (escalated quantity)",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "A1",
+   "check": "pending order is in the approval inbox with its quote",
+   "status": "PASS",
+   "detail": ""
+  },
+  {
+   "id": "A2",
+   "check": "an agent cannot approve (403)",
+   "status": "PASS",
+   "detail": "403"
+  },
+  {
+   "id": "A3",
+   "check": "the buyer agent's own id cannot approve (403)",
+   "status": "PASS",
+   "detail": "403"
+  },
+  {
+   "id": "A4",
+   "check": "approval bound to the quote hash (wrong hash -> 409)",
+   "status": "PASS",
+   "detail": "409"
+  },
+  {
+   "id": "A5",
+   "check": "a named human approver with the right role -> placed",
+   "status": "PASS",
+   "detail": "{\"order_id\":\"ORD-20261114-acc1f9c8\",\"quote_id\":\"Q-20261114-5a4a5dba\",\"quote_hash\":\"89d9d55db30aba0f50d240cdaad2e9af365c40ff31fc7e0758d2ff2e81465128\",\"customer_id\":\"hotel-aurora\",\"agent_id\":\"buyer-1\",\""
+  },
+  {
+   "id": "P2",
+   "check": "Peppol order response: response_code and line codes in AP/CA/RE",
+   "status": "PASS",
+   "detail": "('AP', {'AP'})"
+  },
+  {
+   "id": "U1",
+   "check": "GET /v1/audit/verify reports an intact chain",
+   "status": "PASS",
+   "detail": "{'ok': True, 'checked': 11, 'broken_at': None, 'reason': None, 'head': 'c4b6df9e83741e2b9e28e7598b21122462006510ce92d047f6dfa4b326a45f5e', 'kids': ['Z3uTIrcv1T9qXlKzVDQz4Gfhv4v02VpNifxHiJ8r0eM']}"
+  },
+  {
+   "id": "U2",
+   "check": "the order's audit trail has signed, human-readable events",
+   "status": "PASS",
+   "detail": "11"
+  },
+  {
+   "id": "U3",
+   "check": "each event hash recomputes and its signature verifies (independent)",
+   "status": "PASS",
+   "detail": "[]"
+  },
+  {
+   "id": "U4",
+   "check": "trail records agent and human/system actors",
+   "status": "PASS",
+   "detail": "['agent', 'human', 'system']"
+  },
+  {
+   "id": "U5",
+   "check": "the full chain links from genesis (prev_hash) and verifies (independent)",
+   "status": "PASS",
+   "detail": "[]"
+  }
+ ]
+}
