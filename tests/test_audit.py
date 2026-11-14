@@ -90,3 +90,47 @@ def test_verify_checkpoint_cli(tmp_path, monkeypatch, capsys):
     assert audit.main(["x", "verify-checkpoint", cp["jws"]]) == 0
     assert audit.main(["x", "verify-checkpoint", cp["jws"][:-4] + "AAAA"]) == 1
     assert "BAD_SIGNATURE" in capsys.readouterr().out
+
+
+def test_stockout_narration(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "st.db"))
+    e1 = audit.record("hotel-aurora", "system", "order.stockout", "o1", "Stock dropped after the order: 464201 replaced by 464202.", {"order_id": "o1", "total_net": 240.0})
+    e2 = audit.record("hotel-aurora", "agent:buyer", "order.stockout", "o2", "Reopened for buyer review.", {"order_id": "o2"})
+    buyer = audit.narrate([e1, e2]).splitlines()
+    assert buyer[0][6:] == "Supplier stock-out: Stock dropped after the order: 464201 replaced by 464202."
+    assert "The system" not in buyer[0] and "order stockout" not in buyer[0]
+    assert buyer[1][6:] == "Hotel Aurora's buyer agent had an order reopened after a supplier stock-out. Reopened for buyer review."
+    valio = audit.narrate([e1, e2], view="valio").splitlines()
+    assert valio[0][6:] == "Supplier stock-out: Stock dropped after the order: 464201 replaced by 464202. [o1, #1]"
+    assert valio[1][6:] == "Hotel Aurora's buyer agent (buyer) had an order reopened after a supplier stock-out. Reopened for buyer review. [o2, #2]"
+
+
+def test_verify_checkpoint_after_rotation(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+    from joserfc import jws
+    from joserfc.jwk import OKPKey
+
+    from aimo import keys
+
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "r.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    e1 = audit.record("hotel-aurora", "system", "order.placed", "o1", "ok")
+    cp1 = audit.checkpoint()
+    assert audit.verify_checkpoint(cp1["jws"]) == {"seq": 1, "hash": e1.hash, "ts": cp1["ts"]}
+    old_kid = keys.kid()
+    new_kid = keys.rotate()
+    assert new_kid != old_kid
+    assert audit.verify_checkpoint(cp1["jws"]) == {"seq": 1, "hash": e1.hash, "ts": cp1["ts"]}
+    assert audit.main(["x", "verify-checkpoint", cp1["jws"]]) == 0
+    e2 = audit.record("hotel-aurora", "system", "order.confirmed", "o1", "ok")
+    cp2 = audit.checkpoint()
+    assert audit.verify_checkpoint(cp2["jws"]) == {"seq": 2, "hash": e2.hash, "ts": cp2["ts"]}
+    no_kid = jws.serialize_compact({"alg": "EdDSA"}, json.dumps({"seq": 2, "hash": e2.hash, "ts": cp2["ts"]}).encode(), keys.signing_key(), algorithms=["EdDSA"])
+    with pytest.raises(ValueError, match="BAD_SIGNATURE"):
+        audit.verify_checkpoint(no_kid)
+    evil = OKPKey.generate_key("Ed25519")
+    forged = jws.serialize_compact({"alg": "EdDSA", "kid": evil.thumbprint()}, json.dumps({"seq": 2, "hash": e2.hash, "ts": cp2["ts"]}).encode(), evil, algorithms=["EdDSA"])
+    with pytest.raises(ValueError, match="BAD_SIGNATURE"):
+        audit.verify_checkpoint(forged)
