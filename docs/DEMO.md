@@ -3,7 +3,7 @@
 Presenter: Silas (talks). Driver: Chintufp (clicks). Screen: browser at `http://localhost:8000/ui`, 1280×800 or larger, zoom 110%.
 Judging weights in brackets: **[E2E 30]** end-to-end demo, **[NEED 20]** solves the user need, **[CTRL 20]** autonomy and controls with auditability, **[ROB 15]** robustness to exceptions, **[OPEN 15]** openness and production path. **[GEM]** marks the Gemini prize points.
 
-UI labels below are from `web/app.js` and `web/index.html` on team/frontend (landing on main). Re-check them after the merge.
+UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes about 35–40 s, of which the agent reaches the approval wait after about 25 s (measured with `uv run aimo demo`, 38 s including approval).
 
 ## Before you go on stage (T-15 min)
 
@@ -47,7 +47,7 @@ Pick one, rehearsed in advance:
 2. **Prompt injection:** `uv run aimo demo --scenario injection`. Supplier text with hidden instructions is flagged and the order needs approval.
 3. **Outage:** `uv run aimo demo --scenario stockout` (fault `partial:*:400`) or send header `X-Aimo-Faults: error_rate:1` to `/v1/offers` to show the 503 with `Retry-After`.
 
-The terminal demo lands with the buyer merge; run each scenario once during rehearsal and note how long it takes. **TODO: timings.**
+Run each scenario once during rehearsal and note how long it takes (happy path measured at 38 s; the buyer report has stockout at 36 s). **TODO: timings for the others.** Live tamper demo without the mock: `curl -X POST localhost:8000/v1/demo/tamper/3`, click **Verify chain** (red, "event #3 was modified after it was recorded"), then `curl -X POST localhost:8000/v1/demo/untamper/3` (verified Sat 15:00).
 
 ## Fallback plan
 
@@ -56,7 +56,7 @@ The terminal demo lands with the buyer merge; run each scenario once during rehe
 | Gemini slow or failing | The agent falls back to the deterministic need parser; keep talking over the timeline. If the run stalls for > 20 s, switch to tab (b) mock mode. | 5 s |
 | Mock API down or slow (`/healthz` ok but offers 503) | Switch to tab (b): `http://localhost:8000/ui/?mock=1` plays the identical story with no backend. The header shows **MOCK DATA · no backend**: say so honestly. Mock mode also has **Simulate tampering** to show the chain turning red. | 5 s |
 | Gateway won't start / laptop problem | Mock UI without the gateway: `cd web && python -m http.server 8765`, open `http://127.0.0.1:8765/index.html?mock=1`. | 30 s |
-| Browser or UI broken | Terminal: `uv run aimo demo` (or, before the buyer merge, `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000`, which walks search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify). | 10 s |
+| Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (Gemini agent, about 40 s), or without Gemini `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
 | Everything down | Play the pre-recorded video (Chintufp records it at the Sun 06:00 freeze; file path **TODO**). | 0 s |
 
 ## Recording the video (2–3 minutes)

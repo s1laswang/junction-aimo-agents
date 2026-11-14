@@ -75,7 +75,8 @@ def main() -> None:
     check(bool(plan.get("lines")), "plan has lines")
 
     t = step("POST /v1/quotes")
-    lines = [{"product_id": ln["product_id"], "qty_sales_units": ln["qty_sales_units"], "tier": ln.get("tier")}
+    lines = [{"product_id": ln["product_id"], "qty_sales_units": ln["qty_sales_units"], "tier": ln.get("tier"),
+              "flags": ln.get("flags") or []}
              for ln in plan["lines"]]
     r = c.post("/v1/quotes", json={"customer_id": "hotel-aurora", "agent_id": "buyer-1",
                                    "delivery_date": a.date, "lines": lines, "need": NEED})

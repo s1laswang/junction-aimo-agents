@@ -22,18 +22,23 @@ Then open:
 
 | URL | What |
 |---|---|
-| http://localhost:8000/ui | Approval UI: agent console, good-better-best cards, policy verdict, approval inbox, audit timeline *(lands with the frontend merge)* |
+| http://localhost:8000/ui | Approval UI: agent console, good-better-best cards, policy verdict, approval inbox, audit timeline (`?mock=1` plays the story with no backend) |
 | http://localhost:8000/docs | OpenAPI 3.1 REST API (interactive) |
 | http://localhost:8000/mcp | MCP server (streamable HTTP), 9 tools |
 | http://localhost:8000/.well-known/otap.json | Discovery manifest: endpoints, MCP URL, JWKS URL, policies, standards |
 | http://localhost:8000/.well-known/jwks.json | Public key to verify quote and audit signatures |
 | http://localhost:8000/healthz | Which components are live vs fallback |
 
-Terminal demo of the Gemini buyer agent: `uv run aimo demo` (scenarios: `--scenario school-allergen|stockout|injection|drift|event`). *Lands with the buyer merge; on the current main it prints a pointer to the curl walkthrough below.*
+Terminal demo of the Gemini buyer agent, with the gateway running in another terminal:
+```bash
+uv run aimo demo --auto-approve-as anna@hotel-aurora.example     # 1,000 L milk end to end, about 40 s
+uv run aimo demo --scenario stockout|school-allergen|injection|drift|event
+```
+Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, best 464306) → escalation to gemini-4-hydrogen HIGH → signed quote → needs approval (3 reasons) → approved → placed, 38 s.
 
-Optional, about 1.5 minutes, needs `GEMINI_API_KEY`: `uv run python -m aimo.catalog build` builds the gemini-embedding-2 vectors (hybrid search) and the Gemini allergen hints. Without them, search falls back to full-text only.
+On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q` (63 passed on main, Sat 14 Nov).
+Tests: `uv run --extra dev pytest -q` (106 passed on main, Sat 14 Nov 15:00).
 
 ## What it is: five pillars
 
@@ -170,11 +175,11 @@ Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULT
 | `aimo/backend/` | Valio mock API client (cache, retry, chunking, fault injection), SQLite catalog store, order store with Peppol AP/CA/RE |
 | `aimo/catalog/` | Search (FTS5 trigram + gemini-embedding-2, RRF), units, allergens (GS1 to EU14), good-better-best, `plan_need`, Gemini allergen and recipe checks |
 | `aimo/trust/` | Policy engine and YAML policies, Ed25519 JWS signing, approvals, hash-chained signed audit, injection screening |
-| `aimo/buyer/` | Gemini buyer agent, need parsing, tool transports (MCP / in-process / fake), terminal demo, run SSE *(landing)* |
-| `web/` | No-build approval UI served at `/ui`, with `?mock=1` offline mode *(landing)* |
+| `aimo/buyer/` | Gemini buyer agent, need parsing, tool transports (MCP / in-process / fake), terminal demo, `POST /v1/agent/runs` + SSE |
+| `web/` | No-build approval UI served at `/ui`, with `?mock=1` offline mode |
 | `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline *(landing)* |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | Offline tests for gateway, catalog and trust |
+| `tests/` | Offline tests for gateway, catalog, trust and buyer |
 | `docs/` | [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
