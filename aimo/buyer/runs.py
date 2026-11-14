@@ -63,7 +63,7 @@ class Run:
         d = {"run_id": self.run_id, "status": self.status, "customer_id": self.req.customer_id,
              "text": self.req.text, "created_at": self.created, "n_steps": len(self.steps),
              "summary": (self.result or {}).get("summary"), "order_status": (self.result or {}).get("status"),
-             "latency_s": (self.result or {}).get("latency_s")}
+             "latency_s": (self.result or {}).get("latency_s"), "mock": (self.result or {}).get("mock")}
         if with_steps:
             d["steps"] = [s.model_dump(mode="json") for s in self.steps]
         return d
@@ -74,12 +74,14 @@ class RunRegistry:
         self.runs: dict[str, Run] = {}
         self.lock = threading.Lock()
 
-    def start(self, req: RunRequest, *, transport_factory=None, agent_kwargs: dict | None = None) -> Run:
+    def start(self, req: RunRequest, *, transport_factory=None, agent_kwargs: dict | None = None,
+              mcp_url: str | None = None) -> Run:
         run_id = "run-" + uuid.uuid4().hex[:10]
         run = Run(run_id, req)
+        resolved_mcp = mcp_url or os.environ.get("AIMO_MCP_URL") or "http://localhost:8000/mcp"
         with self.lock:
             self.runs[run_id] = run
-        threading.Thread(target=self._execute, args=(run, transport_factory, agent_kwargs or {}),
+        threading.Thread(target=self._execute, args=(run, transport_factory, agent_kwargs or {}, resolved_mcp),
                          daemon=True, name=f"buyer-{run_id}").start()
         return run
 
@@ -89,8 +91,9 @@ class RunRegistry:
             raise KeyError(run_id)
         return run
 
-    def _execute(self, run: Run, transport_factory, agent_kwargs: dict) -> None:
+    def _execute(self, run: Run, transport_factory, agent_kwargs: dict, mcp_url: str | None = None) -> None:
         from aimo.buyer.agent import BuyerAgent
+        from aimo.buyer.mock_model import MOCK_MODEL_NAME, mock_wanted
         from aimo.buyer.profiles import get_profile, mandate_for
         from aimo.buyer.tools import connect
         req = run.req
@@ -102,17 +105,20 @@ class RunRegistry:
                 if transport_factory is not None:
                     transport = transport_factory(req)
                 else:
+                    target_mcp = mcp_url or os.environ.get("AIMO_MCP_URL") or "http://localhost:8000/mcp"
                     transport = connect(req.transport or os.environ.get("AIMO_BUYER_TRANSPORT", "auto"),
                                         agent_id=prof["agent_id"], customer_id=req.customer_id,
-                                        mcp_url=os.environ.get("AIMO_MCP_URL", "http://localhost:8000/mcp"),
+                                        mcp_url=target_mcp,
                                         mandate=mandate_for(req.customer_id), faults=req.faults)
                 kw = dict(agent_kwargs)
-                if req.model:
+                if req.model and not ("generate_fn" not in kw and mock_wanted()):
                     kw["model"] = req.model
                 if req.thinking:
                     kw["thinking"] = req.thinking
                 kw.setdefault("escalate", req.escalate)
                 agent = BuyerAgent(transport, req.customer_id, emit=run.add, run_id=run.run_id, **kw)
+                if agent.mock:
+                    agent.model = MOCK_MODEL_NAME
                 run.result = agent.run(req.text)
                 run.status = "finished" if run.result.get("status") != "error" else "error"
             except Exception as e:  # noqa: BLE001
@@ -140,8 +146,9 @@ router = APIRouter(prefix="/v1/agent", tags=["buyer-agent"])
 
 
 @router.post("/runs")
-def create_run(req: RunRequest) -> dict:
-    run = registry.start(req)
+def create_run(req: RunRequest, request: Request) -> dict:
+    base_mcp = os.environ.get("AIMO_MCP_URL") or f"{str(request.base_url).rstrip('/')}/mcp"
+    run = registry.start(req, mcp_url=base_mcp)
     return {"run_id": run.run_id, "events_url": f"/v1/agent/runs/{run.run_id}/events"}
 
 
