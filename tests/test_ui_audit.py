@@ -53,7 +53,7 @@ function mountAudit(opts) {
         const e = Object.assign({ type: t, target: this, preventDefault() {}, closest() { return null; } }, ev || {});
         (this.listeners[t] || []).forEach(fn => fn.call(this, e));
       },
-      scrollIntoView() {},
+      scrollIntoView(arg) { this.scrolled = arg || true; },
       click() {},
       remove() {}
     };
@@ -63,7 +63,7 @@ function mountAudit(opts) {
     return els[id];
   }
   [
-    "f-order", "filters", "f-actor", "f-action", "f-customer", "legend",
+    "f-order", "filters", "f-actor", "f-action", "f-customer", "f-reset", "legend",
     "v-ledger", "v-text", "export", "print", "ledger", "how-n", "badge",
     "plain", "receipt", "scope", "cp-box", "cp-seq", "cp-jws", "cp-copy", "jump"
   ].forEach(getEl);
@@ -85,6 +85,11 @@ function mountAudit(opts) {
     aimo: aimo,
     addEventListener(t, fn) { (winListeners[t] = winListeners[t] || []).push(fn); },
     dispatchCustomer(c) { (winListeners.customer || []).forEach(fn => fn({ detail: c })); },
+    dispatchHash(h) {
+      loc.hash = h;
+      loc.href = loc.origin + loc.pathname + loc.search + h;
+      (winListeners.hashchange || []).forEach(fn => fn({ type: "hashchange" }));
+    },
     print() {}
   };
   const doc = {
@@ -101,6 +106,7 @@ function mountAudit(opts) {
         const nu = new URL(String(u));
         loc.href = nu.href;
         loc.search = nu.search;
+        loc.hash = nu.hash;
       }
     },
     navigator: { clipboard: { writeText: async () => {} } },
@@ -328,10 +334,40 @@ def test_page_wiring():
     assert "/.well-known/jwks.json" in h
     assert "python -m aimo.audit verify-checkpoint" in h
     assert 'id="cp-box"' in h and 'id="cp-jws"' in h and 'id="cp-copy"' in h
+    assert 'id="f-reset"' in h
     for src in re.findall(r'<script[^>]+src="([^"]+)"', h):
         assert src.startswith("/"), src
     for href in re.findall(r'<link[^>]+href="([^"]+)"', h):
         assert href.startswith("/") or href.startswith("data:image/svg+xml,"), href
+
+
+def test_filter_reset_and_en_gb_currency_wiring():
+    h = (WEB / "audit.html").read_text(encoding="utf-8")
+    j = (WEB / "audit.js").read_text(encoding="utf-8")
+    assert re.search(
+        r'<button[^>]+type="button"[^>]+class="btn btn-quiet"[^>]+id="f-reset"[^>]*>Reset</button>',
+        h,
+    )
+    assert 'Intl.NumberFormat("en-GB"' in j
+    assert '"en-US"' not in j
+    assert "resetFilters" in j
+    assert "data-reset" in j
+    assert "order.stockout" in j
+    assert "order.expired" in j
+
+
+def test_zero_comments_in_audit_owned_files():
+    import io
+    import tokenize
+
+    h = (WEB / "audit.html").read_text(encoding="utf-8")
+    assert "<" + "!--" not in h
+
+    py_src = Path(__file__).read_text(encoding="utf-8")
+    for tok in tokenize.generate_tokens(io.StringIO(py_src).readline):
+        assert tok.type != tokenize.COMMENT, f"Python comment at line {tok.start[0]}: {tok.string}"
+    assert "\u2014" not in py_src
+    assert not EMOJI.search(py_src)
 
 
 def test_agents_legend_wired():
@@ -529,3 +565,507 @@ def test_hash_recipe_matches_python(tmp_path, monkeypatch):
         srv.server_close()
         cm.__exit__(None, None, None)
     assert bad["at"] == 2
+
+
+NODE_WAVE2_HARNESS = r"""
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+const auditCode = fs.readFileSync(payload.auditJsPath, "utf8");
+
+function mountAudit(opts) {
+  const urlStr = opts.url || "http://127.0.0.1:8000/audit.html";
+  const loc = new URL(urlStr);
+  const els = {};
+  function makeEl(id) {
+    return {
+      id: id,
+      value: "",
+      textContent: "",
+      innerHTML: "",
+      className: "",
+      title: "",
+      hidden: false,
+      scrolled: null,
+      dataset: {},
+      attrs: {},
+      listeners: {},
+      parentNode: { dataset: {} },
+      setAttribute(k, v) { this.attrs[k] = String(v); },
+      getAttribute(k) { return this.attrs[k] || null; },
+      addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
+      trigger(t, ev) {
+        const e = Object.assign({ type: t, target: this, preventDefault() {}, closest() { return null; } }, ev || {});
+        (this.listeners[t] || []).forEach(fn => fn.call(this, e));
+      },
+      scrollIntoView(arg) { this.scrolled = arg || true; },
+      click() {},
+      remove() {}
+    };
+  }
+  function getEl(id) {
+    if (!els[id]) els[id] = makeEl(id);
+    return els[id];
+  }
+  [
+    "f-order", "filters", "f-actor", "f-action", "f-customer", "f-reset", "legend",
+    "v-ledger", "v-text", "export", "print", "ledger", "how-n", "badge",
+    "plain", "receipt", "scope", "cp-box", "cp-seq", "cp-jws", "cp-copy", "jump"
+  ].forEach(getEl);
+
+  const winListeners = {};
+  const aimo = {
+    CUSTOMERS: ["hotel-aurora", "hospital-tays", "school-hervanta"],
+    lastError: null,
+    mockFlag: false,
+    customer() { return opts.defaultCustomer || "hotel-aurora"; },
+    mock(on) { this.mockFlag = !!on; },
+    offline(el) { if (el) el.innerHTML = '<p class="empty muted">Gateway offline</p>'; return "Gateway offline"; },
+    async api(path, reqOpts) {
+      if (opts.api) return await opts.api(path, reqOpts);
+      return null;
+    }
+  };
+  const win = {
+    aimo: aimo,
+    addEventListener(t, fn) { (winListeners[t] = winListeners[t] || []).push(fn); },
+    dispatchCustomer(c) { (winListeners.customer || []).forEach(fn => fn({ detail: c })); },
+    dispatchHash(h) {
+      loc.hash = h;
+      loc.href = loc.origin + loc.pathname + loc.search + h;
+      (winListeners.hashchange || []).forEach(fn => fn({ type: "hashchange" }));
+    },
+    print() {}
+  };
+  const doc = {
+    getElementById: getEl,
+    createElement(tag) { return makeEl(tag); },
+    body: { appendChild() {} }
+  };
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    location: loc,
+    history: {
+      replaceState(_s, _t, u) {
+        const nu = new URL(String(u));
+        loc.href = nu.href;
+        loc.search = nu.search;
+        loc.hash = nu.hash;
+      }
+    },
+    navigator: { clipboard: { writeText: async () => {} } },
+    aimo: aimo,
+    crypto: globalThis.crypto,
+    TextEncoder: globalThis.TextEncoder,
+    TextDecoder: globalThis.TextDecoder,
+    URL: globalThis.URL,
+    URLSearchParams: globalThis.URLSearchParams,
+    Blob: globalThis.Blob,
+    Intl: globalThis.Intl,
+    atob: globalThis.atob,
+    btoa: globalThis.btoa,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    Date: globalThis.Date,
+    Math: globalThis.Math,
+    JSON: globalThis.JSON,
+    Object: globalThis.Object,
+    Array: globalThis.Array,
+    String: globalThis.String,
+    Number: globalThis.Number,
+    Boolean: globalThis.Boolean,
+    RegExp: globalThis.RegExp,
+    Set: globalThis.Set,
+    Uint8Array: globalThis.Uint8Array,
+    Error: globalThis.Error,
+    isNaN: globalThis.isNaN,
+    encodeURIComponent: globalThis.encodeURIComponent
+  });
+  vm.runInContext(auditCode, ctx, { filename: "audit.js" });
+  return { win, els, loc, aimo };
+}
+
+function flush() {
+  return new Promise(r => setTimeout(r, 25));
+}
+
+function makeLiveApi(trailObj, ordersMap) {
+  return async function(path) {
+    if (path.startsWith("/v1/audit")) return trailObj;
+    if (path === "/.well-known/jwks.json") return payload.jwks;
+    if (path.startsWith("/v1/orders/")) {
+      const id = decodeURIComponent(path.slice("/v1/orders/".length));
+      return ordersMap[id] || null;
+    }
+    throw new Error("unexpected path: " + path);
+  };
+}
+
+(async () => {
+  const stockoutEv = payload.trail.events.find(e => e.action === "order.stockout");
+  const expiredEv = payload.trail.events.find(e => e.action === "order.expired");
+  const mandateEv = payload.trail.events.find(e => e.action === "mandate_updated" && e.customer === "school-hervanta");
+  assert.ok(stockoutEv && expiredEv && mandateEv);
+
+  const mSameCust = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html#e" + stockoutEv.seq,
+    defaultCustomer: "hotel-aurora",
+    api: makeLiveApi(payload.trail, {})
+  });
+  await flush();
+  assert.strictEqual(mSameCust.els["f-customer"].value, "hotel-aurora");
+  assert.ok(mSameCust.els["ledger"].innerHTML.includes('id="e' + stockoutEv.seq + '" data-open="true"'));
+  assert.ok(mSameCust.els["ledger"].innerHTML.includes('aria-expanded="true" data-seq="' + stockoutEv.seq + '"'));
+  assert.ok(mSameCust.els["e" + stockoutEv.seq].scrolled);
+
+  assert.strictEqual(mSameCust.win.aimoAudit.eur(1250), "1,250.00 EUR");
+  assert.strictEqual(mSameCust.win.aimoAudit.eur(0), "0.00 EUR");
+  assert.strictEqual(mSameCust.win.aimoAudit.eur(null), "-");
+  assert.strictEqual(mSameCust.win.aimoAudit.eur(undefined), "-");
+  assert.strictEqual(mSameCust.win.aimoAudit.eur(""), "-");
+  assert.strictEqual(mSameCust.win.aimoAudit.eur(NaN), "-");
+
+  const mCrossCust = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html#e" + mandateEv.seq,
+    defaultCustomer: "hotel-aurora",
+    api: makeLiveApi(payload.trail, {})
+  });
+  await flush();
+  assert.strictEqual(mCrossCust.els["f-customer"].value, "");
+  assert.ok(mCrossCust.els["ledger"].innerHTML.includes('id="e' + mandateEv.seq + '" data-open="true"'));
+  assert.ok(mCrossCust.els["e" + mandateEv.seq].scrolled);
+
+  const mCrossExplicit = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html?customer=hotel-aurora#e" + expiredEv.seq,
+    defaultCustomer: "hotel-aurora",
+    api: makeLiveApi(payload.trail, {})
+  });
+  await flush();
+  assert.strictEqual(mCrossExplicit.els["f-customer"].value, "");
+  assert.ok(mCrossExplicit.els["ledger"].innerHTML.includes('id="e' + expiredEv.seq + '" data-open="true"'));
+  assert.ok(mCrossExplicit.els["e" + expiredEv.seq].scrolled);
+
+  mCrossExplicit.els["f-customer"].value = "school-hervanta";
+  mCrossExplicit.els["f-customer"].trigger("change");
+  mCrossExplicit.win.dispatchHash("#e" + stockoutEv.seq);
+  assert.strictEqual(mCrossExplicit.els["f-customer"].value, "");
+  assert.ok(mCrossExplicit.els["ledger"].innerHTML.includes('id="e' + stockoutEv.seq + '" data-open="true"'));
+  assert.ok(mCrossExplicit.els["e" + stockoutEv.seq].scrolled);
+
+  const oidExp = payload.orderExpired.order_id;
+  const oidSo = payload.orderStockoutPending.order_id;
+  const mReset = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html?customer=hospital-tays&order_id=" + oidExp + "#e" + expiredEv.seq,
+    defaultCustomer: "hotel-aurora",
+    api: makeLiveApi(payload.trail, { [oidExp]: payload.orderExpired })
+  });
+  await flush();
+  assert.strictEqual(mReset.els["receipt"].hidden, false);
+  const chipStub = {
+    dataset: { id: "buyer-tays" },
+    getAttribute(k) { return k === "aria-pressed" ? "false" : null; }
+  };
+  mReset.els["legend"].trigger("click", { target: { closest(sel) { return sel === ".chip" ? chipStub : null; } } });
+  mReset.els["f-action"].value = "quote.issued";
+  mReset.els["f-action"].trigger("change");
+  assert.strictEqual(mReset.els["f-actor"].value, "agent");
+  assert.ok(mReset.els["legend"].innerHTML.includes('data-id="buyer-tays" aria-pressed="true"'));
+
+  mReset.els["f-reset"].trigger("click");
+  await flush();
+  assert.strictEqual(mReset.els["f-customer"].value, "");
+  assert.strictEqual(mReset.els["f-order"].value, "");
+  assert.strictEqual(mReset.els["f-actor"].value, "");
+  assert.strictEqual(mReset.els["f-action"].value, "");
+  assert.strictEqual(mReset.els["receipt"].hidden, true);
+  assert.strictEqual(mReset.loc.search, "");
+  assert.strictEqual(mReset.loc.hash, "");
+  assert.ok(mReset.els["legend"].innerHTML.includes('data-id="buyer-tays" aria-pressed="false"'));
+  assert.ok(mReset.els["scope"].textContent.includes("all customers"));
+  assert.ok(mReset.els["scope"].textContent.includes("showing " + payload.trail.events.length + " of " + payload.trail.events.length + " events"));
+
+  mReset.els["f-order"].value = "ord_does_not_exist";
+  mReset.els["f-order"].trigger("input");
+  await flush();
+  assert.ok(mReset.els["ledger"].innerHTML.includes("No audit events match these filters."));
+  assert.ok(mReset.els["ledger"].innerHTML.includes('data-reset="1"'));
+  mReset.els["ledger"].trigger("click", {
+    target: { closest(sel) { return sel === "[data-reset]" ? { dataset: { reset: "1" } } : null; } }
+  });
+  await flush();
+  assert.strictEqual(mReset.els["f-order"].value, "");
+  assert.strictEqual(mReset.els["receipt"].hidden, true);
+  assert.strictEqual(mReset.loc.search, "");
+  assert.ok(mReset.els["scope"].textContent.includes("showing " + payload.trail.events.length + " of " + payload.trail.events.length + " events"));
+
+  const mSoPending = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html?order_id=" + oidSo,
+    defaultCustomer: "school-hervanta",
+    api: makeLiveApi(payload.trailMid, { [oidSo]: payload.orderStockoutPending })
+  });
+  await flush();
+  const rcSoPending = mSoPending.els["receipt"].innerHTML;
+  assert.strictEqual(mSoPending.els["receipt"].hidden, false);
+  assert.ok(rcSoPending.includes("Stock-out"));
+  assert.ok(rcSoPending.includes("stock-out recovery"));
+  assert.ok(rcSoPending.includes("1001"));
+  assert.ok(rcSoPending.includes("1002"));
+  assert.ok(rcSoPending.includes("1,250.00 EUR"));
+  assert.ok(rcSoPending.includes("<code>STOCKOUT</code>"));
+  assert.ok(rcSoPending.includes("Stock dropped after the order"));
+  assert.ok(rcSoPending.includes("Awaiting a human decision"));
+  const soMidEv = payload.trailMid.events.find(e => e.action === "order.stockout");
+  assert.ok(rcSoPending.includes('href="#e' + soMidEv.seq + '"'));
+  mSoPending.els["receipt"].trigger("click", {
+    target: {
+      closest(sel) {
+        return sel === "[data-seq-jump]" ? { dataset: { seqJump: String(soMidEv.seq) }, getAttribute() { return String(soMidEv.seq); } } : null;
+      }
+    }
+  });
+  assert.ok(mSoPending.els["ledger"].innerHTML.includes('id="e' + soMidEv.seq + '" data-open="true"'));
+  assert.ok(mSoPending.els["e" + soMidEv.seq].scrolled);
+
+  const mSoRecovered = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html?order_id=" + oidSo,
+    defaultCustomer: "hotel-aurora",
+    api: makeLiveApi(payload.trail, { [oidSo]: payload.orderStockoutRecovered })
+  });
+  await flush();
+  const rcSoRec = mSoRecovered.els["receipt"].innerHTML;
+  assert.ok(rcSoRec.includes("Stock-out"));
+  assert.ok(rcSoRec.includes("recovered"));
+  assert.ok(rcSoRec.includes("stock-out recovery"));
+  assert.ok(rcSoRec.includes("Laura Virtanen"));
+  assert.ok(rcSoRec.includes("Approved Eila substitute after stock-out"));
+  assert.ok(rcSoRec.includes("1,250.00 EUR"));
+
+  const mExp = mountAudit({
+    url: "http://127.0.0.1:8000/audit.html?order_id=" + oidExp,
+    defaultCustomer: "hotel-aurora",
+    api: makeLiveApi(payload.trail, { [oidExp]: payload.orderExpired })
+  });
+  await flush();
+  const rcExp = mExp.els["receipt"].innerHTML;
+  assert.strictEqual(mExp.els["receipt"].hidden, false);
+  assert.ok(rcExp.includes("Expiry"));
+  assert.ok(rcExp.includes("order.expired"));
+  assert.ok(rcExp.includes("valid until"));
+  assert.ok(rcExp.includes("The quote validity ended before the order was decided."));
+  assert.ok(rcExp.includes("Expired before human decision"));
+  assert.ok(!rcExp.includes("Awaiting a human decision"));
+  assert.ok(rcExp.includes("validity expired"));
+  assert.ok(rcExp.includes("2,500.00 EUR"));
+  assert.ok(rcExp.includes('href="#e' + expiredEv.seq + '"'));
+
+  console.log("ALL_WAVE2_NODE_AUDIT_CHECKS_OK");
+})().catch(err => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+
+
+def test_node_hash_deeplink_filter_reset_and_stockout_expired_receipts(tmp_path, monkeypatch):
+    from datetime import date, datetime, timedelta, timezone
+    import warnings
+
+    warnings.filterwarnings("ignore", message="EdDSA is deprecated.*")
+    from fastapi.testclient import TestClient
+    from aimo import allocate, catalog, keys, offers as offers_mod, orders as orders_mod, substitute, valio
+    from aimo.app import app
+    from aimo.models import Constraint, NeedItem, Product, UnitSize
+
+    empty_data = tmp_path / "empty_data"
+    empty_data.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("AIMO_DB", str(tmp_path / "wave2_audit.db"))
+    monkeypatch.setenv("AIMO_KEY_DIR", str(tmp_path / "keys"))
+    monkeypatch.setenv("AIMO_DATA_DIR", str(empty_data))
+    monkeypatch.setenv("AIMO_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(keys, "_cache", {})
+    monkeypatch.setattr(offers_mod, "_overrides", {})
+    monkeypatch.setattr(allocate, "_data", lambda: {})
+
+    items = {
+        "1001": {
+            "product": Product(
+                product_id="1001",
+                name="Valio Luomu Kevytmaito laktoositon 1 L",
+                brand="Valio",
+                vendor="VALIO OY",
+                category="10400",
+                sales_unit="LTR",
+                unit_size=UnitSize(value=1.0, unit="l"),
+                allergens=["milk"],
+                labels=["organic", "free_from_lactose"],
+                origin="FI",
+                temperature=4,
+            ),
+            "net": 1.20,
+            "gross": 1.37,
+            "stock": 3000.0,
+            "reliability": 0.99,
+            "co2": 1.15,
+        },
+        "1002": {
+            "product": Product(
+                product_id="1002",
+                name="Valio Eila Kevytmaito laktoositon 1 L",
+                brand="Valio",
+                vendor="VALIO OY",
+                category="10400",
+                sales_unit="LTR",
+                unit_size=UnitSize(value=1.0, unit="l"),
+                allergens=["milk"],
+                labels=["free_from_lactose"],
+                origin="FI",
+                temperature=4,
+            ),
+            "net": 1.25,
+            "gross": 1.43,
+            "stock": 3000.0,
+            "reliability": 0.97,
+            "co2": 1.20,
+        },
+    }
+
+    def fake_search(q: str = "", constraints: Constraint | None = None, limit: int = 50):
+        c = constraints or Constraint()
+        probe = NeedItem(query=q or "", quantity=1.0, unit="pcs", constraints=c)
+        scored = []
+        for pid, entry in items.items():
+            prod = entry["product"]
+            score = substitute.match_score(probe, prod) if (q or "").strip() else 1.0
+            if score <= 0:
+                score = 0.6
+            scored.append((-score, pid, prod))
+        scored.sort(key=lambda row: (row[0], row[1]))
+        return [row[2] for row in scored[:limit]]
+
+    monkeypatch.setattr(catalog, "search", fake_search)
+    monkeypatch.setattr(catalog, "get", lambda pid: items[str(pid)]["product"] if str(pid) in items else None)
+    monkeypatch.setattr(catalog, "reliability", lambda pid: items[str(pid)]["reliability"] if str(pid) in items else None)
+    monkeypatch.setattr(catalog, "co2_per_kg", lambda pid: items[str(pid)]["co2"] if str(pid) in items else None)
+    monkeypatch.setattr(catalog, "raw", lambda pid: None)
+    monkeypatch.setattr(catalog, "names", lambda pid: {})
+    monkeypatch.setattr(
+        valio,
+        "price",
+        lambda customer, day, ids: {
+            str(pid): {
+                "productId": str(pid),
+                "currency": "EUR",
+                "catalogPrice": {"value": items[str(pid)]["net"]},
+                "priceWithTax": {"value": items[str(pid)]["gross"]},
+            }
+            for pid in ids
+            if str(pid) in items
+        },
+    )
+    monkeypatch.setattr(
+        valio,
+        "availability",
+        lambda customer, day, ids: {
+            str(pid): {
+                "productId": str(pid),
+                "closingTime": "2026-11-12T23:59:59+02:00",
+                "salesBlock": False,
+                "scheduleLines": [
+                    {
+                        "salesBlock": False,
+                        "availableAmount": items[str(pid)]["stock"],
+                        "availableDate": day.isoformat(),
+                        "salesUnit": items[str(pid)]["product"].sales_unit,
+                    }
+                ],
+            }
+            for pid in ids
+            if str(pid) in items
+        },
+    )
+
+    delivery = (date.today() + timedelta(days=3)).isoformat()
+    hotel_h = {"X-Agent-Key": "demo-hotel-aurora"}
+    tays_h = {"X-Agent-Key": "demo-hospital-tays"}
+    admin_h = {"X-Admin-Key": "demo-admin"}
+
+    with TestClient(app) as client:
+        q1 = client.post(
+            "/v1/quotes",
+            headers=hotel_h,
+            json={"offers": [{"product_id": "1001", "quantity": 1000.0}], "delivery_date": delivery},
+        ).json()
+        o1 = client.post("/v1/orders", headers=hotel_h, json={"quote_id": q1["quote_id"], "jws": q1["jws"]}).json()
+        assert o1["status"] == "confirmed"
+        oid_so = o1["order_id"]
+
+        sim = client.post(
+            "/v1/admin/simulate",
+            headers=admin_h,
+            json={"product_id": "1001", "available_amount": 0},
+        )
+        assert sim.status_code == 200
+        order_so_pending = client.get(f"/v1/orders/{oid_so}", headers=admin_h).json()
+        assert order_so_pending["status"] == "pending_approval"
+        assert order_so_pending["total_net"] == 1250.0
+        trail_mid = client.get("/v1/audit", headers=admin_h).json()
+
+        appr = client.post(
+            f"/v1/approvals/{oid_so}",
+            headers=admin_h,
+            json={"approve": True, "by": "Laura Virtanen", "note": "Approved Eila substitute after stock-out"},
+        )
+        assert appr.status_code == 200
+        order_so_recovered = client.get(f"/v1/orders/{oid_so}", headers=admin_h).json()
+        assert order_so_recovered["status"] == "confirmed"
+
+        client.delete("/v1/admin/simulate", headers=admin_h)
+
+        q2 = client.post(
+            "/v1/quotes",
+            headers=tays_h,
+            json={"offers": [{"product_id": "1002", "quantity": 2000.0}], "delivery_date": delivery},
+        ).json()
+        o2 = client.post("/v1/orders", headers=tays_h, json={"quote_id": q2["quote_id"], "jws": q2["jws"]}).json()
+        assert o2["status"] == "pending_approval"
+        oid_exp = o2["order_id"]
+
+        past_valid = datetime.fromisoformat(o2["valid_until"]) + timedelta(hours=2)
+        if past_valid.tzinfo is None:
+            past_valid = past_valid.replace(tzinfo=timezone.utc)
+        monkeypatch.setattr(orders_mod, "_now", lambda: past_valid)
+        order_expired = client.get(f"/v1/orders/{oid_exp}", headers=admin_h).json()
+        assert order_expired["status"] == "expired"
+        monkeypatch.setattr(orders_mod, "_now", lambda: datetime.now(timezone.utc))
+
+        school_mand = client.get("/v1/mandate?customer=school-hervanta", headers=admin_h).json()
+        put_mand = client.put("/v1/mandate", headers=admin_h, json={**school_mand, "per_order_eur": 750.0})
+        assert put_mand.status_code == 200
+
+        trail = client.get("/v1/audit", headers=admin_h).json()
+        assert trail["verified"] == {"ok": True, "bad_seq": None}
+        jwks = client.get("/.well-known/jwks.json").json()
+
+    node_input = json.dumps(
+        {
+            "auditJsPath": str(WEB / "audit.js"),
+            "trailMid": trail_mid,
+            "trail": trail,
+            "jwks": jwks,
+            "orderStockoutPending": order_so_pending,
+            "orderStockoutRecovered": order_so_recovered,
+            "orderExpired": order_expired,
+        }
+    )
+    res = subprocess.run(
+        [_node_bin(), "-e", NODE_WAVE2_HARNESS],
+        input=node_input,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert res.returncode == 0, f"Wave 2 Node audit test failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+    assert "ALL_WAVE2_NODE_AUDIT_CHECKS_OK" in res.stdout
