@@ -1,16 +1,16 @@
 # Pitch, QA and docs report
 
-Branch `team/pitch`. Last updated Sat 14 Nov 2026, about 15:05 Helsinki (machine clock). Merged with origin/main at 14:55 (buyer, frontend and gateway round 2 included).
+Branch `team/pitch`. Last updated Sat 14 Nov 2026, 18:35 Helsinki. Round 2: merged origin/main at 18:20 (trust r2, gateway r3, catalog r3, buyer r2–r3; 138 tests).
 
 ## Status
 | Deliverable | File | State |
 |---|---|---|
 | README (quickstart, five pillars, mermaid architecture, connect your own agent, curl walkthrough, repo map, team) | `README.md` | done; commands verified (see below) |
-| Live demo script, click by click, criteria mapping, fallbacks | `docs/DEMO.md` | done; wind-tunnel numbers TODO |
-| DeepMind write-up | `docs/GEMINI.md` | done; usage snapshot Sat 14:46, final numbers TODO |
-| Junction submission text + short version (425 chars) | `docs/SUBMISSION.md` | done; robustness numbers and links TODO |
+| Live demo script, click by click, criteria mapping, fallbacks, robustness montage beat (`aimo demo --montage`) | `docs/DEMO.md` | done; wind-tunnel line TODO |
+| DeepMind write-up | `docs/GEMINI.md` | done; montage, cost per order, caching and escalation share from docs/demo-montage.md; usage over 8 ledgers at Sat 18:27; wind tunnel TODO |
+| Junction submission text + short version (425 chars) | `docs/SUBMISSION.md` | done; live montage table in; wind tunnel numbers and links TODO |
 | Architecture, milk data flow, trust summary, production path | `docs/ARCHITECTURE.md` | done |
-| Deck outline, 8 slides with speaker notes (for Chintufp) | `docs/pitch/deck.md` | done; slide 5 numbers TODO |
+| Deck outline, 8 slides with speaker notes (for Chintufp) | `docs/pitch/deck.md` | done; slide 5 has the 6/6 montage, wind tunnel table TODO; slide 7 has cost per order |
 | Gemini ledger summariser | `docs/pitch/ledger_stats.py` | done |
 | HTTP QA of the milk flow (no Gemini, about 3 s) | `docs/pitch/qa_milk_flow.py` | done, passes on merged main |
 | README screenshot | `docs/pitch/img/approval-ui.png` | copied from the frontend's live run; re-capture after the freeze |
@@ -27,7 +27,23 @@ Branch `team/pitch`. Last updated Sat 14 Nov 2026, about 15:05 Helsinki (machine
 
 Untested: the Claude Desktop / Cursor / Gemini CLI configs in the README (formats from each client's documentation; the server side is verified with the MCP Python client). The hospital customer end to end. The UI click path itself (I described it from `web/app.js` and the frontend's screenshots, not by clicking).
 
-## Issues for engineers
+## Round 2 re-test (Sat 14 Nov 18:26, merged main with trust r2, gateway r3, catalog r3, buyer r2–r3; fresh state DB, port 8020)
+- `docs/pitch/qa_milk_flow.py`: **MILK FLOW OK.** The hero verdict now has exactly three needs-approval rows: spend, `substitution:464306` (one row: best tier, outside standing preferences) and `quantity_drift:milk`. Quote creation re-prices live (0.36 s, `served_from: live`, `upstream_calls: 2`).
+- `uv run --extra dev pytest -q`: 138 passed.
+- Edge script `/tmp/pitchqa/qa_edges3.py` (not committed): results per issue below.
+
+| # | Issue (round 1) | Round 2 result |
+|---|---|---|
+| 1 | Unregistered approver could approve by naming the role | **FIXED.** `approver: "buyer-1"` and `"hotel-aurora/buyer-1"` → 403 `approval_refused` ("is an AI agent identity; agents can never approve orders"); `mallory@evil.example` → 403 ("not in hotel-aurora's approver directory"); `anna@hotel-aurora.example` → 200 placed |
+| 2 | Tier and flags trusted from the agent | **FIXED.** 469363 sent as `preferred` or with no tier → quote line `better` with `outside_preference, limited_stock` → pending_approval; 464306 with no flags → `best, outside_preference` → pending_approval; school 470863 with no tier → `good` → pending_approval |
+| 3 | Body customer_id overrode the header | **FIXED.** Header school-tampere, body hotel-aurora → 403 `customer_mismatch` |
+| 4 | Duplicate contradictory `substitution` rows | **FIXED.** One row per rule id |
+| 5 | Quotes served prices from cache | **FIXED.** Quote provenance `served_from: live` |
+| 6 | Search "maito" ranks non-milk items first | **OPEN (low, catalog).** Top 3: HEIROL BRIOCCHI MILK JUGS 30CL, HEIROL BRIOCCHI MILK JUGS 50CL, WMF Cleaner for milk systems 1L |
+| 7 | Unregistered agents got signed quotes | **FIXED.** `X-Agent-Id: mallory` → 403 `scope_missing` at quote time |
+| 8 | Weekly budget remembers rehearsals (demo risk) | **OPEN (process).** Mitigated in DEMO.md: fresh state dir for the hero demo, and the montage runs on a second gateway with its own state |
+
+## Issues for engineers (round 1, kept for reference)
 All reproduced over HTTP on merged main with headers `X-Customer-Id: hotel-aurora`, `X-Agent-Id: buyer-1` unless stated. Script: `/tmp/pitchqa/qa_edges2.py` (not committed; inputs are inline below).
 
 1. **[trust] HIGH: an unregistered approver can approve by naming the role.**
@@ -56,11 +72,11 @@ All reproduced over HTTP on merged main with headers `X-Customer-Id: hotel-auror
 
 ## Decisions for Silas
 1. **Cut-off clock.** 464306's order cut-off for Monday 16 Nov delivery is **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). If the live pitch or judging is after about 16:30 on Sunday, the hero request "by Monday" will not plan 464306. Please confirm the pitch slot. If it is late, we demo in mock mode or change the request date.
-2. **Fix issues 1 and 2 before the freeze?** They are small, but they are exactly what a "controls" judge might probe. I recommend yes for 1 (a one-line rule) and at least defaulting a missing tier to "unknown → needs approval" for 2.
+2. ~~Fix issues 1 and 2 before the freeze?~~ Done in round 2 and verified.
 3. Public repo link, video link and whether there is a live URL, for `docs/SUBMISSION.md`.
 
 ## Pending
-- Wind tunnel numbers (DEMO 2:35–2:50, deck slide 5, SUBMISSION "Robustness", GEMINI usage). All marked TODO.
+- Wind tunnel numbers (DEMO 2:35–2:50 line, deck slide 5 table, SUBMISSION "Robustness", GEMINI scenario count, judge results and thinking comparison). All marked TODO.
+- Note on run times: the CEO brief said about 30–39 s per scenario; docs/demo-montage.md measures 22.13–36.85 s (drift is the 22 s one, because it stops before ordering). The docs quote the file: 22–37 s.
 - Final Gemini ledger numbers: re-run `docs/pitch/ledger_stats.py` with every worktree's ledger before submitting (command in GEMINI.md §5).
 - Re-capture screenshots from main after the freeze; video link.
-- Timings for the montage scenarios (school-allergen, injection) after the catalog and gateway fixes from the buyer report landed.
