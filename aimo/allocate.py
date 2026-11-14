@@ -18,8 +18,8 @@ def _base(value: float, unit: str):
 
 
 @lru_cache(maxsize=1)
-def _data() -> dict:
-    path = os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json")
+def _data(data_dir: str = "data") -> dict:
+    path = os.path.join(data_dir, "valio_aimo_junction26_product_data.json")
     try:
         with open(path) as fh:
             return {p["id"]: p for p in json.load(fh)}
@@ -28,7 +28,7 @@ def _data() -> dict:
 
 
 def _data_size(product_id: str):
-    p = _data().get(product_id)
+    p = _data(os.environ.get("AIMO_DATA_DIR", "data")).get(product_id)
     if not p:
         return None
     conv = p.get("synkkaData", {}).get("unitConversions") or []
