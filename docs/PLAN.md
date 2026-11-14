@@ -11,7 +11,7 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **
 3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
 4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
 5. **When is the pitch slot?** The live "by Monday" story depends on a real mock-API cut-off. Stock milk can be ordered for Monday delivery only until **Sun 15 Nov 17:00**. If judging runs after about 16:30 on Sunday, we switch the request to "by Tuesday", or use the recorded video or mock mode. Tell us the slot once you know it.
-6. **ElevenLabs key, please, shared privately and put in `.env` as `ELEVENLABS_API_KEY`.** Use: a voice approval call. The procurement manager gets a phone-style voice prompt, "Approve €1,010 lactose-free milk for Monday?", answers by voice, and the approval is still bound to the quote hash and audited. ElevenLabs does speech-to-text and text-to-speech; Gemini stays the brain. It's optional and scores on "autonomy and controls" plus the demo. If you don't want it, we skip it.
+6. **ElevenLabs: approved (Sat 20:30). Still needed: put the key in `.env` as `ELEVENLABS_API_KEY`** (never commit it). The voice engineer is building it on team/voice, with a Web Speech fallback until the key lands. Use: a voice approval call. The procurement manager gets a phone-style voice prompt, "Approve €1,010 lactose-free milk for Monday?", answers by voice, and the approval is still bound to the quote hash and audited. ElevenLabs does speech-to-text and text-to-speech; Gemini stays the brain. It's optional and scores on "autonomy and controls" plus the demo. If you don't want it, we skip it.
 
 ## Scoring checklist (official rubric, JUDGING.md)
 Tick a box only with evidence: a command, a test or a file. The status column is current as of Sat 20:15.
@@ -35,7 +35,7 @@ Tick a box only with evidence: a command, a test or a file. The status column is
 - [ ] Product-type taxonomy for all 17,546 products; line acceptability ≥98% (currently 90%) (catalog lead + A-tax).
 - [ ] The agent asks one clarifying question instead of guessing (buyer lead).
 - [ ] Photo intake for handwritten orders and menus (buyer + C-img).
-- [ ] A mentor validates the approval matrix and tiers, quoted in the pitch (Silas).
+- [ ] A mentor validates the approval matrix and tiers, quoted in the pitch (**delegated to Ivar**; output swarm/A/out/A-mentor.md).
 
 **3. Autonomy and controls (20%): what is autonomous vs human sign-off, logged and auditable**
 - [x] Policy engine with plain-language reasons; approvals bound to the quote hash; signed, hash-chained audit log with a readable report and live tamper detection.
@@ -81,7 +81,7 @@ Decisions:
 - verified-best substitutes auto-approve, plus learned approvals;
 - hosting is a cloudflared tunnel from the demo laptop, with replay mode as the fallback.
 
-**Silas:** add Momin010, ivarakerholm-wq and Chintufp as repo collaborators, and share .env privately.
+Done: Momin010, ivarakerholm-wq and Chintufp are invited as collaborators. **Silas:** share .env privately. Swarm A is running as a 70-agent workflow (Sat 20:30).
 
 Everything else is decided below. Change it here if you disagree.
 

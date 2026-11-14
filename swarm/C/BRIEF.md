@@ -22,6 +22,8 @@
   - Valio Aimo ops tab, Recipes tab, blocked-attacks feed.
 - buyer: `needs_clarification`, image intake, the eval harness.
 
+**Ivar, human task (delegated by Silas):** book 15 minutes with a Valio mentor (Minni Ruhtinas for online sales, Riku Tapper or Ville Takanen for IT and data governance). Validate the approval matrix (auto vs needs approval vs reject), the good-better-best tiers and "learned approvals". Write their verdict and one quotable sentence into `swarm/A/out/A-mentor.md`.
+
 **Rules:**
 - No real personal data in images.
 - Run servers with a scratch `AIMO_DATA_DIR`.
