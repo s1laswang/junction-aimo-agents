@@ -12,6 +12,8 @@ ln -s ~/aimo-agents/.env .env
 make run PORT=8080
 ```
 
+Verify readiness offline with `make smoke` or against the running server with `.venv/bin/python scripts/smoke_demo.py --url http://localhost:8080`.
+
 ## Claude Code
 
 HTTP:

@@ -1,4 +1,4 @@
-import argparse, datetime, json, statistics, time
+import argparse, datetime, logging, os, statistics, tempfile, time
 import httpx
 
 CUSTOMERS = ["hotel-aurora", "hospital-tays", "school-hervanta"]
@@ -37,31 +37,68 @@ def step(c, name, method, path, res, **kw):
     return r.json() if r.status_code < 300 else None
 
 
-def flow(url, customer, key):
+def flow(url, customer, key, client=None):
     res = {"customer": customer, "steps": {}}
-    c = httpx.Client(base_url=url.rstrip("/") + "/v1", headers={"X-Agent-Key": key}, timeout=120)
-    step(c, "mandate", "GET", "/mandate", res)
-    need = step(c, "parse", "POST", "/needs/parse", res, json={"text": TEXT, "customer": customer})
-    offers = need and step(c, "offers", "POST", "/offers", res, json=need)
-    quote = None
-    if offers and offers["items"]:
-        it = offers["items"][0]
-        res["offers"] = len(it["offers"])
-        res["shortfall"] = it.get("shortfall")
-        lines = pick(it["offers"], it["offers"][0]["units_needed"]) if it["offers"] else []
-        if lines:
-            quote = step(c, "quote", "POST", "/quotes", res, json={"offers": lines, "delivery_date": str(need["deliver_by"])})
-    order = quote and step(c, "order", "POST", "/orders", res, json={"quote_id": quote["quote_id"], "jws": quote["jws"]})
-    if quote:
-        res["total_net"] = quote["total_net"]
-    if order:
-        res["outcome"] = order["decision"]["outcome"]
-        res["reasons"] = [r["code"] for r in order["decision"]["reasons"]]
-    step(c, "approvals", "GET", "/approvals", res)
-    a = step(c, "audit", "GET", "/audit", res, params={"customer": customer, **({"order_id": order["order_id"]} if order else {})})
-    if a is not None:
-        res["audit_events"] = len(a["events"] if isinstance(a, dict) and "events" in a else a)
-    return res
+    c = client or httpx.Client(base_url=url.rstrip("/"), headers={"X-Agent-Key": key}, timeout=120)
+    hdrs = {"X-Agent-Key": key}
+    try:
+        step(c, "mandate", "GET", "/v1/mandate", res, headers=hdrs)
+        need = step(c, "parse", "POST", "/v1/needs/parse", res, headers=hdrs, json={"text": TEXT, "customer": customer})
+        offers = need and step(c, "offers", "POST", "/v1/offers", res, headers=hdrs, json=need)
+        quote = None
+        if offers and offers["items"]:
+            it = offers["items"][0]
+            res["offers"] = len(it["offers"])
+            res["shortfall"] = it.get("shortfall")
+            res["alternatives_count"] = len(it.get("alternatives", []))
+            if it["offers"]:
+                top = it["offers"][0]
+                res["picked_product_id"] = top["product_id"]
+                res["picked_name"] = (top.get("product") or {}).get("name")
+                res["units_needed"] = top.get("units_needed")
+                res["unit_price_net"] = top.get("unit_price_net")
+                if top.get("total_gross") is not None:
+                    res["total_gross"] = top["total_gross"]
+            lines = pick(it["offers"], it["offers"][0]["units_needed"]) if it["offers"] else []
+            if lines:
+                quote = step(c, "quote", "POST", "/v1/quotes", res, headers=hdrs, json={"offers": lines, "delivery_date": str(need["deliver_by"])})
+        order = quote and step(c, "order", "POST", "/v1/orders", res, headers=hdrs, json={"quote_id": quote["quote_id"], "jws": quote["jws"]})
+        if quote:
+            res["total_net"] = quote["total_net"]
+            if quote.get("total_gross") is not None:
+                res["total_gross"] = quote["total_gross"]
+        if order:
+            res["outcome"] = order["decision"]["outcome"]
+            res["reasons"] = [r["code"] for r in order["decision"]["reasons"]]
+        step(c, "approvals", "GET", "/v1/approvals", res, headers=hdrs)
+        a = step(c, "audit", "GET", "/v1/audit", res, headers=hdrs, params={"customer": customer, **({"order_id": order["order_id"]} if order else {})})
+        if a is not None:
+            res["audit_events"] = len(a["events"] if isinstance(a, dict) and "events" in a else a)
+        return res
+    finally:
+        if client is None and hasattr(c, "close"):
+            c.close()
+
+
+def inprocess(customers=CUSTOMERS):
+    saved = {k: os.environ.get(k) for k in ("AIMO_DB", "AIMO_KEY_DIR")}
+    prev_log = logging.root.manager.disable
+    logging.disable(logging.INFO)
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["AIMO_DB"] = os.path.join(tmp, "aimo.db")
+        os.environ["AIMO_KEY_DIR"] = os.path.join(tmp, "keys")
+        try:
+            from fastapi.testclient import TestClient
+            from aimo.app import app
+            with TestClient(app) as client:
+                return [flow("", c, "demo-" + c, client=client) for c in customers]
+        finally:
+            logging.disable(prev_log)
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 def table(results):
@@ -75,11 +112,31 @@ def table(results):
     ms = [v[0] for r in results for v in r["steps"].values() if v[0] is not None]
     if ms:
         L.append(f"median step latency {statistics.median(ms)} ms over {len(ms)} calls.")
+    r0 = next((r for r in results if r.get("picked_product_id")), None)
+    if r0:
+        L.append(
+            f"picked {r0['picked_product_id']} {r0.get('picked_name') or ''}: "
+            f"units_needed={r0.get('units_needed')}, unit_price_net={r0.get('unit_price_net')}, "
+            f"total_net={r0.get('total_net')}, total_gross={r0.get('total_gross')}, "
+            f"alternatives={r0.get('alternatives_count')}."
+        )
     return "\n".join(L)
 
 
-if __name__ == "__main__":
+def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://localhost:8124")
-    a = ap.parse_args()
-    print(table([flow(a.url, c, "demo-" + c) for c in CUSTOMERS]))
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--url", default=None)
+    g.add_argument("--inprocess", action="store_true")
+    a = ap.parse_args(argv)
+    if a.inprocess:
+        results = inprocess()
+    else:
+        url = a.url or "http://localhost:8124"
+        results = [flow(url, c, "demo-" + c) for c in CUSTOMERS]
+    print(table(results))
+    return results
+
+
+if __name__ == "__main__":
+    main()
