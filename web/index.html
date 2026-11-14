@@ -28,7 +28,7 @@
 <script src="/shell.js"></script>
 <script>
 var MM={"hotel-aurora":2500,"hospital-tays":1500,"school-hervanta":600};
-var M={appr:[{order_id:"ord_demo1",customer:"hotel-aurora",total_net:2480.5,decision:{reasons:[{text:"Over per order limit"}]}},{order_id:"ord_demo2",customer:"hospital-tays",total_net:640,decision:{reasons:[{text:"Substitution needs approval"}]}}],audit:[{seq:42,ts:"2026-11-14T00:12:00Z",customer:"hotel-aurora",action:"order_placed",subject:"ord_demo0",why:"Within mandate, placed automatically",detail:{total_net:310}},{seq:41,ts:"2026-11-14T00:10:00Z",customer:"hotel-aurora",action:"quote_issued",subject:"q_demo",why:"Quote signed, valid until closing time",detail:{}}]};
+var M={appr:[{order_id:"ord_demo1",customer:"hotel-aurora",total_net:2650.04,decision:{reasons:[{text:"Order total 2,650.04 EUR is over the 2,500.00 EUR per-order limit"}]}},{order_id:"ord_demo2",customer:"hospital-tays",total_net:640,decision:{reasons:[{text:"Substitution needs approval"}]}}],audit:[{seq:42,ts:"2026-11-14T00:12:00Z",customer:"hotel-aurora",action:"order.confirmed",subject:"ord_demo0",why:"Within mandate, placed automatically",detail:{total_net:310}},{seq:41,ts:"2026-11-14T00:10:00Z",customer:"hotel-aurora",action:"quote.issued",subject:"q_demo",why:"Quote signed, valid until closing time",detail:{}}]};
 function esc(t){var d=document.createElement("div");d.textContent=t==null?"":t;return d.innerHTML}
 function eur(n){return n==null?"":Number(n).toFixed(2)}
 function evs(x){return Array.isArray(x)?x:(x&&x.events)||[]}
