@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import warnings
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from aimo.models import AuditEvent
 
 warnings.filterwarnings("ignore", message="EdDSA is deprecated")
 HELSINKI = ZoneInfo("Europe/Helsinki")
+_LOCK = threading.RLock()
 
 GENESIS = "0" * 64
 FIELDS = ("seq", "ts", "customer", "actor", "action", "subject", "detail", "why")
@@ -76,32 +78,33 @@ def _event(r):
 
 
 def record(customer, actor, action, subject, why, detail=None):
-    con = _db()
-    try:
-        con.execute("begin immediate")
-        last = con.execute("select seq, hash from audit order by seq desc limit 1").fetchone()
-        seq, prev = (last[0] + 1, last[1]) if last else (1, GENESIS)
-        row = {
-            "seq": seq,
-            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "customer": customer, "actor": actor, "action": action,
-            "subject": str(subject), "detail": _norm(json.loads(_dump(detail or {}))), "why": why,
-        }
-        h = _digest(prev, row)
-        con.execute(
-            "insert into audit values (?,?,?,?,?,?,?,?,?,?)",
-            (seq, row["ts"], customer, actor, action, row["subject"],
-             _dump(row["detail"]), why, prev, h),
-        )
-        con.execute("commit")
-        return _event((seq, row["ts"], customer, actor, action, row["subject"],
-                       _dump(row["detail"]), why, prev, h))
-    except BaseException:
-        if con.in_transaction:
-            con.execute("rollback")
-        raise
-    finally:
-        con.close()
+    with _LOCK:
+        con = _db()
+        try:
+            con.execute("begin immediate")
+            last = con.execute("select seq, hash from audit order by seq desc limit 1").fetchone()
+            seq, prev = (last[0] + 1, last[1]) if last else (1, GENESIS)
+            row = {
+                "seq": seq,
+                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "customer": customer, "actor": actor, "action": action,
+                "subject": str(subject), "detail": _norm(json.loads(_dump(detail or {}))), "why": why,
+            }
+            h = _digest(prev, row)
+            con.execute(
+                "insert into audit values (?,?,?,?,?,?,?,?,?,?)",
+                (seq, row["ts"], customer, actor, action, row["subject"],
+                 _dump(row["detail"]), why, prev, h),
+            )
+            con.execute("commit")
+            return _event((seq, row["ts"], customer, actor, action, row["subject"],
+                           _dump(row["detail"]), why, prev, h))
+        except BaseException:
+            if con.in_transaction:
+                con.execute("rollback")
+            raise
+        finally:
+            con.close()
 
 
 def events(customer=None, order_id=None):

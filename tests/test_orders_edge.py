@@ -213,3 +213,83 @@ def test_repeated_order_ops_leak_zero_locks(c, monkeypatch):
     finally:
         probe.close()
     assert audit.verify() == (True, None)
+
+
+def test_concurrent_weekly_budget_and_approval_races(c):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    from aimo import mandates
+
+    base_m = mandates.get("hotel-aurora")
+    mandates.put(base_m.model_copy(update={"per_order_eur": 2500.0, "per_week_eur": 4000.0}))
+
+    issued = [
+        quotes_mod.issue(
+            "hotel-aurora",
+            "buyer-aurora",
+            [QuoteLine(product_id="p1", quantity=1500, unit_price_net=1.0, line_total_net=1500.0)],
+            date.fromisoformat(DAY),
+            datetime.now(timezone.utc) + timedelta(hours=2),
+            1710.0,
+        )
+        for _ in range(5)
+    ]
+    barrier = threading.Barrier(len(issued))
+
+    def place_one(q):
+        barrier.wait()
+        return orders.place("hotel-aurora", "buyer-aurora", PlaceOrderRequest(quote_id=q.quote_id, jws=q.jws))
+
+    with ThreadPoolExecutor(max_workers=len(issued)) as ex:
+        placed = list(ex.map(place_one, issued))
+
+    confirmed = [o for o in placed if o.status == "confirmed"]
+    held = [o for o in placed if o.status == "pending_approval"]
+    assert len(confirmed) == 2
+    assert len(held) == 3
+    assert all("OVER_WEEK_LIMIT" in [r.code for r in o.decision.reasons] for o in held)
+
+    target = held[0]
+    approve_barrier = threading.Barrier(6)
+
+    def approve_one(_):
+        approve_barrier.wait()
+        try:
+            return approvals.decide(target.order_id, True, "Laura Virtanen", "ok")
+        except approvals.ApprovalError as e:
+            return e.code
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        outcomes = list(ex.map(approve_one, range(6)))
+
+    winners = [x for x in outcomes if not isinstance(x, str)]
+    losers = [x for x in outcomes if isinstance(x, str)]
+    assert len(winners) == 1 and winners[0].status == "confirmed"
+    assert losers == ["NOT_PENDING"] * 5
+    ev = [e for e in audit.events(order_id=target.order_id) if e.action == "approval.approved"]
+    assert len(ev) == 1
+
+    single_q = quotes_mod.issue(
+        "hotel-aurora",
+        "buyer-aurora",
+        [QuoteLine(product_id="p1", quantity=10, unit_price_net=1.0, line_total_net=10.0)],
+        date.fromisoformat(DAY),
+        datetime.now(timezone.utc) + timedelta(hours=2),
+        11.4,
+    )
+    redeem_barrier = threading.Barrier(6)
+
+    def redeem_one(_):
+        redeem_barrier.wait()
+        try:
+            return orders.place("hotel-aurora", "buyer-aurora", PlaceOrderRequest(quote_id=single_q.quote_id, jws=single_q.jws))
+        except quotes_mod.QuoteError as e:
+            return e.code
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        redeem_res = list(ex.map(redeem_one, range(6)))
+
+    assert len([x for x in redeem_res if not isinstance(x, str)]) == 1
+    assert [x for x in redeem_res if isinstance(x, str)] == ["QUOTE_USED"] * 5
+    assert audit.verify() == (True, None)
+
