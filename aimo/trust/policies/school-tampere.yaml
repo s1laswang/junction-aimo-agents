@@ -1,7 +1,7 @@
 # Buyer mandate / purchasing policy for a Tampere school kitchen (demo customer).
 # Pupils with milk and nut allergies: allergen rules are hard blocks, unknown is never safe.
 policy_id: school-tampere
-version: "1.0.0"
+version: "1.1.0"
 effective_from: "2026-08-01"
 customer:
   id: school-tampere
@@ -19,6 +19,11 @@ agents:
   - agent_id: school-tampere/buyer-1
     label: Gemini purchasing agent
     scopes: [catalog:read, quote:create, order:submit]
+
+# Customer profile: the usual products (demo assumption). A line is "preferred" ONLY if listed here.
+preferred_products:
+  - {product_id: "472833", label: Fazer Aito oat drink 1 L UHT}
+approved_alternatives: []
 
 standing_orders:
   - id: oat_drink
@@ -59,6 +64,7 @@ rules:
     # any substitution needs the kitchen manager
     tiers: {preferred: allow, best: needs_approval, better: needs_approval, good: needs_approval, rejected: reject}
     outside_preference: needs_approval
+    unverified: needs_approval    # missing tier, or a tier the profile/catalog cannot back
     approver_role: kitchen_manager
 
   - id: allergens

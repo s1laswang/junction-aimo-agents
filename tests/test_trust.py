@@ -32,9 +32,11 @@ def log(tmp_path):
 
 
 def product(pid="464306", name="Valio Eila semi skimmed milk drink 1 l lactose free", category="10400",
-            allergens=None, source=None, claims=("FREE_FROM_LACTOSE",), content=1.0, unit="L", marketing=None):
+            allergens=None, source=None, claims=("FREE_FROM_LACTOSE",), content=1.0, unit="L", marketing=None,
+            brand="Valio"):
     return Product(id=pid, name=name, sales_unit="ST", category=category, content_amount=content, content_unit=unit,
-                   claims=list(claims), allergens=allergens or {}, allergen_source=source or {}, marketing_text=marketing)
+                   claims=list(claims), allergens=allergens or {}, allergen_source=source or {}, marketing_text=marketing,
+                   brand=brand)
 
 
 def make_quote(customer="hotel-aurora", agent="buyer-1", pid="464306", qty=1000, price=1.01, tier="best",
@@ -287,3 +289,93 @@ def test_screen_flags_injection(text):
 ])
 def test_screen_passes_normal_marketing(text):
     assert not screen_text(text, use_gemini=False)["suspicious"]
+
+
+# ------------------------------------------------------------------ round 2: QA findings
+def _dec(q, customer="hotel-aurora", products=None):
+    return evaluate(q, get_mandate(customer, "buyer-1"), products=products, now=NOW, audit_log=AuditLog(config.STATE_DB))
+
+
+def _live_hero():
+    q = signing.sign_quote(make_quote(qty=600, now=datetime.now(timezone.utc)))
+    d = evaluate(q, get_mandate("hotel-aurora", "buyer-1"), products={"464306": product()}, audit_log=AuditLog(config.STATE_DB))
+    assert d.outcome == "needs_approval"
+    return q, d
+
+
+@pytest.mark.parametrize("who", ["buyer-1", "hotel-aurora/buyer-1", "agent:hotel-aurora/buyer-1", "planner-1"])
+def test_agent_identity_can_never_approve(log, who):
+    q, d = _live_hero()
+    r = check_approval(q, d, who, "procurement_manager", q.quote_hash, order_id="O-9", audit_log=log)
+    assert not r["ok"] and "AI agent" in r["reason"]
+    assert log.events("O-9")[-1].action == "approval.refused"
+
+
+def test_unknown_approver_refused(log):
+    q, d = _live_hero()
+    for who in ("eve@hotel-aurora.example", "liisa@school-tampere.example", "human:mallory"):
+        r = check_approval(q, d, who, "procurement_manager", q.quote_hash, audit_log=log)
+        assert not r["ok"] and "not in hotel-aurora's approver directory" in r["reason"]
+    assert [e.action for e in log.events()].count("approval.refused") == 3
+
+
+def test_directory_role_is_authoritative(log):
+    q, d = _live_hero()
+    # claimed role omitted -> directory role used; an override role (general manager) may approve
+    assert check_approval(q, d, "human:anna@hotel-aurora.example", "", q.quote_hash, audit_log=log)["ok"]
+    assert check_approval(q, d, "Mikko Laine", None, q.quote_hash, audit_log=log)["ok"]
+
+
+def test_no_tier_substitution_needs_approval():
+    # QuoteLine.tier defaults to "preferred" when the agent omits it
+    arla = product(pid="469363", name="Arla Semi skimmed milkdrink 1 L UHT lactose free", brand="Arla")
+    q = signing.sign_quote(make_quote(pid="469363", name=arla.name, qty=10, price=1.2, tier="preferred"))
+    d = _dec(q, products={"469363": arla})
+    sub = by_rule(d, "substitution")
+    assert d.outcome == "needs_approval" and d.approver_role == "procurement_manager"
+    assert len(sub) == 1 and sub[0].outcome == "needs_approval"
+    assert "Agent-supplied tier could not be verified; treating as substitution" in sub[0].message
+
+
+def test_fake_best_tier_needs_approval():
+    arla = product(pid="469363", name="Arla Semi skimmed milkdrink 1 L UHT lactose free", brand="Arla")
+    q = signing.sign_quote(make_quote(pid="469363", name=arla.name, qty=10, price=1.2, tier="best"))
+    d = _dec(q, products={"469363": arla, "463038": product(pid="463038", content=10)})
+    assert d.outcome == "needs_approval"
+    assert "could not be verified" in by_rule(d, "substitution")[0].message
+
+
+def test_catalog_verified_best_and_usual_product_allowed():
+    other_pack = product(pid="400001", name="Valio Eila semi skimmed milk drink 1,5 l lactose free")
+    q = signing.sign_quote(make_quote(pid="400001", name=other_pack.name, qty=10, tier="best"))
+    d = _dec(q, products={"400001": other_pack, "463038": product(pid="463038", content=10)})
+    assert d.outcome == "auto_approve", [h for h in d.hits if h.outcome != "allow"]
+    usual = product(pid="463038", name="Valio Eila semi skimmed milk drink 10 l novobox lactose free", content=10)
+    q = signing.sign_quote(make_quote(pid="463038", name=usual.name, qty=5, price=20.0, tier="preferred"))
+    d = _dec(q, products={"463038": usual})
+    assert d.outcome == "auto_approve" and by_rule(d, "substitution")[0].rule_id == "substitution"
+
+
+def test_school_oat_drink_without_tier_needs_kitchen_manager():
+    oatly = product(pid="470863", name="Oatly Oat Drink Semi 1L", brand="Oatly", category="10402", claims=("VEGAN",),
+                    allergens={"milk": "free", "nuts": "free", "gluten": "contains"},
+                    source={"milk": "structured", "nuts": "structured", "gluten": "structured"})
+    q = signing.sign_quote(make_quote(customer="school-tampere", pid="470863", name=oatly.name, need_query="oat drink",
+                                      claims=(), qty=10, price=1.5, tier="preferred"))
+    d = _dec(q, customer="school-tampere", products={"470863": oatly})
+    assert d.outcome == "needs_approval" and d.approver_role == "kitchen_manager"
+    assert by_rule(d, "substitution")[0].outcome == "needs_approval"
+    assert by_rule(d, "allergens")[0].outcome == "allow"
+
+
+def test_one_row_per_rule_per_line():
+    q = signing.sign_quote(make_quote(flags=["outside_preference"]))
+    d = _dec(q, products={"464306": product()})
+    ids = [h.rule_id for h in d.hits]
+    assert len(ids) == len(set(ids))
+    sub = by_rule(d, "substitution")
+    assert len(sub) == 1 and sub[0].outcome == "needs_approval" and "Allowed automatically" not in sub[0].message
+    # hero (no flags): best tier verified and allowed, only spend + drift need a human
+    d = _dec(signing.sign_quote(make_quote()), products={"464306": product()})
+    assert by_rule(d, "substitution")[0].outcome == "allow"
+    assert {h.rule_id.split(":")[0] for h in d.hits if h.outcome != "allow"} == {"spend", "quantity_drift"}

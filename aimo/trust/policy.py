@@ -306,41 +306,103 @@ def r_category_scope(c: Ctx, r: dict) -> None:
         c.hit(r["id"], "allow", f"All lines are within the allowed categories ({labels}).")
 
 
+def _preferred_ids(pol: dict) -> set[str]:
+    return {str(p["product_id"]) for p in pol.get("preferred_products", [])}
+
+
+def _approved_alternatives(pol: dict) -> dict[str, str]:
+    return {str(a["product_id"]): a.get("tier", "best") for a in pol.get("approved_alternatives", [])}
+
+
+def verified_tier(c: Ctx, line) -> tuple[Optional[str], str]:
+    """Decide server-side what a line really is; never trust the caller's tier.
+    Returns (tier or None if it cannot be verified, how it was verified).
+      preferred: product_id is in the policy's preferred_products (the customer's usual products)
+      best/better/good: product_id is in the policy's approved_alternatives (customer-approved swaps)
+      best: catalog shows same brand, category and unit as a preferred product and keeps all its claims
+      None: anything else (missing tier defaults to "preferred" in the model, so it lands here too)"""
+    pid = line.product_id
+    if pid in _preferred_ids(c.policy):
+        return "preferred", "listed as a usual product in the customer profile"
+    alt = _approved_alternatives(c.policy)
+    if pid in alt:
+        return alt[pid], "a customer-approved alternative in the profile"
+    if line.tier == "best":
+        p = c.product(pid)
+        if p is not None and p.brand:
+            prefs = _catalog_lookup(sorted(_preferred_ids(c.policy) - set(c.products)))
+            prefs.update({k: v for k, v in c.products.items() if k in _preferred_ids(c.policy)})
+            for ref in prefs.values():
+                if ref is None or not ref.brand:
+                    continue
+                if (ref.brand.lower() == p.brand.lower() and ref.category == p.category
+                        and ref.content_unit == p.content_unit and set(ref.claims) <= set(p.claims)):
+                    return "best", f"same brand, category and claims as the usual {ref.id} (catalog data)"
+    return None, "not in the customer profile"
+
+
 def r_substitution(c: Ctx, r: dict) -> None:
+    """One hit per line, with the final (strictest) outcome. The tier is verified server-side: a line
+    whose tier cannot be verified (missing, or a "preferred"/"best" claim that the profile and catalog do
+    not back) is treated as a substitution (`unverified`, default needs_approval). A claimed tier worse
+    than the verified one is honoured (it can only make the outcome stricter)."""
     tiers = r.get("tiers", {})
     role = c.role(r)
+    unverified_out = r.get("unverified", "needs_approval")
     need_claims = list(c.quote.need.required_claims) if (c.quote.need and r.get("require_claims")) else []
+    claims_txt = ", ".join(CLAIM_TEXT.get(x, x) for x in need_claims)
     noted = False
+    rank = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
     for ln in c.quote.lines:
-        rid = f"{r['id']}:{ln.product_id}"
-        out = tiers.get(ln.tier, "allow" if ln.tier == "preferred" else "needs_approval")
-        if ln.tier != "preferred":
-            noted = True
-            tail = {"allow": " Allowed automatically by this policy.",
-                    "needs_approval": f" A {role_text(role)} must confirm the swap.",
-                    "reject": " This policy does not allow it."}[out]
-            c.hit(rid, out, f"{_line_name(ln)} is a substitute: {TIER_TEXT.get(ln.tier, ln.tier)}.{tail}", role)
+        parts: list[tuple[str, str]] = []   # (outcome, sentence)
+        vt, how = verified_tier(c, ln)
+        claimed = ln.tier
+        if vt is not None and rank.get(claimed, 0) > rank[vt]:
+            vt = claimed  # the caller says it is worse than we could verify: believe the stricter one
+        if vt is None:
+            if claimed in ("better", "good", "rejected"):
+                eff = claimed
+                out = tiers.get(eff, "needs_approval")
+                parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]} (as reported by the agent)."))
+            else:
+                eff, out = None, unverified_out
+                parts.append((out, f"Agent-supplied tier could not be verified; treating as substitution. "
+                                   f"{_line_name(ln)} is not one of the customer's usual products or approved "
+                                   f"alternatives (agent-supplied tier: "
+                                   + ("preferred or none" if claimed == "preferred" else claimed) + ")."))
+        else:
+            eff = vt
+            out = tiers.get(eff, "allow" if eff == "preferred" else "needs_approval")
+            if eff == "preferred":
+                parts.append((out, f"{_line_name(ln)} is the customer's usual product."))
+            else:
+                parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]}, verified as {how}."))
         if "outside_preference" in ln.flags:
-            noted = True
-            o2 = r.get("outside_preference", "needs_approval")
-            c.hit(rid, o2, f"{_line_name(ln)} is outside your standing preferences (brand, pack or spec)."
-                  + (f" A {role_text(role)} must confirm." if o2 == "needs_approval" else ""), role)
+            parts.append((r.get("outside_preference", "needs_approval"),
+                          "It is flagged as outside your standing preferences (brand, pack or spec)."))
         if need_claims:
             p = c.product(ln.product_id)
             if p is None:
-                noted = True
-                c.hit(rid, "needs_approval", f"Could not confirm that {_line_name(ln)} is "
-                      f"{', '.join(CLAIM_TEXT.get(x, x) for x in need_claims)} as requested. A {role_text(role)} must check it.", role)
+                parts.append(("needs_approval", f"Could not confirm that it is {claims_txt} as requested."))
             else:
                 missing = [x for x in need_claims if x not in (p.claims or [])]
                 if missing:
-                    noted = True
-                    c.hit(rid, "reject", f"{_line_name(ln)} is not {', '.join(CLAIM_TEXT.get(x, x) for x in missing)}, "
-                          f"so it does not meet the request.")
+                    parts.append(("reject", f"It is not {', '.join(CLAIM_TEXT.get(x, x) for x in missing)}, "
+                                            f"so it does not meet the request."))
+        final = max((o for o, _ in parts), key=lambda o: SEVERITY[o])
+        if eff == "preferred" and final == "allow" and len(parts) == 1:
+            continue  # usual product, nothing to say per line
+        noted = True
+        tail = {"allow": " Allowed automatically by this policy.",
+                "needs_approval": f" A {role_text(role)} must confirm the swap.",
+                "reject": " This policy does not allow it."}[final]
+        # keep the descriptive first sentence, then only the sentences that drive the final outcome
+        text = [parts[0][1]] + [s for o, s in parts[1:] if o == final or final == "allow"]
+        c.hit(f"{r['id']}:{ln.product_id}", final, " ".join(text) + tail, role)
     if not noted:
         msg = "All lines are the customer's usual products; no substitutions."
         if need_claims:
-            msg += f" Required claims ({', '.join(CLAIM_TEXT.get(x, x) for x in need_claims)}) are met."
+            msg += f" Required claims ({claims_txt}) are met."
         c.hit(r["id"], "allow", msg)
 
 
@@ -509,6 +571,24 @@ RULES: dict[str, Callable[[Ctx, dict], None]] = {
 
 
 # ------------------------------------------------------------------ evaluate
+def _merge_duplicates(hits: list[tuple[RuleHit, Optional[str]]]) -> list[tuple[RuleHit, Optional[str]]]:
+    """Exactly one row per rule_id (per rule per line): the strictest outcome, with the messages that
+    led to it. Order of first appearance is kept."""
+    groups: dict[str, list[tuple[RuleHit, Optional[str]]]] = {}
+    for h, role in hits:
+        groups.setdefault(h.rule_id, []).append((h, role))
+    out = []
+    for rid, g in groups.items():
+        if len(g) == 1:
+            out.append(g[0])
+            continue
+        worst = max(SEVERITY[h.outcome] for h, _ in g)
+        top = [(h, role) for h, role in g if SEVERITY[h.outcome] == worst]
+        msg = " ".join(dict.fromkeys(h.message for h, _ in top))
+        out.append((RuleHit(rule_id=rid, outcome=top[0][0].outcome, message=msg), top[0][1]))
+    return out
+
+
 def evaluate(quote: Quote, mandate: Mandate, *, products: dict[str, Any] | None = None,
              now: datetime | None = None, audit_log: Any = None) -> PolicyDecision:
     """Evaluate a quote against the mandate's policy. `products` (id -> Product) overrides the catalog
@@ -517,9 +597,10 @@ def evaluate(quote: Quote, mandate: Mandate, *, products: dict[str, Any] | None 
     ids = list(dict.fromkeys(ln.product_id for ln in quote.lines))
     prods: dict[str, Optional[Product]] = {}
     if products is not None:
-        for i in ids:
-            p = products.get(i)
+        for i, p in products.items():   # extra entries (e.g. the usual products) are kept as references
             prods[i] = Product.model_validate(p) if isinstance(p, dict) else p
+        for i in ids:
+            prods.setdefault(i, None)
         missing = [i for i in ids if prods.get(i) is None]
         if missing:
             prods.update({k: v for k, v in _catalog_lookup(missing).items() if v is not None})
@@ -534,6 +615,7 @@ def evaluate(quote: Quote, mandate: Mandate, *, products: dict[str, Any] | None 
         except Exception as e:  # noqa: BLE001  a crashing rule must never auto-approve
             c.hit(rule["id"], "needs_approval", f"Rule {rule['id']} could not be evaluated ({type(e).__name__}); "
                   f"a human must review this order.", c.role(rule))
+    c.hits = _merge_duplicates(c.hits)
     worst = max((SEVERITY[h.outcome] for h, _ in c.hits), default=0)
     outcome = {0: "auto_approve", 1: "needs_approval", 2: "reject"}[worst]
     approver = None
@@ -579,6 +661,8 @@ def _summary(pol: dict) -> list[str]:
             s += (f"{'/'.join(appr)} tier need a {role}" if appr else "") + "."
             if r.get("require_claims"):
                 s += " Required claims (e.g. lactose free) must be kept."
+            s += (" Only the products in the customer profile count as usual; the agent's own tier label is never "
+                  "trusted, and anything unverified is treated as a substitution.")
             out.append(s)
         elif t == "allergen_block":
             ex = r.get("excluded", [])
@@ -617,6 +701,8 @@ def list_customers() -> list[dict]:
             "approver_roles": pol.get("approver_roles", []), "override_roles": pol.get("override_roles", []),
             "approvers": pol.get("approvers", []), "agents": pol.get("agents", []), "mandates": mandates,
             "excluded_allergens": excluded, "standing_orders": pol.get("standing_orders", []),
+            "preferred_products": pol.get("preferred_products", []),
+            "approved_alternatives": pol.get("approved_alternatives", []),
             "rules": [{"id": r["id"], "type": r["type"]} for r in pol["rules"]], "summary": _summary(pol),
         })
     return out
