@@ -516,3 +516,61 @@ def test_quotes_route_returns_409_on_missing_price(monkeypatch, future_day):
     assert resp.status_code == 409
     assert resp.json() == {"code": "INVALID_QUOTE", "text": "No price available for product p_missing."}
 
+
+def test_price_lines_rejects_simulated_stockout_and_sales_block(monkeypatch, future_day):
+    monkeypatch.setattr(
+        valio,
+        "price",
+        lambda c, d, ids: {"p1": _price_entry("p1", 1.50, 1.71), "p2": _price_entry("p2", 2.00, 2.28)},
+    )
+    monkeypatch.setattr(valio, "availability", lambda c, d, ids: {})
+
+    lines_empty_avail, gross, _ = offers.price_lines(
+        "hotel-aurora", future_day, [QuoteRequestLine(product_id="p1", quantity=5)]
+    )
+    assert len(lines_empty_avail) == 1
+    assert gross == 8.55
+
+    offers.simulate(SimulateStock(product_id="p1", available_amount=0.0))
+    with pytest.raises(QuoteError) as exc_zero:
+        offers.price_lines("hotel-aurora", future_day, [QuoteRequestLine(product_id="p1", quantity=1)])
+    assert exc_zero.value.code == "OUT_OF_STOCK"
+    assert exc_zero.value.text == "Insufficient stock for product p1."
+
+    offers.simulate(SimulateStock(product_id="p1", available_amount=4.0))
+    with pytest.raises(QuoteError) as exc_short:
+        offers.price_lines("hotel-aurora", future_day, [QuoteRequestLine(product_id="p1", quantity=5)])
+    assert exc_short.value.code == "OUT_OF_STOCK"
+
+    ok_lines, _, _ = offers.price_lines("hotel-aurora", future_day, [QuoteRequestLine(product_id="p1", quantity=4)])
+    assert ok_lines[0].quantity == 4
+
+    offers.clear_simulation()
+    monkeypatch.setattr(
+        valio,
+        "availability",
+        lambda c, d, ids: {"p2": _avail_entry("p2", future_day, 100.0, sales_block=True)},
+    )
+    with pytest.raises(QuoteError) as exc_block:
+        offers.price_lines("hotel-aurora", future_day, [QuoteRequestLine(product_id="p2", quantity=2)])
+    assert exc_block.value.code == "OUT_OF_STOCK"
+    assert exc_block.value.text == "Insufficient stock for product p2."
+
+
+def test_quotes_route_returns_409_on_simulated_stockout(monkeypatch, future_day):
+    from fastapi.testclient import TestClient
+    from aimo.app import app
+
+    monkeypatch.setattr(valio, "price", lambda c, d, ids: {"p1": _price_entry("p1", 1.50, 1.71)})
+    monkeypatch.setattr(valio, "availability", lambda c, d, ids: {"p1": _avail_entry("p1", future_day, 100.0)})
+    offers.simulate(SimulateStock(product_id="p1", available_amount=0.0))
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/quotes",
+            json={"offers": [{"product_id": "p1", "quantity": 2}], "delivery_date": future_day.isoformat()},
+            headers={"X-Agent-Key": "demo-hotel-aurora"},
+        )
+    assert resp.status_code == 409
+    assert resp.json() == {"code": "OUT_OF_STOCK", "text": "Insufficient stock for product p1."}
+
+
