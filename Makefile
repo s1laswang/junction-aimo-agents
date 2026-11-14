@@ -3,7 +3,7 @@ PY = .venv/bin/python
 DEMO_DB = var/demo.db
 SCEN_PORT = $(shell echo $$(($(PORT)+1)))
 
-.PHONY: setup check run test mcp scenarios demo scen stage
+.PHONY: setup check run test unit mcp scenarios demo scen stage
 
 check:
 	@test -e data || { echo "missing data/: run ln -s ~/aimo-agents/data data"; exit 1; }
@@ -18,6 +18,9 @@ run: setup
 
 test: setup
 	.venv/bin/pytest -q
+
+unit:
+	$(PY) -m pytest -q
 
 mcp: setup
 	$(PY) -m aimo.mcp_server
@@ -37,7 +40,9 @@ stage: setup
 	ok=0; for i in $$(seq 30); do \
 	  curl -sf http://localhost:$(PORT)/.well-known/agent-card.json >/dev/null && { ok=1; break; }; sleep 1; done; \
 	[ $$ok = 1 ] || { echo "server did not start in 30s, see var-demo.log"; exit 1; }; \
-	echo; echo "Console: http://localhost:$(PORT)/console.html"; \
-	echo "Inbox:   http://localhost:$(PORT)/inbox.html"; \
-	echo "Audit:   http://localhost:$(PORT)/audit"; \
+	echo; echo "Overview: http://localhost:$(PORT)/"; \
+	echo "Console:  http://localhost:$(PORT)/console.html"; \
+	echo "Inbox:    http://localhost:$(PORT)/inbox.html"; \
+	echo "Audit:    http://localhost:$(PORT)/audit.html"; \
+	echo "Mandates: http://localhost:$(PORT)/admin.html"; \
 	echo "Ctrl-C to stop"; wait $$pid
