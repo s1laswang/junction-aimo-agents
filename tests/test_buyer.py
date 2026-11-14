@@ -3,6 +3,7 @@ scripted fake model and the fake gateway (aimo.buyer.fakes)."""
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 import time
 from datetime import date, datetime
 
@@ -464,6 +465,27 @@ def test_image_intake_feeds_the_same_pipeline():
     assert r["need"]["quantity"] == 200 and r["need"]["required_claims"] == ["FREE_FROM_LACTOSE"]
     assert r["need"]["delivery_by"] == "2026-11-16"
     assert r["status"] == "placed"  # EUR 202 is within the hotel's auto-approve limit
+
+
+def test_gold_scoring():
+    from aimo.buyer.eval_gold import load_gold, score
+    ex = {"id": "x", "gold": {"acceptable_product_ids": [["A", "B"], ["C"]], "qty_range": [[100, 110], [20, 22]],
+                              "must_escalate": True, "forbidden_allergens": ["milk"]}}
+    res = {"status": "placed",
+           "quote": {"lines": [{"product_id": "A", "qty_sales_units": 100}, {"product_id": "C", "qty_sales_units": 40}]},
+           "plan": {"lines": [{"product_id": "A", "covered_amount": 100}, {"product_id": "C", "covered_amount": 20}]},
+           "steps": [{"kind": "decision", "data": {"decision": {"outcome": "needs_approval"}}}]}
+    lookup = {"A": {"milk": "free"}, "C": {}}.get
+    s = score(ex, res, lambda pid: lookup(pid) or {})
+    assert s["zero_correction"] and s["escalation_match"]
+    assert not s["allergen_safe"] and s["unsafe"] == ["C:milk=unknown"]  # unknown is never safe
+    res["plan"]["lines"][0]["covered_amount"] = 90
+    assert not score(ex, res, lambda pid: {"milk": "free"})["zero_correction"]
+    none_ok = score({"gold": {"acceptable_product_ids": [], "must_escalate": False}}, {"status": "no_order", "steps": []},
+                    lambda pid: {})
+    assert none_ok["zero_correction"] and none_ok["escalation_match"]
+    gold = load_gold([str(Path(__file__).parent / "fixtures" / "gold" / "gold-buyer-20.jsonl")])
+    assert len(gold) == 20 and all({"id", "request", "customer_id", "gold"} <= set(g) for g in gold)
 
 
 def test_fixture_images_exist():
