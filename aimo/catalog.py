@@ -202,9 +202,11 @@ def _fts_query(groups: list[list[tuple]]) -> str | None:
 
 def _load() -> dict:
     with _lock:
-        if _state:
-            return _state
         path = _json_path()
+        if _state and _state.get("path") == path:
+            return _state
+        if _state:
+            reset()
         with open(path, encoding="utf-8") as f:
             items = json.load(f)
         products, raws, names_blob, blob, primary = {}, {}, {}, {}, {}
@@ -231,7 +233,7 @@ def _load() -> dict:
             con.execute("insert or replace into catalog_meta values('sig', ?)", (sig,))
             con.commit()
         _state.update(
-            products=products, raws=raws, names=names_blob, blob=blob, primary=primary, con=con,
+            path=path, products=products, raws=raws, names=names_blob, blob=blob, primary=primary, con=con,
             reliability=_read_csv("valio_aimo_junction26_delivery_reliability.csv", "deliveryReliability"),
             co2=_read_csv("valio_aimo_junction26_carbon_footprint.csv", "AVG kg CO2-eq/kg"),
         )
