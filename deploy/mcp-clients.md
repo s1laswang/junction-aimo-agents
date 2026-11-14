@@ -62,16 +62,16 @@ For HTTP, Claude Desktop only takes remote servers through its connector setting
 Script (mcp 2.3.0):
 
 ```python
-import asyncio, httpx2
+import asyncio
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 async def main():
-    hc = httpx2.AsyncClient(headers={"X-Agent-Key": "demo-hotel-aurora"})
-    async with streamable_http_client("http://localhost:8080/mcp", http_client=hc) as (r, w, *_):
-        async with ClientSession(r, w) as s:
-            await s.initialize()
-            print([t.name for t in (await s.list_tools()).tools])
+    async with create_mcp_http_client(headers={"X-Agent-Key": "demo-hotel-aurora"}) as http:
+        async with streamable_http_client("http://localhost:8080/mcp", http_client=http) as streams:
+            async with ClientSession(streams[0], streams[1]) as s:
+                await s.initialize()
+                print([t.name for t in (await s.list_tools()).tools])
 
 asyncio.run(main())
 ```
@@ -152,4 +152,4 @@ python -m aimo.audit verify-checkpoint <jws> http://localhost:8080/.well-known/j
 
 ## Docker
 
-`Dockerfile` is owned by sh-docs. Mount `data/` and `.env` at run time, never bake them in.
+Mount `data/` and `.env` at run time, never bake them in.
