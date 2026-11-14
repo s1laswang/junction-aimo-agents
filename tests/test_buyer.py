@@ -60,6 +60,34 @@ def test_school_allergens_from_profile_and_text():
     assert n.delivery_by == date(2026, 11, 18)
 
 
+@pytest.mark.parametrize("text,query", [
+    ("Oat drink for a school, pupils have milk and nut allergies, 200 L by Wednesday", "Oat drink"),
+    ("We need 120 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies.", "oat drink"),
+    ("Tomorrow we need 30 kg butter", "butter"),
+    ("2,5 kg grated cheese for 18.11.", "grated cheese"),
+    (HERO, "lactose-free milk"),
+])
+def test_guess_query_keeps_noun_phrase(text, query):
+    from aimo.buyer.need import guess_query
+    assert guess_query(text) == query
+
+
+def test_school_regex_fallback_full_need():
+    n = parse_need("Oat drink for a school, pupils have milk and nut allergies, 200 L by Wednesday",
+                   "school-tampere", SAT, use_gemini=False)
+    assert (n.product_query, n.quantity, n.unit, n.delivery_by) == ("Oat drink", 200, "L", date(2026, 11, 18))
+    assert set(n.excluded_allergens) == {"milk", "nuts"}
+
+
+def test_multi_item_event_fallback():
+    from aimo.buyer.need import parse_request
+    needs = parse_request("Conference dinner for 150 tomorrow evening: 40 L cream, 20 kg butter, lactose-free.",
+                          "hotel-aurora", SAT, use_gemini=False)
+    assert [(n.product_query, n.quantity, n.unit) for n in needs] == [("cream", 40, "L"), ("butter", 20, "KG")]
+    assert all(n.required_claims == ["FREE_FROM_LACTOSE"] and n.delivery_by == date(2026, 11, 15) for n in needs)
+    assert all(n.preferred_product_ids == [] for n in needs)  # the dispenser milk is not a cream/butter preference
+
+
 def test_usual_product_only_for_matching_requests():
     n = parse_need("Wedding tomorrow: 40 kg butter", "hotel-aurora", SAT, use_gemini=False)
     assert n.preferred_product_ids == [] and "pack" not in n.preferences
