@@ -46,18 +46,20 @@ def record(feature: str, model: str, kind: str = "generate", usage: Any = None, 
 
 
 def generate(feature: str, model: str, contents: Any, config: Any = None, run_id: str = "",
-             retries: int = 5) -> Any:
-    """generate_content with exponential backoff on 429/5xx and ledger logging."""
+             retries: int = 5, meta: dict | None = None) -> Any:
+    """generate_content with exponential backoff on 429/5xx and ledger logging.
+    `meta` (e.g. {"thinking_level": "LOW", "step": 3}) is copied into the ledger row."""
     last: Exception | None = None
     for attempt in range(retries):
         t0 = time.time()
         try:
             r = client().models.generate_content(model=model, contents=contents, config=config)
-            record(feature, model, usage=r.usage_metadata, latency_s=time.time() - t0, run_id=run_id)
+            record(feature, model, usage=r.usage_metadata, latency_s=time.time() - t0, run_id=run_id, meta=meta)
             return r
         except Exception as e:  # noqa: BLE001
             last = e
-            record(feature, model, latency_s=time.time() - t0, ok=False, error=type(e).__name__, run_id=run_id)
+            record(feature, model, latency_s=time.time() - t0, ok=False, error=type(e).__name__, run_id=run_id,
+                   meta=meta)
             msg = str(e)
             if not any(s in msg for s in ("429", "RESOURCE_EXHAUSTED", "500", "503", "UNAVAILABLE", "DEADLINE")):
                 raise
