@@ -236,8 +236,10 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                 flags.append("cutoff_passed")
                 reject.append(f"order cut-off passed ({_d(offer.closing_time)}) for delivery {need.delivery_by:%a %d %b}")
             elif offer.sales_block:
+                flags.append("sales_block")
                 reject.append("sales block: cannot be ordered currently")
             elif not offer.available:
+                flags.append("unavailable")
                 if offer.available_amount == 0:
                     reject.append("out of stock")
                 elif offer.available_date and offer.available_date > need.delivery_by:

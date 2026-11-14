@@ -1,6 +1,6 @@
 # Catalog report (team/catalog)
 
-Last updated: Sat 14 Nov, M1 slice.
+Last updated: Sat 14 Nov, about 16:30. M1 is done and the Gemini items are done.
 
 ## Status
 **M1 is done. Verified live against the mock API on 14 Nov at about 14:40.**
@@ -88,6 +88,7 @@ Rules:
 Coverage: 9,978 products have some structured allergen data. 7,568 have none, so every group is unknown for them.
 
 ## Data quirks
+- Gluten-free oat products are coded with GO (oats) as CONTAINS, so a gluten exclusion rejects them. This is conservative and correct for a hospital, but means fewer options.
 - `volume.unit` is sometimes GRM, for example 472492 "5 kg sour milk". We treat it as a weight.
 - Many CASE-level unitConversions have no values, and about half the products have no BASE-level conversion.
 - Availability values:
@@ -106,11 +107,41 @@ Coverage: 9,978 products have some structured allergen data. 7,568 have none, so
 - `plan_need(need, offers_fn=None)` takes an optional injected offers function `(ids, date, customer_id=...) -> dict[str, Offer]`.
 - An `UpstreamError` from `aimo.backend.get_offers` propagates out of `plan_need`, so the gateway can return a 503. The catalog does not swallow it.
 
-## Next
-Gemini work:
-- (a) gemini-embedding-2 vectors for semantic recall and similar products.
-- (b) `infer_allergens`, using structured output. Results are marked "inferred:gemini" and never trusted.
-- (c) `recipe_compatible`.
+## Gemini (verified live, all calls logged through aimo.gemini to data/gemini/ledger)
+- **(a) Embeddings** (`aimo/catalog/embeddings.py`): `gemini-embedding-2`, 768 dimensions, over the en and fi name, brand, the first 200 characters of ingredients and the free-from claims.
+  - All 17,546 products took 44 s: 176 calls of 100 texts, 8 concurrent.
+  - Output: `data/embeddings.npy` (float16) plus `data/embeddings_ids.json`. Query vectors are cached in `data/cache/query_embeddings.json`.
+  - Quirk: one `embed_content` call with a list of plain strings returns ONE vector. Pass one `types.Content` per text.
+  - `search()` is now hybrid: FTS and semantic results are merged by weighted reciprocal rank fusion. Example: "dairy-free drink for coffee" returns Oatly iKaffe and Alpro Barista, which FTS alone cannot find.
+  - `plan_need` also adds the query's semantic neighbours and the usual product's `similar_products()` to the candidate pool.
+  - Interactive embedding calls fail fast (2 tries). Without embeddings or a key, search silently runs FTS only.
+- **(b) `infer_allergens(product)`** (`aimo/catalog/gemini_allergens.py`): GEMINI_FAST_MODEL with a structured-output Pydantic schema, batching 25 products per call. The ingredient text is passed as untrusted data.
+  - Precomputed for all 4,079 products that lack structured allergen data but have ingredient text (4,076 succeeded, 49 s). Cache: `data/cache/gemini_allergens.json`.
+  - Policy: the source is `inferred:gemini`. An inferred `contains` or `may_contain` can only block. A group Gemini did not find stays **unknown**, never `free` (covered by a test).
+  - Hints appear in `get_product()` and in the reject reasons ("hint: Gemini reads the ingredients as containing milk (inferred:gemini, needs human confirmation)"), with the flag `allergen_inferred_hint`.
+  - Spot check: Finnish VEHNÄJAUHO maps to gluten, KANANMUNA to eggs, SELLERI to celery, and "Lactose, Milk powder" to milk.
+- **(c) `recipe_compatible(original, substitute, use)`**: a short structured judgement, cached in `data/cache/gemini_recipe.json`.
+  - `plan_need` runs it for at most 3 substitute lines against the usual product, in parallel, with an 8 s cap and no blocking wait.
+  - The result becomes a reason line ("Gemini recipe check vs usual product: compatible (high): ...") and, if the judgement is negative, the flag `recipe_check_failed`. It never overrides the hard filters. Turn it off with `AIMO_RECIPE_CHECK=0`.
+
+## Integration check with the gateway client
+I ran `plan_need(need, offers_fn=<team/gateway aimo/backend/client.get_offers>)` live and got the same plan: €1,010, 464306 best. Partial-stock and cut-off flags agree. Their Offer issues (`limited_stock`, `terminal_unknown_qty`) are compatible.
+
+## Setup on another checkout
+`uv run python -m aimo.catalog build` builds the SQLite DB (2.5 s). It also builds the embeddings (~45 s) and the allergen hints (~50 s) if they are missing; both steps are network-bound.
+`uv run python -m aimo.catalog demo` runs the M1 plan. The files live in `data/`, which is gitignored, so each checkout must build them or copy them from my worktree's data/.
+
+## Interface notes (could not append to docs/interfaces.md: outside my edit scope, please paste)
+- Candidate and PlanLine flags:
+  - `cutoff_passed`, `sales_block` and `unavailable` always mean tier `rejected`. These match trust's line flags.
+  - The other flags: `outside_preference`, `partial_stock`, `allergen_unknown`, `allergen_inferred_hint`, `content_from_price`, `no_live_offer`, `recipe_check_failed`.
+- `Product.allergen_source` values: `structured`, `structured:claim` (a FREE_FROM_GLUTEN / FREE_FROM_EGGS / FREE_FROM_SOY claim), `inferred:gemini` and `none`.
+- Tiers when there is no usual product (no preferred_product_ids and no preferences):
+  - best: every query concept appears in the name.
+  - better: at least half of the concepts appear.
+  - good: anything else that passes.
+  - The reason line says "no usual product on file".
+- CLI: `python -m aimo.catalog build|search <q>|demo`.
 
 ## Needs Silas / CEO
 Nothing blocking.

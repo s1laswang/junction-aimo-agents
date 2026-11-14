@@ -111,7 +111,8 @@ def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
         from aimo import gemini
         from aimo.catalog.gemini_allergens import recipe_compatible
         gemini.client()
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        ex = ThreadPoolExecutor(max_workers=3)
+        try:
             futs = {ex.submit(recipe_compatible, orig, l.product_id, use): l for l in subs}
             done, _ = wait(futs, timeout=timeout_s)
             for f in done:
@@ -125,6 +126,8 @@ def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
                                  f"{j.get('reason')} [inferred:gemini]")
                 if not j.get("compatible"):
                     l.flags = sorted(set(l.flags) | {"recipe_check_failed"})
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)   # never block the plan on a slow LLM
     except Exception:  # noqa: BLE001
         return
 

@@ -41,12 +41,12 @@ def product_text(d: dict) -> str:
     return " | ".join(p for p in parts if p)
 
 
-def _embed_batch(texts: list[str], feature: str) -> np.ndarray:
+def _embed_batch(texts: list[str], feature: str, retries: int = 5) -> np.ndarray:
     from google.genai import types
 
     from aimo import gemini
     last: Exception | None = None
-    for attempt in range(5):
+    for attempt in range(retries):
         t0 = time.time()
         try:
             r = gemini.client().models.embed_content(
@@ -62,7 +62,8 @@ def _embed_batch(texts: list[str], feature: str) -> np.ndarray:
             last = e
             gemini.record(feature, GEMINI_EMBED_MODEL, kind="embed", latency_s=time.time() - t0, ok=False,
                           error=type(e).__name__, meta={"n": len(texts)})
-            time.sleep(min(30, 2 ** attempt))
+            if attempt + 1 < retries:
+                time.sleep(min(30, 2 ** attempt))
     raise last  # type: ignore[misc]
 
 
@@ -125,7 +126,7 @@ def embed_query(q: str) -> np.ndarray:
         cache = _qcache()
         if key in cache:
             return np.array(cache[key], dtype=np.float32)
-    v = _embed_batch([q], "catalog.embed.query")[0]
+    v = _embed_batch([q], "catalog.embed.query", retries=2)[0]  # interactive path: fail fast
     with _qlock:
         cache = _qcache()
         cache[key] = [round(float(x), 5) for x in v]
