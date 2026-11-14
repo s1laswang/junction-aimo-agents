@@ -155,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--montage", action="store_true",
                     help="run happy, stockout, school-allergen, injection, drift, event in sequence and write docs/demo-montage.md")
     ap.add_argument("--montage-out", default="docs/demo-montage.md")
+    ap.add_argument("--baseline-pid", type=int, help="ledger pid of an earlier montage to compare cost against")
+    ap.add_argument("--baseline-orders", type=int, default=5, help="orders placed in that baseline montage")
     a = ap.parse_args(argv)
     if a.montage:
         return run_montage(a)
@@ -280,32 +282,28 @@ def verdict(name: str, r: dict) -> tuple[bool, str]:
     return st != "error", st or "?"
 
 
-def _ledger_totals(run_ids: set[str]) -> dict[str, dict]:
-    import glob
+def _ledger_by_run(run_ids: set[str]) -> dict[str, dict]:
+    from aimo.buyer.costs import ledger_rows, summarize
+    rows = ledger_rows(run_ids=run_ids)
+    by: dict[str, list] = {}
+    for r in rows:
+        by.setdefault(r.get("run_id"), []).append(r)
+    return {rid: summarize(v) for rid, v in by.items()}
 
-    from aimo.gemini import LEDGER_DIR
-    out: dict[str, dict] = {}
-    for f in glob.glob(str(LEDGER_DIR / "*.jsonl")):
-        for line in open(f):
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            rid = row.get("run_id")
-            if rid in run_ids:
-                d = out.setdefault(rid, {"calls": 0, "in": 0, "out": 0, "thinking": 0, "gemini_s": 0.0, "failed": 0})
-                d["calls"] += 1
-                d["in"] += row.get("in", 0)
-                d["out"] += row.get("out", 0)
-                d["thinking"] += row.get("thinking", 0)
-                d["gemini_s"] += row.get("latency_s", 0.0)
-                d["failed"] += 0 if row.get("ok") else 1
-    return out
+
+def _cost_block(label: str, s: dict, orders: int, runs: int) -> list[str]:
+    per_order = s["cost_usd"] / orders if orders else 0.0
+    cached_pct = 100.0 * s["cached"] / s["in"] if s["in"] else 0.0
+    esc_steps = 100.0 * s["escalated_steps"] / s["agent_steps"] if s["agent_steps"] else 0.0
+    return [f"| {label} | {runs} | {orders} | {s['calls']} | {s['in'] / max(runs, 1):,.0f} | {cached_pct:.0f}% | "
+            f"${s['cost_usd']:.4f} | ${s['cost_usd'] / max(runs, 1):.4f} | ${per_order:.4f} | "
+            f"{s['escalated_runs']}/{runs} runs, {s['escalated_steps']}/{s['agent_steps']} steps ({esc_steps:.0f}%) |"]
 
 
 def run_montage(a) -> int:
     from datetime import datetime
 
+    from aimo.buyer.costs import ledger_rows, summarize
     from aimo.buyer.need import HELSINKI
     started = datetime.now(HELSINKI)
     results = []
@@ -318,7 +316,8 @@ def run_montage(a) -> int:
             r = {"status": "error", "error": f"{type(e).__name__}: {e}"[:300], "steps": [], "scenario": name,
                  "customer_id": sc["customer"], "latency_s": 0, "run_id": ""}
         results.append((name, r))
-    ledger = _ledger_totals({r.get("run_id") for _, r in results if r.get("run_id")})
+    run_ids = {r.get("run_id") for _, r in results if r.get("run_id")}
+    ledger = _ledger_by_run(run_ids)
     rows = []
     print(c("\n== Montage verdicts ==", "b"))
     for name, r in results:
@@ -326,18 +325,26 @@ def run_montage(a) -> int:
         lg = ledger.get(r.get("run_id"), {})
         rows.append((name, r, ok, why, lg))
         print(f"{c('PASS', 'green') if ok else c('FAIL', 'red')}  {name:16s} {why}  "
-              f"[{r.get('latency_s')} s, {lg.get('calls', 0)} Gemini calls, "
-              f"{lg.get('in', 0) + lg.get('out', 0) + lg.get('thinking', 0):,} tokens]")
-    tot = {k: sum(lg.get(k, 0) for *_, lg in rows) for k in ("calls", "in", "out", "thinking", "gemini_s")}
+              f"[{r.get('latency_s')} s, {lg.get('calls', 0)} Gemini calls, {lg.get('in', 0):,} in "
+              f"({lg.get('cached', 0):,} cached), ${lg.get('cost_usd', 0):.4f}]")
+    tot = summarize(ledger_rows(run_ids=run_ids))
+    orders = sum(1 for _, r, *_ in rows if r.get("status") == "placed")
     wall = sum(r.get("latency_s") or 0 for _, r, *_ in rows)
-    print(c(f"Total: {tot['calls']} Gemini calls, {tot['in']:,} in / {tot['out']:,} out / {tot['thinking']:,} thinking "
-            f"tokens, {tot['gemini_s']:.1f} s in Gemini, {wall:.1f} s wall clock", "b"))
-    _write_montage(a.montage_out, started, a, rows, tot, wall)
+    base = None
+    if a.baseline_pid:
+        brows = ledger_rows(pid=a.baseline_pid)
+        if brows:
+            base = summarize(brows)
+    print(c(f"Total: {tot['calls']} Gemini calls, {tot['in']:,} in ({tot['cached']:,} cached) / {tot['out']:,} out / "
+            f"{tot['thinking']:,} thinking tokens, ${tot['cost_usd']:.4f} = ${tot['cost_usd'] / max(orders, 1):.4f} per "
+            f"order ({orders} orders), escalated {tot['escalated_runs']}/{len(run_ids)} runs, {wall:.1f} s wall clock", "b"))
+    _write_montage(a.montage_out, started, a, rows, tot, wall, orders, len(run_ids), base)
     print(c(f"Wrote {a.montage_out}", "dim"))
     return 0 if all(ok for _, _, ok, _, _ in rows) else 1
 
 
-def _write_montage(path: str, started, a, rows, tot, wall) -> None:
+def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -> None:
+    from aimo.buyer.costs import CACHED_FRACTION, PRICES_PER_M
     kinds = {r.get("transport") for _, r, *_ in rows}
     out = [
         "# Demo montage results",
@@ -348,20 +355,35 @@ def _write_montage(path: str, started, a, rows, tot, wall) -> None:
         f"{'off' if a.no_escalate else 'on (gemini-4-hydrogen, HIGH)'}. Every number below comes from this run "
         "(agent results plus the Gemini usage ledger, data/gemini/ledger).",
         "",
-        "| Scenario | Customer | Verdict | Outcome | Wall s | Gemini calls | Tokens in / out / thinking |",
-        "|---|---|---|---|---|---|---|",
+        "| Scenario | Customer | Verdict | Outcome | Wall s | Gemini calls | Tokens in (cached) / out / thinking | Cost USD |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for name, r, ok, why, lg in rows:
         out.append(f"| {name} | {r.get('customer_id')} | {'PASS' if ok else 'FAIL'} | {why.replace('|', '/')} | "
-                   f"{r.get('latency_s')} | {lg.get('calls', 0)} | {lg.get('in', 0):,} / {lg.get('out', 0):,} / {lg.get('thinking', 0):,} |")
-    out += ["", f"**Total:** {tot['calls']} Gemini calls; {tot['in']:,} input, {tot['out']:,} output and "
-                f"{tot['thinking']:,} thinking tokens; {tot['gemini_s']:.1f} s inside Gemini calls; {wall:.1f} s wall clock "
-                "(includes the simulated approver's 3 s delay per approval).", "",
-            "Requests:", ""]
+                   f"{r.get('latency_s')} | {lg.get('calls', 0)} | {lg.get('in', 0):,} ({lg.get('cached', 0):,}) / "
+                   f"{lg.get('out', 0):,} / {lg.get('thinking', 0):,} | ${lg.get('cost_usd', 0):.4f} |")
+    out += ["", f"**Total:** {tot['calls']} Gemini calls; {tot['in']:,} input ({tot['cached']:,} served from Gemini's implicit "
+                f"cache), {tot['out']:,} output and {tot['thinking']:,} thinking tokens; {tot['gemini_s']:.1f} s inside Gemini "
+                f"calls; {wall:.1f} s wall clock (includes the simulated approver's 3 s delay per approval).", "",
+            "## Cost per order and escalation", "",
+            "| Run | Runs | Orders placed | Gemini calls | Input tokens per run | Cached share | Total cost | Cost per run | "
+            "Cost per order | Escalated to gemini-4-hydrogen |",
+            "|---|---|---|---|---|---|---|---|---|---|"]
+    if base is not None:
+        # The round-2 montage placed 5 orders out of 6 runs (drift is held by design).
+        out += _cost_block(f"Before token trim (round 2 montage, ledger pid {a.baseline_pid})", base,
+                           a.baseline_orders, base["runs"])
+    out += _cost_block("This run" + (" (after token trim)" if base is not None else ""), tot, orders, runs)
+    prices = ", ".join(f"{m} ${p[0]:g} / ${p[1]:g}" for m, p in PRICES_PER_M.items())
+    out += ["", f"Cost = fresh input x input price + cached input x {CACHED_FRACTION:.0%} of input price + "
+                f"(output + thinking) x output price. Prices per 1M tokens (input / output, team Gemini playbook): {prices}. "
+                "The cached-token discount is the playbook's \"about 5-10%\"; we use the conservative 10%. "
+                "Covers every buyer Gemini call (parse, agent steps, explanation, summary); the catalog's and trust's "
+                "own Gemini calls are not included.", "", "Requests:", ""]
     for name, r, *_ in rows:
         sc = SCENARIOS[name]
         f = f" (faults `{sc['faults']}`)" if sc.get("faults") else ""
-        out.append(f"- **{name}**: \"{sc['text']}\"{f}")
+        out.append(f"- **{name}** (`{r.get('run_id')}`): \"{sc['text']}\"{f}")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as fh:
         fh.write("\n".join(out) + "\n")

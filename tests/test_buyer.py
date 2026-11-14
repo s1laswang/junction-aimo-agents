@@ -205,7 +205,9 @@ def test_one_order_per_run_and_reject_blocks_retry():
     r = agent.run(HERO)
     assert r["status"] == "rejected"
     assert sum(1 for n, _ in gw.calls if n == "place_order") == 1
-    assert any(s.kind == "tool_call" and "blocked" in s.title for s in agent.steps)
+    # the loop ends once the order is final; the guard would also refuse any further order or quote
+    assert "__blocked__" in agent._guard_args("place_order", {"quote_id": "x", "quote_hash": "y"})
+    assert "__blocked__" in agent._guard_args("create_quote", {"lines": []})
 
 
 def test_quote_lines_always_equal_plan_lines():
@@ -226,6 +228,21 @@ def test_quote_lines_always_equal_plan_lines():
     quoted = [(l["product_id"], l["qty_sales_units"]) for l in r["quote"]["lines"]]
     assert quoted == plan_lines == [("464306", 1000)]
     assert any(s.kind == "thought" and "corrected to the planner" in s.title for s in agent.steps)
+
+
+def test_compact_plan_for_model_keeps_decision_data():
+    from aimo.buyer.agent import compact_for_model
+    gw = FakeGateway()
+    plan = gw.plan_need({"customer_id": "hotel-aurora", "product_query": "lactose-free milk", "quantity": 1000,
+                         "unit": "L", "delivery_by": "2026-11-16", "required_claims": ["FREE_FROM_LACTOSE"],
+                         "preferred_product_ids": ["463038"]})
+    plan["candidates"] = plan["candidates"] * 5  # 20 candidates
+    c = compact_for_model("plan_need", plan)
+    assert [(l["product_id"], l["qty_sales_units"]) for l in c["lines"]] == \
+           [(l["product_id"], l["qty_sales_units"]) for l in plan["lines"]]
+    tiers = [x["tier"] for x in c["candidates_top3_per_tier"]]
+    assert all(tiers.count(t) <= 3 for t in set(tiers)) and c["candidates_total"] == 20
+    assert len(str(c)) < len(str(plan)) / 3
 
 
 def test_drift_holds_order():
