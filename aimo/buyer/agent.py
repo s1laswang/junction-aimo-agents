@@ -129,6 +129,19 @@ def compact_for_model(name: str, result: Any) -> Any:
     return result
 
 
+def short_description(desc: str, limit: int = 320) -> str:
+    """Tool descriptions are sent on every step. Keep the first paragraph (MCP docstrings add Args/
+    Returns sections that duplicate the parameter schema), cut at a sentence end within `limit`."""
+    d = (desc or "").strip()
+    d = re.split(r"\n\s*\n|\n\s*(?:Args|Returns|Parameters):", d, maxsplit=1)[0]
+    d = re.sub(r"\s+", " ", d).strip()
+    if len(d) <= limit:
+        return d
+    cut = d[:limit]
+    end = max(cut.rfind(". "), cut.rfind("; "))
+    return cut[: end + 1] if end > limit // 2 else cut.rstrip() + "…"
+
+
 def _short(x: Any, n: int = 140) -> str:
     s = json.dumps(x, ensure_ascii=False, default=str) if not isinstance(x, str) else x
     return s if len(s) <= n else s[: n - 1] + "…"
@@ -173,6 +186,7 @@ class BuyerAgent:
         self.quote: Optional[dict] = None
         self.order: Optional[dict] = None
         self.orders_submitted = 0
+        self.done = False
         self.blocked = False
         self.drift: Optional[dict] = None
         self.tool_failures: dict[str, int] = {}
@@ -269,7 +283,7 @@ class BuyerAgent:
         from google.genai import types
         decls = []
         for spec in self.t.list_tools():
-            decls.append(types.FunctionDeclaration(name=spec.name, description=spec.description[:1000],
+            decls.append(types.FunctionDeclaration(name=spec.name, description=short_description(spec.description),
                                                    parameters_json_schema=to_gemini_schema(spec.input_schema)))
         tools = [types.Tool(function_declarations=decls)]
         contents: list[Any] = [types.Content(role="user", parts=[types.Part(text=task)])]
@@ -329,6 +343,10 @@ class BuyerAgent:
                 responses.append(types.Part(function_response=types.FunctionResponse(
                     id=getattr(fc, "id", None), name=fc.name, response=payload)))
             contents.append(types.Content(role="user", parts=responses))
+            if self.done:
+                # The order reached a final state (or was held). buyer.summary writes the buyer-facing
+                # text from the facts, so one more agent turn (~9k input tokens) would add nothing.
+                break
         else:
             self.emit("error", f"Max steps ({self.max_steps}) reached", max_steps=self.max_steps)
         return final_text
@@ -340,6 +358,7 @@ class BuyerAgent:
             msg = args["__blocked__"]
             self.emit("tool_call", f"{name} (blocked by harness)", name=name, blocked=msg, **meta)
             if name == "place_order" and self.drift:
+                self.done = True
                 self.emit("decision", "Held for human confirmation: standing-order drift",
                           status="needs_confirmation", quote_id=(self.quote or {}).get("quote_id"),
                           decision={"outcome": "needs_confirmation", "approver_role": "buyer",
@@ -571,6 +590,7 @@ class BuyerAgent:
                 self.emit("order", f"Order {result['order_id']} rejected by policy", order=result)
             else:
                 self.emit("order", f"Order {result['order_id']}: {result.get('status')}", order=result)
+            self.done = True  # one order per request: nothing left for the model to do
         return result
 
     def _wait_for_approval(self, order: dict) -> dict:
@@ -610,13 +630,9 @@ class BuyerAgent:
                      for k in ("product_query", "quantity", "unit", "delivery_by", "required_claims",
                                "excluded_allergens", "preferred_product_ids")},
             "lines": [{k: l.get(k) for k in ("product_id", "product_name", "tier", "qty_sales_units", "sales_unit",
-                                             "covered_amount", "unit_price", "line_total", "reasons", "flags")}
-                      for l in plan.get("lines", [])],
-            "candidates": [{"id": c.get("product", {}).get("id"), "name": c.get("product", {}).get("name"),
-                            "tier": c.get("tier"), "reasons": c.get("reasons"), "flags": c.get("flags"),
-                            "unit_price": (c.get("offer") or {}).get("unit_price"),
-                            "available_amount": (c.get("offer") or {}).get("available_amount")}
-                           for c in plan.get("candidates", [])[:10]],
+                                             "covered_amount", "unit_price", "line_total", "flags")}
+                      | {"reasons": _rs(l.get("reasons"), 3, 140)} for l in plan.get("lines", [])],
+            "candidates": compact_for_model("plan_need", plan).get("candidates_top3_per_tier", [])[:8],
             "covered_amount": plan.get("covered_amount"), "shortfall": plan.get("shortfall"),
             "total_net": plan.get("total_net"),
         }
@@ -635,11 +651,15 @@ class BuyerAgent:
                                                       "no_order")
         facts = {
             "request": self.need.raw_text if self.need else "",
-            "needs": [x.model_dump(mode="json") for x in self.needs],
-            "plan_lines": (self.plan or {}).get("lines"), "shortfall": (self.plan or {}).get("shortfall"),
-            "quote": {k: (self.quote or {}).get(k) for k in ("quote_id", "total_net", "lines", "quote_hash")} if self.quote else None,
+            "needs": [_pick(x.model_dump(mode="json"), ("product_query", "quantity", "unit", "delivery_by",
+                                                         "required_claims", "excluded_allergens", "preferred_product_ids"))
+                      for x in self.needs],
+            "plan_lines": [{**_pick(l, ("product_id", "product_name", "tier", "qty_sales_units", "sales_unit", "line_total")),
+                            "reasons": _rs(l.get("reasons"), 2, 140)} for l in (self.plan or {}).get("lines", [])],
+            "shortfall": (self.plan or {}).get("shortfall"),
+            "quote": {k: (self.quote or {}).get(k) for k in ("quote_id", "total_net")} if self.quote else None,
             "order_status": status,
-            "policy_decision": (self.order or {}).get("decision"),
+            "policy_decision": (_compact_order(self.order) or {}).get("decision") if self.order else None,
             "approved_by": (self.order or {}).get("approved_by"),
             "approval_note": (self.order or {}).get("approval_note"),
             "drift_hold": self.drift,

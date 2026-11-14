@@ -205,7 +205,9 @@ def test_one_order_per_run_and_reject_blocks_retry():
     r = agent.run(HERO)
     assert r["status"] == "rejected"
     assert sum(1 for n, _ in gw.calls if n == "place_order") == 1
-    assert any(s.kind == "tool_call" and "blocked" in s.title for s in agent.steps)
+    # the loop ends once the order is final; the guard would also refuse any further order or quote
+    assert "__blocked__" in agent._guard_args("place_order", {"quote_id": "x", "quote_hash": "y"})
+    assert "__blocked__" in agent._guard_args("create_quote", {"lines": []})
 
 
 def test_quote_lines_always_equal_plan_lines():
