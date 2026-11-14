@@ -187,9 +187,19 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
     relevance = relevance or {}
     inferred_allergens = inferred_allergens or {}
     top_hit = None
-    for pid, _s in sorted(relevance.items(), key=lambda x: -x[1]):
-        if pid in rows and set(need.required_claims) <= set(rows[pid].get("claims") or []):
-            top_hit = rows[pid]
+    # reference when there is no usual product: the most relevant row that itself passes the static
+    # hard constraints (claims, allergens, unit family); allergen-unsafe rows never set the type.
+    for strict in (True, False):
+        for pid, _s in sorted(relevance.items(), key=lambda x: -x[1]):
+            d0 = rows.get(pid)
+            if d0 is None or not set(need.required_claims) <= set(d0.get("claims") or []):
+                continue
+            if strict and (blocking(d0.get("allergens") or {}, need.excluded_allergens)
+                           or d0.get("content_unit") != need.unit):
+                continue
+            top_hit = d0
+            break
+        if top_hit is not None:
             break
     spec = reference_spec(need, rows, top_hit)
     prefs = set(need.preferred_product_ids)
@@ -228,9 +238,14 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         if cunit != need.unit:
             reject.append(f"sold by {cunit or 'unknown unit'}, need is in {need.unit}")
         ctypes = product_types(d)
+        type_note = None
         if spec.source != "none" and ctypes != spec.types:
             diff = sorted(ctypes ^ spec.types)
-            reject.append(f"different product type ({', '.join(diff)})")
+            if spec.source == "top_hit":
+                # the reference is only our best guess, not the customer's usual product: demote, never reject
+                type_note = f"different product type than the closest match ({', '.join(diff)})"
+            else:
+                reject.append(f"different product type ({', '.join(diff)})")
         if offer is not None:
             if offer.cutoff_passed:
                 flags.append("cutoff_passed")
@@ -262,6 +277,8 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         elif spec.source in ("top_hit", "none"):
             # no usual product on file: tier by how exactly the product matches the request
             tier = "best" if coverage >= 1.0 else ("better" if coverage >= 0.5 else "good")
+            if type_note:
+                tier = "good"
         elif same_brand and same_spec and same_cat:
             tier = "best"
         elif same_spec and same_cat:
@@ -278,7 +295,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         scratch.append(dict(pid=pid, d=d, offer=offer, content=content, cunit=cunit, cnote=cnote, reasons=reasons,
                             flags=flags, reject=reject, tier=tier, tier_if_ok=tier_if_ok, summary=summary,
                             same_brand=same_brand, same_fat=same_fat, same_org=same_org, same_cat=same_cat,
-                            coverage=coverage, spec_source=spec.source))
+                            coverage=coverage, spec_source=spec.source, type_note=type_note))
 
     # ---- scores (relative within the eligible set)
     eligible = [x for x in scratch if x["tier"] != "rejected"]
@@ -306,7 +323,8 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                 cover_s = min(1.0, cov)
                 if cov < 1.0 and x["tier"] != "rejected":
                     x["flags"].append("partial_stock")
-        x["score"] = round(0.5 * price_s + 0.2 * rel_s + 0.1 * co2_s + 0.1 * pack_s + 0.1 * cover_s, 4)
+        x["score"] = round(0.5 * price_s + 0.2 * rel_s + 0.1 * co2_s + 0.1 * pack_s + 0.1 * cover_s
+                           - (0.2 if x.get("type_note") else 0.0), 4)
         x["ppu"] = p
         x["reasons"].extend(_reasons(x, spec, need))
 
@@ -344,7 +362,8 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
         q = need.product_query
         r.append({"best": f"Exact match for '{q}' (no usual product on file)",
                   "better": f"Close match for '{q}' (most of the requested words)",
-                  "good": f"Partial match for '{q}'; meets the hard constraints"}[t])
+                  "good": f"Partial match for '{q}'; meets the hard constraints"}[t]
+                 + (f"; {x['type_note']}" if x.get("type_note") else ""))
     elif t == "preferred":
         r.append("Your usual product")
     elif t == "best":
