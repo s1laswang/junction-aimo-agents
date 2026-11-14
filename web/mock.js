@@ -26,6 +26,7 @@ const CUSTOMERS = [
   {
     customer_id: "hotel-aurora", name: "Hotel Aurora Helsinki", segment: "Hotel chain",
     agent_id: "hotel-aurora/buyer-1", policy_id: "hotel-aurora",
+    approvers: [{ id: "anna@hotel-aurora.example", name: "Anna Virtanen", role: "procurement_manager" }, { id: "mikko@hotel-aurora.example", name: "Mikko Laine", role: "general_manager" }],
     summary: [
       "Auto-approve up to €500 per order",
       "€500–5,000 needs the Procurement Manager; above €5,000 is rejected",
@@ -37,6 +38,7 @@ const CUSTOMERS = [
   {
     customer_id: "school-tampere", name: "Tampere school kitchens", segment: "Public school catering",
     agent_id: "school-tampere/buyer-1", policy_id: "school-tampere",
+    approvers: [{ id: "liisa@school-tampere.example", name: "Liisa Korhonen", role: "kitchen_manager" }, { id: "jari@school-tampere.example", name: "Jari Nieminen", role: "catering_director" }],
     summary: [
       "Excluded allergens: milk, nuts (hard block)",
       "Auto-approve up to €300; any substitution needs the Kitchen Manager",
@@ -47,6 +49,7 @@ const CUSTOMERS = [
   {
     customer_id: "hospital-meilahti", name: "Meilahti hospital catering", segment: "Hospital",
     agent_id: "hospital-meilahti/buyer-1", policy_id: "hospital-meilahti",
+    approvers: [{ id: "sara@hospital-meilahti.example", name: "Sara Lindqvist", role: "dietitian" }, { id: "olli@hospital-meilahti.example", name: "Olli Mäkinen", role: "procurement_manager" }],
     summary: [
       "Excluded allergen: gluten",
       "The Dietitian approves any substitution",
@@ -262,7 +265,7 @@ export async function createMockApi() {
       step("tool_call", name, { call_id, name, args });
       await sleep(latency);
       const r = await resultFn();
-      step("tool_result", name, { call_id, name, latency_ms: latency, ok: true, ...r });
+      step("tool_result", `${name}: ok`, { call_id, name, latency_s: latency / 1000, ok: true, ...r });
       return r;
     };
     const agent = AGENT(customer_id);
@@ -381,11 +384,12 @@ export async function createMockApi() {
       step("decision", "Policy verdict: auto-approved", { decision, order });
       await sleep(300);
       step("order", `Order ${order.order_id} placed: accepted (AP)`, { order });
-      step("final", "Done: order placed within the school's guardrails", { order_id: order.order_id });
+      step("final", "Done: placed", { order_id: order.order_id, status: "placed", summary: "150 L of Oddlygood oat drink ordered for Tue 17 Nov, auto-approved within the school's €300 limit. Three unsafe candidates and one prompt injection were caught on the way." });
       return;
     }
 
     step("error", "No mock script for this customer", { message: "Mock mode scripts hotel-aurora and school-tampere. Use the live gateway for hospital-meilahti." });
+    step("final", "Run ended", { status: "error", summary: "Nothing was ordered." });
   }
 
   return {
@@ -425,11 +429,12 @@ export async function createMockApi() {
       if (quote_hash !== quote.quote_hash) throw Object.assign(new Error("409 quote hash mismatch: the approval does not match the signed quote"), { status: 409 });
       if (new Date(quote.expires_at) < new Date()) throw Object.assign(new Error("410 quote expired: request a new quote"), { status: 410 });
       const who = `human:${approver || "approver"}`;
+      const roleText = (rec.decision.approver_role || "approver").replace(/_/g, " ");
       order.updated_at = iso();
       order.approved_by = approver;
       order.approval_note = note || null;
       if (decision === "approve") {
-        await audit(who, "order.approved", orderId, `${approver} (Procurement Manager) approved order ${orderId} for quote ${quote.quote_id}, bound to hash ${quote.quote_hash.slice(7, 19)}…${note ? ` Note: “${note}”` : ""}`, { quote_hash });
+        await audit(who, "order.approved", orderId, `${approver} (${roleText}) approved order ${orderId} for quote ${quote.quote_id}, bound to hash ${quote.quote_hash.slice(7, 19)}…${note ? ` Note: “${note}”` : ""}`, { quote_hash });
         order.status = "placed";
         order.response_code = "AP";
         order.response_lines = quote.lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: `Accepted for delivery ${quote.delivery_date === MON ? "Mon 16 Nov" : quote.delivery_date}` }));
@@ -444,9 +449,9 @@ export async function createMockApi() {
         setTimeout(() => {
           if (order.status === "placed") {
             s("order", `Order ${orderId} placed: accepted (AP)`, { order: structuredClone(order) });
-            s("final", "Done: 1,000 L lactose-free milk confirmed for Mon 16 Nov", { order_id: orderId });
+            s("final", "Done: placed", { order_id: orderId, status: "placed", summary: "1,000 L Valio Eila lactose-free semi-skimmed milk (1 L cartons) confirmed for Mon 16 Nov at €1,010.00 net, approved by the Procurement Manager against signed quote " + quote.quote_id + "." });
           } else {
-            s("final", "Stopped: the approver rejected the order", { order_id: orderId });
+            s("final", "Done: rejected", { order_id: orderId, status: "rejected", summary: "The approver rejected the order. Nothing was sent to the warehouse." });
           }
         }, 500);
       }

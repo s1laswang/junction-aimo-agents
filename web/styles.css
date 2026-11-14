@@ -184,6 +184,8 @@ details.mandate-d[open] > summary .more { display: none; }
 .tl-item.k-error { border-color: var(--bad-line); background: var(--bad-tint); }
 .tl-item.k-error .tl-icon { background: #fff; color: var(--bad); }
 .tl-item.k-final .tl-icon { background: var(--text); color: #fff; }
+.tl-item.k-warnstep { border-color: var(--warn-line); }
+.tl-item.k-warnstep .tl-icon { background: var(--warn-tint); color: var(--warn); }
 .tl-main { min-width: 0; display: flex; flex-direction: column; gap: var(--s1); }
 .tl-title { display: flex; gap: var(--s2); align-items: baseline; font-weight: 500; font-size: var(--fs-sm); }
 .tl-title .grow { line-height: 1.35; }
@@ -401,6 +403,8 @@ details.rejected-group[open] > summary .chev { transform: rotate(90deg); }
 .chain-node.human { border-color: var(--warn); color: var(--warn); border-radius: 50%; }
 .chain-node.system { border-color: var(--muted); color: var(--muted); }
 .chain-card { margin: 4px 0 var(--s2); padding: var(--s2) var(--s3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chain-card.broken { border-color: var(--bad); box-shadow: 0 0 0 2px var(--bad-tint); }
+.chain-card.broken::before { content: "Hash mismatch: this event was altered after it was signed"; color: var(--bad); font-size: var(--fs-xs); font-weight: 600; }
 .chain-card .who { font-size: var(--fs-xs); color: var(--muted); display: flex; gap: var(--s2); flex-wrap: wrap; align-items: baseline; }
 .chain-card .act { font: 500 var(--fs-xs) var(--mono); color: var(--accent-ink); }
 .chain-card .sum { font-size: var(--fs-md); }

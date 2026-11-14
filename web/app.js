@@ -33,7 +33,7 @@ const S = {
   decided: new Map(),          // order_id -> {order, quote, decision}
   selected: null,              // order_id
   deciding: null, decideError: null,
-  approver: "anna@aurora", note: "",
+  approver: "", note: "",
   sigs: new Map(),             // quote_hash -> {state, detail} | "pending"
   jwks: null,
   audit: { state: "idle", events: [], error: null, scope: "flow", verify: null, verifying: false },
@@ -66,6 +66,7 @@ async function boot() {
   refreshApprovals();
   // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
   if (params.get("autorun") === "1") startRun();
+  else if (params.get("tab")) setTab(params.get("tab"));
   if (!MOCK) setInterval(() => { if (S.tab === "approvals" && !S.deciding) refreshApprovals(true); }, 5000);
 }
 
@@ -113,8 +114,9 @@ function normCustomer(c) {
   return {
     id,
     name: c.name || c.display_name || id,
-    segment: c.segment || c.type || "",
-    agent_id: c.agent_id || m.agent_id || `${id}/buyer-1`,
+    segment: c.segment ? c.segment.charAt(0).toUpperCase() + c.segment.slice(1) : c.type || "",
+    agent_id: c.agent_id || m.agent_id || c.agents?.[0]?.agent_id || c.mandates?.[0]?.agent_id || `${id}/buyer-1`,
+    approvers: c.approvers || [],
     policy_id: c.policy_id || m.policy_id || id,
     scopes: m.scopes || c.scopes || null,
     summary: toLines(c.summary || c.policy_summary || c.rules || c.policy),
@@ -126,15 +128,17 @@ function selectCustomer(id) {
   S.customerId = id;
   const c = S.customers.find((x) => x.id === id);
   if (!S.textEdited && c) S.text = c.default_request || DEFAULT_REQ[id] || S.text;
-  S.approver = { "hotel-aurora": "anna@aurora", "school-tampere": "kitchen.manager@tampere", "hospital-meilahti": "dietitian@meilahti" }[id] || "approver";
+  S.approver = "";
   renderRequest();
 }
 
 // ================================================================== tabs
 function setTab(tab) {
-  S.tab = tab;
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
+  const changed = S.tab !== tab;
   for (const v of ["plan", "approvals", "audit"]) $(`view-${v}`).hidden = v !== tab;
+  if (changed) document.querySelector(".tab-body").scrollTop = 0;
+  S.tab = tab;
   if (tab === "audit") loadAudit();
   if (tab === "approvals") refreshApprovals(true);
 }
@@ -158,7 +162,7 @@ function renderRequest() {
       h("option", { value: x.id, selected: x.id === S.customerId }, x.name + (x.segment ? ` · ${x.segment}` : ""))));
   const mandate = S.customersState === "loading"
     ? h("div", { class: "mandate" }, h("div", { class: "skeleton", style: { height: "14px", width: "70%" } }), h("div", { class: "skeleton", style: { height: "14px", width: "50%" } }))
-    : c && h("details", { class: "mandate mandate-d", open: !S.run },
+    : c && h("details", { class: "mandate mandate-d", open: !S.run && c.summary.length <= 4 },
         h("summary", null, "Mandate ", h("b", null, c.agent_id), " under policy ", h("b", null, c.policy_id), h("span", { class: "more" }, `${c.summary.length} rules ›`)),
         c.summary.length ? h("ul", null, c.summary.map((s) => h("li", null, s))) : h("div", { class: "faint" }, "Policy summary not provided by /v1/customers."));
   if (S.run && !S.editing) {
@@ -235,8 +239,12 @@ function onStep(step) {
   if (d.decision) r.decision = d.decision;
   if (d.order) r.order = d.order;
   if (step.kind === "approval_wait") r.status = "waiting";
-  if (step.kind === "final") r.status = "done";
-  if (step.kind === "error") { r.status = "error"; r.error = d.message || step.title; }
+  if (step.kind === "decision" && !d.order && d.order_id) r.order = { ...(r.order || {}), order_id: d.order_id, status: d.status, quote_id: r.quote?.quote_id, decision: d.decision };
+  if (step.kind === "final") {
+    r.status = d.status === "error" ? "error" : "done";
+    if (r.status === "error") r.error = d.summary || step.title;
+  }
+  // `error` steps are non-fatal (a retry, a model fallback); only `final` ends the run.
 
   appendStep(step);
   if (d.need || step.kind === "plan" || step.kind === "decision" || step.kind === "error") renderPlan();
@@ -364,13 +372,14 @@ function excEls(d) {
 function toolItem(call, result) {
   const d = call.data || {};
   const rd = result?.data || {};
-  const failed = result && (rd.ok === false || rd.error);
+  const failed = result && (rd.ok === false || rd.error || (rd.result && typeof rd.result === "object" && !Array.isArray(rd.result) && rd.result.error));
+  const latMs = rd.latency_ms ?? (rd.latency_s != null ? rd.latency_s * 1000 : null);
   return h("li", { class: `tl-item k-tool ${failed ? "k-error" : ""}`, "data-seq": call.seq },
     h("span", { class: "tl-icon", title: "Tool call" }, "ƒ"),
     h("div", { class: "tl-main" },
       h("div", { class: "tl-title" },
         h("span", { class: "grow" }, h("span", { class: "tool-name" }, d.name || call.title)),
-        result ? (rd.latency_ms != null ? h("span", { class: "latency" }, `${num(rd.latency_ms, 0)} ms`) : null) : h("span", { class: "spinner", style: { width: "11px", height: "11px", color: "var(--accent)" } }),
+        result ? (latMs != null ? h("span", { class: "latency" }, `${num(latMs, 0)} ms`) : null) : h("span", { class: "spinner", style: { width: "11px", height: "11px", color: "var(--accent)" } }),
         h("span", { class: "tl-time" }, time(call.ts))),
       d.args ? h("div", { class: "tool-args" }, argSummary(d.args)) : null,
       result ? h("div", { class: "tl-text" }, rd.summary || rd.message || result.title || "Result received") : null,
@@ -396,10 +405,15 @@ function needChips(need) {
 function stepItem(step) {
   const d = step.data || {};
   const k = step.kind;
-  const cls = { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-error", final: "k-final" }[k] || "";
+  const cls = { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-warnstep", final: d.status === "error" ? "k-error" : "k-final" }[k] || "";
   const icon = { thought: "·", plan: "P", quote: "Q", decision: "§", approval_wait: "…", order: "✓", error: "!", final: "■" }[k] || "·";
   const body = [];
-  if (d.text) body.push(h("div", { class: "tl-text" }, d.text));
+  const ttl = String(step.title || "").replace(/…$/, "");
+  if (d.text && !(d.text.startsWith(ttl) && d.text.length < ttl.length + 20)) body.push(h("div", { class: "tl-text" }, d.text));
+  if (k === "final" && d.summary) body.push(h("div", { class: "tl-text", style: { color: "var(--text)" } }, d.summary));
+  if (d.drift) body.push(h("div", { class: "exc warn" }, h("b", null, "!"), h("div", null, h("b", null, "Unusual volume. "), h("span", { class: "exc-body" }, step.title))));
+  if (d.excerpt || /(flagged|suspected) (suspected )?prompt injection/i.test(step.title)) body.push(h("div", { class: "exc bad" }, h("b", null, "✕"), h("div", null, h("b", null, "Prompt injection flagged and redacted. "),
+    h("span", { class: "exc-body" }, d.excerpt ? `“${d.excerpt}”` : "", (d.reasons || []).length ? ` (${d.reasons.join("; ")})` : ""))));
   if (d.need) body.push(needChips(d.need));
   if (k === "plan") {
     const p = d.plan || d;
@@ -425,7 +439,7 @@ function stepItem(step) {
     body.push(h("div", { class: "row wrap" }, statusPill(o.status), o.response_code ? h("span", { class: `resp-code ${o.response_code}` }, o.response_code) : null,
       h("button", { class: "btn btn-quiet btn-sm", onclick: () => setTab("audit") }, "Audit trail →")));
   }
-  if (k === "error") body.push(h("div", { class: "tl-text" }, d.message || ""));
+  if (k === "error") body.push(h("div", { class: "tl-text" }, d.message || d.error || ""));
   body.push(...excEls(d));
   const extra = { ...d };
   delete extra.text; delete extra.need;
@@ -527,11 +541,13 @@ function candCard(c, p, inPlan) {
   if (line) { qtyLabel = "In plan"; qtyText = `${num(line.qty_sales_units)} ${line.sales_unit}`; totalText = eur(line.line_total); }
   else if (o.unit_price != null && prod.content_amount) {
     const full = Math.ceil(need.quantity / prod.content_amount);
-    const q = o.available_amount != null ? Math.min(full, o.available_amount) : full;
+    const q = o.available_amount != null && o.available_amount < 1e8 ? Math.min(full, o.available_amount) : full;
     qtyLabel = "If chosen"; qtyText = `${num(q, 0)} ${o.sales_unit || prod.sales_unit}`; totalText = eur(q * o.unit_price);
   } else { qtyLabel = "If chosen"; qtyText = "–"; totalText = "–"; }
   let coverCls = "";
-  let avail = o.available_amount != null ? `${num(o.available_amount, 0)} ${o.sales_unit || prod.sales_unit}` : o.cutoff_passed ? "cut-off passed" : o.available === false ? "not available" : "unknown";
+  // The mock API reports unlimited stock as a huge sentinel (e.g. 9999999999).
+  const unlimited = o.available_amount != null && o.available_amount >= 1e8;
+  let avail = unlimited ? "in stock" : o.available_amount != null ? `${num(o.available_amount, 0)} ${o.sales_unit || prod.sales_unit}` : o.cutoff_passed ? "cut-off passed" : o.available === false ? "not available" : "unknown";
   if (o.cutoff_passed || o.available === false) coverCls = "bad";
   else if (o.available_amount != null && prod.content_amount && o.available_amount * prod.content_amount < need.quantity) coverCls = "warn";
   const fact = (l, v, cls = "") => h("div", { class: "fact" }, h("span", { class: "l" }, l), h("span", { class: `v ${cls}`, title: v }, v));
@@ -653,11 +669,11 @@ function approvalDetail(it) {
   const dec = it.decision || o.decision;
   const pending = o.status === "pending_approval";
   const parts = [];
+  if (!pending) parts.push(orderResponse(o, q));
   if (dec) parts.push(verdictBanner(dec));
   if (q) parts.push(quoteCard(q, pending));
   else parts.push(h("div", { class: "exc warn" }, h("b", null, "!"), h("div", null, "The signed quote for this order could not be loaded. Approval is disabled until it can be checked.")));
   if (pending && q) parts.push(decisionForm(o, q));
-  if (!pending) parts.push(orderResponse(o, q));
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "16px" } }, parts);
 }
 
@@ -708,7 +724,15 @@ function sigState(q) {
 function decisionForm(o, q) {
   const busy = S.deciding === o.order_id;
   const role = roleLabel((o.decision || {}).approver_role || "approver");
-  const approver = h("input", { class: "input", id: "approver", value: S.approver, oninput: (e) => (S.approver = e.target.value), disabled: busy });
+  // Approver directory comes from /v1/customers (policy YAML); default to someone holding the required role.
+  const cust = S.customers.find((c) => c.id === o.customer_id);
+  const dir = cust?.approvers || [];
+  const needRole = (o.decision || {}).approver_role;
+  if (!S.approver) S.approver = (dir.find((a) => a.role === needRole) || dir[0] || {}).id || "";
+  const approver = dir.length
+    ? h("select", { class: "input", id: "approver", disabled: busy, onchange: (e) => (S.approver = e.target.value) },
+        dir.map((a) => h("option", { value: a.id, selected: a.id === S.approver }, `${a.name || a.id} · ${roleLabel(a.role)}`)))
+    : h("input", { class: "input", id: "approver", value: S.approver, placeholder: "name@company", oninput: (e) => (S.approver = e.target.value), disabled: busy });
   const note = h("textarea", { class: "input", id: "note", rows: 2, placeholder: "Optional, stored in the audit trail", oninput: (e) => (S.note = e.target.value), disabled: busy });
   note.value = S.note;
   const expired = new Date(q.expires_at) < new Date();
@@ -730,7 +754,8 @@ async function decide(o, q, decision) {
   S.decideError = null;
   renderApprovals();
   try {
-    const order = await api.decide(o.order_id, { decision, approver: S.approver.trim(), note: S.note.trim(), quote_hash: q.quote_hash });
+    const dirEntry = (S.customers.find((c) => c.id === o.customer_id)?.approvers || []).find((a) => a.id === S.approver);
+    const order = await api.decide(o.order_id, { decision, approver: S.approver.trim(), approver_role: dirEntry?.role || undefined, note: S.note.trim(), quote_hash: q.quote_hash });
     const dec = order.decision || o.decision;
     S.decided.set(order.order_id, { order, quote: q, decision: dec });
     if (S.run && S.run.order && S.run.order.order_id === order.order_id) { S.run.order = order; }
@@ -738,6 +763,7 @@ async function decide(o, q, decision) {
     S.selected = order.order_id;
     S.deciding = null;
     await refreshApprovals(true);
+    document.getElementById("order-response")?.scrollIntoView({ behavior: "smooth", block: "start" });
     loadAudit(true);
   } catch (e) {
     S.deciding = null;
@@ -746,16 +772,21 @@ async function decide(o, q, decision) {
   }
 }
 
+function approverName(customerId, id) {
+  const a = (S.customers.find((c) => c.id === customerId)?.approvers || []).find((x) => x.id === id);
+  return a ? `${a.name} (${roleLabel(a.role)}, ${a.id})` : id;
+}
+
 function orderResponse(o, q) {
   const placed = o.status === "placed" || o.status === "approved";
   const names = new Map((q?.lines || []).map((l) => [l.product_id, l.product_name]));
-  return h("div", { class: "card" },
+  return h("div", { class: "card", id: "order-response" },
     h("div", { class: "card-head" },
       h("h3", { class: "grow" }, placed ? "Order response" : "Order not placed"),
       statusPill(o.status),
       o.response_code ? h("span", { class: `resp-code ${o.response_code}`, title: "Peppol BIS order response code" }, o.response_code) : null),
     h("div", { class: "card-body sm" },
-      o.approved_by ? h("div", null, `${o.status === "rejected" ? "Rejected" : "Approved"} by `, h("strong", null, o.approved_by), ` · ${dayTime(o.updated_at)}`, o.approval_note ? ` · “${o.approval_note}”` : "") : h("div", { class: "muted" }, o.status === "placed" ? "Placed automatically within the mandate." : ""),
+      o.approved_by ? h("div", null, `${o.status === "rejected" ? "Rejected" : "Approved"} by `, h("strong", null, approverName(o.customer_id, o.approved_by)), ` · ${dayTime(o.updated_at)}`, o.approval_note ? ` · “${o.approval_note}”` : "") : h("div", { class: "muted" }, o.status === "placed" ? "Placed automatically within the mandate." : ""),
       !placed && o.status === "rejected" ? h("div", { class: "muted" }, "Nothing was sent to the warehouse. The agent was told the order was rejected.") : null),
     (o.response_lines || []).length ? h("table", { class: "t" },
       h("thead", null, h("tr", null, h("th", null, "Code"), h("th", null, "Product"), h("th", { class: "n" }, "Confirmed"), h("th", null, "Note"))),
@@ -891,7 +922,7 @@ function renderAudit() {
       return h("li", { class: `chain-ev ${linked ? "linked" : ""}` },
         h("div", { class: "chain-time", title: full(e.ts) }, time(e.ts), h("div", { class: "faint" }, `#${e.seq}`)),
         h("div", { class: "chain-rail" }, h("span", { class: `chain-node ${kind}`, title: kind }, glyph)),
-        h("div", { class: "chain-card" },
+        h("div", { class: `chain-card ${vr && !vr.ok && vr.broken_at === e.seq ? "broken" : ""}` },
           h("div", { class: "who" }, h("span", { class: "mono" }, e.actor), h("span", { class: "act" }, e.action), h("span", { class: "faint mono" }, shortHash(e.hash, 10))),
           h("div", { class: "sum" }, e.summary),
           hd));

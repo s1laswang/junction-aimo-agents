@@ -19,7 +19,7 @@ export function createLiveApi(base) {
       let detail = "";
       try {
         const j = await res.json();
-        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || j);
+        detail = j.message || (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || j));
       } catch { /* not json */ }
       const err = new Error(`${method} ${path} failed: ${res.status}${detail ? " · " + detail : ""}`);
       err.status = res.status;
@@ -58,7 +58,7 @@ export function createLiveApi(base) {
         if (seen.has(key)) return; // EventSource reconnects replay the stream
         seen.add(key);
         onStep(step);
-        if (step.kind === "final" || step.kind === "error") { close(); onEnd && onEnd(); }
+        if (step.kind === "final") { close(); onEnd && onEnd(); }
       };
       es.onmessage = handle;
       for (const k of [...KINDS, "step", "agent_step"]) es.addEventListener(k, handle);
