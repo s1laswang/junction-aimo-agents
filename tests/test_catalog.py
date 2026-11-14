@@ -1,5 +1,13 @@
+import os
+from pathlib import Path
+
+import pytest
+
 from aimo import catalog
 from aimo.models import Constraint
+
+DATA = Path(os.environ.get("AIMO_DATA_DIR", "data")) / "valio_aimo_junction26_product_data.json"
+pytestmark = pytest.mark.skipif(not DATA.exists(), reason="needs Valio product data")
 
 
 def test_loaded():
