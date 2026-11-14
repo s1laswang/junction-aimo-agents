@@ -242,6 +242,12 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
                     httpx.get(mcp_url, timeout=1.5)  # any HTTP status means something listens
                 return MCPTransport(mcp_url, headers=headers, timeout=60)  # create_quote re-fetches live prices; the mock API can be slow
             if k == "inproc":
+                if kind == "auto":
+                    from aimo import config
+                    if not (config.AIMO_API_KEY or config.OFFLINE):
+                        # no mock-API key: in-process tools would fail on every price call, so the
+                        # keyless demo goes to the clearly labelled FAKE gateway instead
+                        raise ToolError("AIMO_API_KEY not set (in-process gateway needs the Valio mock API)")
                 return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":
                 from aimo.buyer.fakes import FakeGateway

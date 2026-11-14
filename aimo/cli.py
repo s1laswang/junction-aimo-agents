@@ -44,6 +44,14 @@ def _build_catalog(gemini_builds: str = "background") -> None:
     except NotImplementedError:
         print("catalog store not implemented yet: using gateway fallback search")
         return
+    except FileNotFoundError as e:
+        print(
+            "warning: challenge catalog data is missing "
+            f"({e.filename or e}); the gateway still starts (UI, /healthz, "
+            "/.well-known, OpenAPI). Set AIMO_API_KEY in .env and rerun "
+            "`uv run aimo fetch-data` (or `uv run aimo serve`) to download it."
+        )
+        return
 
     missing = []
     try:

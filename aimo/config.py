@@ -29,5 +29,13 @@ GEMINI_REASONING_MODEL = os.environ.get("GEMINI_REASONING_MODEL", "gemini-4-hydr
 GEMINI_FAST_MODEL = os.environ.get("GEMINI_FAST_MODEL", "gemini-3.1-flash-lite")
 GEMINI_EMBED_MODEL = os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-2")
 
+# MCP spec revision this gateway speaks. Pinned to what the locked SDK (uv.lock: mcp 2.3.0) implements:
+# mcp_types.version.LATEST_PROTOCOL_VERSION = "2026-07-28" (stateless per-request envelope); clients on the
+# initialize handshake negotiate up to LATEST_HANDSHAKE_VERSION = "2025-11-25". tests/test_mcp_version.py
+# fails if an SDK upgrade changes either, so the pin and docs are updated on purpose, not by accident.
+MCP_SPEC_VERSION = "2026-07-28"
+MCP_HANDSHAKE_VERSION = "2025-11-25"
+MCP_SDK = "mcp 2.3.0 (python-sdk)"
+
 # Offline mode: no live mock API calls (uses cached responses in data/cache). For tests only.
 OFFLINE = os.environ.get("AIMO_OFFLINE", "0") == "1"

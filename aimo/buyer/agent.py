@@ -175,6 +175,15 @@ class BuyerAgent:
         self.approval_timeout_s, self.poll_s = approval_timeout_s, poll_s
         self._generate = generate_fn
         self.use_gemini_parse = use_gemini_parse
+        self.mock = False
+        if generate_fn is None:
+            from aimo.buyer.mock_model import MOCK_MODEL_NAME, MockModel, mock_wanted
+            if mock_wanted():  # no Gemini key: scripted replay through the real harness, clearly labelled
+                self.mock = True
+                self._generate = MockModel(self)
+                self.use_gemini_parse = False
+                self.model = self.reasoning_model = MOCK_MODEL_NAME
+                self.escalate = False
         self.explain_enabled = explain
         self.answer_fn = answer_fn          # question dict -> {"option_id"|"text"} or None (no answer)
         self.clarify_enabled = clarify
@@ -254,8 +263,11 @@ class BuyerAgent:
         now = (self.now or now_helsinki()).astimezone(HELSINKI)
         self.emit("thought", "Received purchasing request", text=text, customer_id=self.customer_id,
                   agent_id=self.agent_id, transport=getattr(self.t, "kind", "?"), model=self.model,
-                  thinking=self.thinking, has_image=bool(self.image))
-        if self.image:
+                  thinking=self.thinking, has_image=bool(self.image), mock=self.mock)
+        if self.mock:
+            from aimo.buyer.mock_model import MOCK_LABEL
+            self.emit("thought", f"{MOCK_LABEL} Running the demo without Gemini", mock=True)
+        if self.image and not self.mock:
             text = self._read_image(text, now)
         t = time.time()
         self.needs = parse_request(text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
@@ -759,7 +771,7 @@ class BuyerAgent:
         return self.result(summary, status=status)
 
     def result(self, summary: str, status: str) -> dict:
-        return {"run_id": self.run_id, "status": status, "summary": summary,
+        return {"run_id": self.run_id, "status": status, "summary": summary, "mock": self.mock,
                 "need": self.need.model_dump(mode="json") if self.need else None, "needs": [x.model_dump(mode="json") for x in self.needs],
                 "quote": self.quote, "order": self.order, "plan": self.plan,
                 "latency_s": round(time.time() - self.t0, 2), "models_used": self.models_used, "clarifications": self.clarifications,

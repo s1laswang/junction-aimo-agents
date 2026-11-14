@@ -224,6 +224,9 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
              "fake": "FAKE offline gateway (aimo.buyer.fakes; not real data)"}[kind]
     print(c(f"  tools via {label}: {', '.join(t.name for t in transport.list_tools())}\n",
             "red" if kind == "fake" else "dim"))
+    from aimo.buyer.mock_model import MOCK_LABEL, mock_wanted
+    if mock_wanted():
+        print(c(f"  {MOCK_LABEL}\n  Set GEMINI_API_KEY in .env for the real Gemini agent.\n", "red"))
 
     if approver:
         if gw is not None:

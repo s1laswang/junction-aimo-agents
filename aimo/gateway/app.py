@@ -213,6 +213,16 @@ def build_router() -> APIRouter:
     def get_order(order_id: str):
         return service.get_order(order_id)
 
+    @r.get("/v1/orders/{order_id}/peppol-order-response.xml", tags=["orders"], responses=ERR,
+           summary="Peppol BIS Advanced Ordering 3.0 Order Response Advanced (T116, UBL 2.3) for the order",
+           response_class=PlainTextResponse)
+    def get_order_peppol(order_id: str):
+        """AP/CA/RE from placement; AB while the order waits for approval. Party ids are placeholders.
+        Checked against the UBL 2.3 XSD and the PEPPOL-T116 rules in tests, not the full Peppol schematron."""
+        from aimo.backend.peppol import order_response_xml
+        o = service.get_order(order_id)
+        return PlainTextResponse(order_response_xml(o, service.get_quote(o.quote_id)), media_type="application/xml")
+
     # ---------------------------------------------------------- approvals
     @r.get("/v1/approvals", tags=["approvals"], summary="Approval inbox")
     def approvals(
