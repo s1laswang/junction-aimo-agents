@@ -247,6 +247,55 @@ function hospitalScenario(text) {
   return { need, plan, decision, P };
 }
 
+// ------------------------------------------------------------------ Swarm C fixtures
+// Recipes list and the salmon-soup plan are copied from a live POST /v1/recipes/plan (120 portions, lactose-free,
+// hotel-aurora, Sat 14 Nov). Drift flags are copied from live GET /v1/drift (the gateway's seeded 8-week demo history).
+const RECIPES = [
+  ["salmon-soup", "salmon soup", "lohikeitto"], ["karelian-stew", "karelian stew", "karjalanpaisti"], ["macaroni-casserole", "macaroni casserole", "makaronilaatikko"],
+  ["pancakes", "pancakes", "pannukakku"], ["oat-porridge", "oat porridge", "kaurapuuro"], ["lasagne", "lasagne", "lasagne"], ["salad-bar", "salad bar", "salaattipöytä"],
+  ["meatballs-and-mashed-potatoes", "meatballs and mashed potatoes", "lihapullat ja perunamuusi"], ["creamy-chicken-pasta", "creamy chicken pasta", "kermainen kanapasta"],
+  ["rice-porridge", "rice porridge", "riisipuuro"], ["carbonara", "carbonara", "carbonara"],
+].map(([id, name, name_fi]) => ({ id, name, name_fi, aliases: [name, name_fi], ingredients: id === "salmon-soup" ? [
+  { query: "salmon fillet", per_portion: 50, unit: "g" }, { query: "potato", per_portion: 100, unit: "g" }, { query: "carrot", per_portion: 30, unit: "g" },
+  { query: "leek", per_portion: 20, unit: "g" }, { query: "cooking cream", per_portion: 60, unit: "ml" }, { query: "milk", per_portion: 100, unit: "ml" },
+  { query: "dill", per_portion: 2, unit: "g" }, { query: "butter", per_portion: 5, unit: "g" }] : [], note: "Illustrative per-cover quantities" }));
+
+const SALMON = [ // ingredient, qty per 120 portions, unit, swap?, [product_id, name, sales_unit, content per unit, unit price]
+  ["salmon fillet", 6.0, "KG", null, ["462150", "SALMON FILLET C-CUT", "KG", 1, 14.11]],
+  ["potato", 12.0, "KG", null, ["471970", "PP POTATO 1KG ANNABELLE", "ST", 1, 0.76]],
+  ["carrot", 3.6, "KG", null, null],
+  ["leek", 2.4, "KG", null, ["475688", "Westfro leek slices 6mm 2,5kg frozen", "KI", 2.5, 3.62]],
+  ["cooking cream", 7.2, "L", { rule: "cream", query: "lactose-free cooking cream", ratio: 1, why: "same fat content, lactose free" }, ["469162", "Valio cooking cream alternative 15 % 1 l", "ST", 1, 1.79]],
+  ["milk", 12.0, "L", { rule: "milk", query: "lactose-free milk", ratio: 1, why: "same recipe, lactose free" }, ["464306", "Valio Hyvä suomalainen Arki® Eila® semi skimmed milk drink 1 l lactose free", "ST", 1, 1.01]],
+  ["dill", 0.24, "KG", null, ["468087", "CROWN DILL 500G", "ST", 0.5, 2.8]],
+  ["butter", 0.6, "KG", { rule: "butter", query: "lactose-free butter", ratio: 1, why: "same fat, lactose free" }, ["463437", "Valio Eila® butter 500 g salted lactose free", "ST", 0.5, 3.31]],
+];
+function salmonPlan(portions, delivery, customer_id, lactose) {
+  const k = portions / 120;
+  const ingredients = SALMON.map(([ingredient, q, unit, swap, prod]) => {
+    const quantity = Math.round(q * k * 100) / 100;
+    const sw = lactose ? swap : null;
+    const lines = prod ? [{ product_id: prod[0], product_name: prod[1], tier: "best", qty_sales_units: Math.ceil(quantity / prod[3]), sales_unit: prod[2], covered_amount: Math.ceil(quantity / prod[3]) * prod[3], unit_price: prod[4], line_total: Math.round(Math.ceil(quantity / prod[3]) * prod[4] * 100) / 100, reasons: [], flags: [] }] : [];
+    return { ingredient, query: sw ? sw.query : ingredient, quantity, unit, swap: sw, plan: { lines, shortfall: prod ? 0 : quantity, total_net: lines.reduce((a, l) => a + l.line_total, 0) } };
+  });
+  const total = Math.round(ingredients.reduce((a, i) => a + i.plan.total_net, 0) * 100) / 100;
+  const swaps = ingredients.filter((i) => i.swap).map((i) => ({ ingredient: i.ingredient, to: i.swap.query, ratio: 1, why: i.swap.why, rule: i.swap.rule }));
+  return {
+    recipe: RECIPES[0], customer_id, delivery_by: delivery, excluded_allergens: lactose ? ["lactose"] : [], swaps, ingredients,
+    uncovered: [{ ingredient: "carrot", query: "carrot", shortfall: Math.round(3.6 * k * 100) / 100, unit: "KG", why: "No orderable candidate met the hard constraints for that date. What a human can do: re-plan for a later delivery date (cut-off-blocked products become orderable); broaden the product phrase or relax a non-safety preference." }],
+    total_net_estimate: total,
+    summary: `salmon soup x${portions} for ${customer_id}, delivery by ${delivery}: 8 ingredient(s), 7 fully covered, 7 product line(s), est. €${total.toFixed(2)} net${swaps.length ? `; swaps: ${swaps.map((x) => `${x.ingredient} -> ${x.to}`).join("; ")}` : ""}; NOT covered: carrot.`,
+    quote_request: { customer_id, delivery_date: delivery, lines: ingredients.flatMap((i) => i.plan.lines.map((l) => ({ product_id: l.product_id, qty_sales_units: l.qty_sales_units }))) },
+    provenance: { source: "mock (copied from a live plan)" },
+  };
+}
+
+const DRIFT = {
+  "hotel-aurora": { customer_id: "hotel-aurora", delivery_date: "2026-11-19", flags: [{ product_id: "460396", kind: "availability", change_pct: null, route: "approval", message: "Milk cannot be delivered as usual on Thu 19 Nov (order cut-off has passed). The standing order needs a substitute, a smaller quantity or a later date.", fix: { action: "replan" }, product_name: "Valio skimmed milk 10 l novobox" }] },
+  "school-tampere": { customer_id: "school-tampere", delivery_date: "2026-11-17", flags: [{ product_id: "470863", kind: "volume", change_pct: 25.0, before: 320, after: 400, route: "approval", message: "Oat drink volume crept up 25% over 8 weeks (320 → 400 units). Nobody decided this; confirm 400 units a week or go back to 320.", fix: { action: "confirm_qty", quantity: 320 }, product_name: "Oatly Oat Drink Semi 1L" }] },
+  "hospital-meilahti": { customer_id: "hospital-meilahti", delivery_date: "2026-11-16", flags: [{ product_id: "462775", kind: "availability", change_pct: null, route: "approval", message: "Lactose-free milk cannot be delivered as usual on Mon 16 Nov (only 51 of 74 units in stock). The standing order needs a substitute, a smaller quantity or a later date.", fix: { action: "replan" }, product_name: "Arla Milkdrink 1L lactose free fat free UHT" }] },
+};
+
 // ------------------------------------------------------------------ mock gateway
 export async function createMockApi() {
   let keyPair = null;
@@ -280,6 +329,21 @@ export async function createMockApi() {
 
   const quotes = new Map();
   const tampered = new Map(); // seq -> original summary
+  const session = { who: (() => { try { return sessionStorage.getItem("aimoMockApprover"); } catch { return null; } })(), handler: null };
+  async function ensureSignedIn() {
+    if (session.who) return;
+    if (session.handler) await session.handler();
+    if (!session.who) throw Object.assign(new Error("Approver sign-in cancelled."), { status: 401, code: "signin_cancelled" });
+  }
+  const learned = {};          // customer_id -> [{product_id, product_name, replaces_product_id, replaces_name, scope, approved_by, approved_at}]
+  const proposals = [];
+  const REQUOTE = new URLSearchParams(location.search).get("requote") === "1";
+  // Seeded attack attempts so the ops feed has something to show before the first run (clearly mock).
+  setTimeout(() => {
+    audit("agent:hotel-aurora/buyer-2", "order.refused", "Q-SEEDED1", "Agent hotel-aurora/buyer-2 tried to submit quote Q-SEEDED1, which buyer-1 obtained: refused (agent_mismatch). No order was created.", { error: "agent_mismatch", seeded: true });
+    audit("agent:school-tampere/mallory", "request.refused", "Q-SEEDED2", "Unregistered agent mallory asked for a quote for school-tampere: refused, no mandate (scope_missing).", { error: "scope_missing", seeded: true });
+    audit("agent:valio-aimo/seller-1", "proposal.accept_refused", "P-SEEDED1", "The seller agent tried to accept its own proposal P-SEEDED1 for hotel-aurora: refused (seller_cannot_order).", { error: "seller_cannot_order", seeded: true });
+  }, 0);
   const orders = new Map(); // order_id -> {order, quote, decision, run}
   const runs = new Map();   // run_id -> {emit, customer_id, ...}
 
@@ -325,6 +389,23 @@ export async function createMockApi() {
     await audit(agent, "run.started", run_id, `Buyer agent ${customer_id}/buyer-1 started a run: “${text}”`, { model: run.model, thinking: run.thinking });
     step("thought", "Reading the request and the customer mandate", { text: `Customer ${customer_id}, agent ${customer_id}/buyer-1, policy ${customer_id}. Model ${run.model}, thinking ${run.thinking}.` });
     await sleep(700);
+
+    if (customer_id === "hotel-aurora" && run.image) {
+      await tool("read_photo", { image: run.image.name || "photo.jpg" }, 1840, () => ({ summary: "2 lines read from the photo" }));
+      step("extracted_lines", "Read 2 lines from the photo", { model: "gemini-3.8-flash (vision)", extracted_lines: [
+        { text: "Laktoositon maito 1000 l — ma", product_query: "lactose-free milk", quantity: 1000, unit: "L", confidence: 0.94 },
+        { text: "kahvi ?", product_query: "coffee", quantity: null, unit: null, confidence: 0.41, unclear: true },
+      ] });
+      await sleep(600);
+      step("needs_clarification", "One line on the photo is unclear", {
+        question: "The note also says “kahvi ?”. Should I add coffee to this order?",
+        why: "Unclear lines are never guessed. Your usual coffee is Paulig Presidentti Tumma Paahto, 3 cases a week.",
+        options: [{ id: "skip", label: "No, only the milk" }, { id: "usual", label: "Add the usual coffee (3 cases)" }], free_text: true,
+      });
+      const ans = await new Promise((res) => (run.answer = res));
+      step("thought", `Answer received: ${ans.option_id === "usual" ? "add the usual coffee" : ans.option_id === "skip" ? "only the milk" : ans.text}`, { text: ans.option_id === "usual" ? "Coffee will be planned as a separate order after the milk." : "Continuing with the milk only." });
+      await sleep(500);
+    }
 
     if (customer_id === "hotel-aurora") {
       const need = hotelNeed(text);
@@ -374,6 +455,11 @@ export async function createMockApi() {
       await sleep(700);
 
       const decision = hotelDecision();
+      const swap = (learned["hotel-aurora"] || []).find((x) => x.product_id === "464306" || (x.scope === "product_type" && x.product_type === "milk"));
+      if (swap) {
+        const i = decision.hits.findIndex((x) => x.rule_id === "substitution.pack");
+        decision.hits[i] = { rule_id: "substitution.learned", outcome: "allow", learned: true, message: `Allowed: you approved this swap on ${new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Helsinki", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(swap.approved_at))} (${swap.approved_by}): 1 L cartons instead of the 10 L Novobox.` };
+      }
       let order;
       await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 74, async () => {
         order = newOrder(quote, decision, "pending_approval");
@@ -500,10 +586,85 @@ export async function createMockApi() {
     base: "mock",
     links: { docs: "/docs", otap: "/.well-known/otap.json", jwks: "/.well-known/jwks.json", mcp: "/mcp" },
     customers: async () => { await sleep(150); return structuredClone(CUSTOMERS); },
-    async startRun({ text, customer_id, model, thinking }) {
+    // Approver sign-in (mock: any PIN works for a directory name or id; the live gateway checks the real PIN).
+    async signIn(who, pin) {
+      await sleep(250);
+      const a = CUSTOMERS.flatMap((c) => c.approvers).find((x) => x.id.toLowerCase() === String(who).toLowerCase() || x.name.toLowerCase() === String(who).toLowerCase());
+      if (!a) throw Object.assign(new Error("unknown approver"), { status: 404, code: "unknown_approver" });
+      if (!pin) throw Object.assign(new Error("PIN required"), { status: 401 });
+      session.who = a.id;
+      try { sessionStorage.setItem("aimoMockApprover", a.id); } catch { /* */ }
+      return { approver: a.id, session: "mock" };
+    },
+    signOut() { session.who = null; try { sessionStorage.removeItem("aimoMockApprover"); } catch { /* */ } },
+    signedInApprover: () => session.who,
+    setSignInHandler: (fn) => { session.handler = fn; },
+    voiceStatus: async () => ({ elevenlabs: false, tts: "browser", stt: "browser", intent: "rules", decides: false }),
+    async voicePrompt(orderId) {
+      await ensureSignedIn();
+      const rec = orders.get(orderId);
+      const q = rec.quote;
+      const l = q.lines[0];
+      return { order_id: orderId, quote_hash: q.quote_hash, tts: "browser",
+        text: `Approval request for ${CUSTOMERS.find((c) => c.id === rec.order.customer_id)?.name}: ${l.qty_sales_units} ${String(l.sales_unit).toLowerCase()} of ${l.product_name}${q.lines.length > 1 ? `, and ${q.lines.length - 1} more` : ""}. Total ${Math.round(q.total_net)} euros before VAT. Say approve, or reject. You will confirm on screen before anything is ordered.` };
+    },
+    async voiceIntent(orderId, transcript) {
+      await sleep(200);
+      const t = String(transcript || "");
+      const neg = /\b(don'?t|not|never|wait|hold|cancel)\b/i.test(t), a = /\b(approve|yes|ok|go ahead|confirm|hyväksy)/i.test(t), r = /\b(reject|decline|deny|hylkää)/i.test(t);
+      const intent = r && !a ? "reject" : a && !r && !neg ? "approve" : "unclear";
+      return { intent, confidence: intent === "unclear" ? 0.4 : 0.9, source: "rules", transcript: t, decides: false };
+    },
+    voiceTranscribe: async () => { throw Object.assign(new Error("No ElevenLabs in mock mode"), { status: 503 }); },
+    async startRun({ text, customer_id, model, thinking, image }) {
       const run_id = rid("run");
-      runs.set(run_id, { run_id, customer_id, text, model, thinking, buffer: [], listeners: new Set(), started: false });
+      runs.set(run_id, { run_id, customer_id, text, model, thinking, image, buffer: [], listeners: new Set(), started: false });
       return { run_id };
+    },
+    async answer(runId, body) {
+      await sleep(250);
+      const run = runs.get(runId);
+      if (!run?.answer) throw Object.assign(new Error("409 the run is not waiting for an answer"), { status: 409 });
+      const r = run.answer; run.answer = null; r(body);
+      return { ok: true };
+    },
+    async learned(customerId) { await sleep(80); return structuredClone(learned[customerId] || []); },
+    async recipes() { await sleep(120); return structuredClone(RECIPES); },
+    async planRecipe({ recipe_id, portions, delivery_by, customer_id, lactose_free }) {
+      await sleep(900);
+      if (!portions) throw Object.assign(new Error("400 portions required"), { status: 400, code: "portions_required" });
+      if (recipe_id !== "salmon-soup") throw Object.assign(new Error("Mock mode plans salmon soup only. Use the live gateway for the other dishes."), { status: 501 });
+      return salmonPlan(Number(portions), delivery_by || MON, customer_id || "hotel-aurora", !!lactose_free);
+    },
+    async drift(customerId) { await sleep(200); if (!DRIFT[customerId]) throw Object.assign(new Error("404 no standing order"), { status: 404 }); return structuredClone(DRIFT[customerId]); },
+    async proposals() { await sleep(100); return structuredClone(proposals).reverse(); },
+    async propose(customerId) {
+      await sleep(600);
+      if (customerId !== "hotel-aurora") throw Object.assign(new Error("no better offer"), { status: 404, code: "no_better_offer", body: { detail: { notes: ["the usual items are already the best offers found for that date"] } } });
+      const prop = { proposal_id: rid("P"), customer_id: customerId, seller_id: "valio-aimo/seller-1", kind: "cheaper_equivalent", status: "proposed", created_at: iso(),
+        product: { product_id: "464306", name: "Valio Hyvä suomalainen Arki® Eila® semi skimmed milk drink 1 l lactose free" }, replaces: { product_id: "464398", name: "Valio Eila® semi skimmed milk drink 1 l UHT lactose free" },
+        qty_sales_units: 300, why: ["Same brand and spec, fresh instead of UHT, €0.64/L cheaper (ILLUSTRATIVE mock numbers)"], estimated_saving_eur: 192.0,
+        policy_preview: { binding: false, outcome: "needs_approval", approver_role: "procurement_manager", hits: [] }, seller_can_order: false };
+      proposals.push(prop);
+      await audit("agent:valio-aimo/seller-1", "proposal.created", prop.proposal_id, `Seller agent proposed a cheaper equivalent to hotel-aurora: 300 × 464306 replacing 464398 (advisory, cannot order).`, {});
+      return structuredClone(prop);
+    },
+    async orderQuoteRequest(qr, customerId) {
+      await sleep(700);
+      const lines = qr.lines.map((l) => { const x = SALMON.find((r) => r[4]?.[0] === l.product_id)[4]; return { product_id: l.product_id, product_name: x[1], qty_sales_units: l.qty_sales_units, sales_unit: x[2], unit_price: x[4], line_total: Math.round(l.qty_sales_units * x[4] * 100) / 100, tier: "best", flags: [] }; });
+      const total = Math.round(lines.reduce((a, l) => a + l.line_total, 0) * 100) / 100;
+      const quote = await makeQuote(customerId, { need: { delivery_by: qr.delivery_date }, lines, total_net: total });
+      quote.need = null;
+      const auto = total <= 500;
+      const decision = { outcome: auto ? "auto_approve" : "needs_approval", approver_role: auto ? null : "procurement_manager", policy_id: customerId, policy_version: "2026-11-14.1",
+        hits: [{ rule_id: "spend", outcome: auto ? "allow" : "needs_approval", message: `The order total €${total.toFixed(2)} is ${auto ? "within" : "above"} the €500 auto-approve limit.` }] };
+      const order = newOrder(quote, decision, auto ? "placed" : "pending_approval");
+      if (auto) { order.response_code = "AP"; order.approved_by = `policy:${customerId}`; order.response_lines = lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: "" })); }
+      orders.set(order.order_id, { order, quote, decision, run: null });
+      await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id} for a recipe plan: ${lines.length} lines, €${total.toFixed(2)} net.`, {});
+      await audit("system:trust", "policy.evaluated", order.order_id, `Policy ${customerId}: ${auto ? "auto-approved" : "needs approval"} (€${total.toFixed(2)}).`, {});
+      if (auto) await audit("system:gateway", "order.placed", order.order_id, `Order ${order.order_id} placed. Order response AP.`, {});
+      return structuredClone({ quote, order });
     },
     streamRun(runId, onStep, onEnd) {
       const run = runs.get(runId);
@@ -517,19 +678,40 @@ export async function createMockApi() {
       }
       return () => run.listeners.delete(listener);
     },
-    async approvals(status = "pending") {
+    async approvals(status = "pending", opts = {}) {
       await sleep(120);
+      if (!session.who && opts.ask === false) throw Object.assign(new Error("Sign in as an approver to continue."), { status: 401, code: "signin_required" });
+      if (!session.who) await ensureSignedIn();
       return [...orders.values()]
         .filter(({ order }) => (status === "pending" ? order.status === "pending_approval" : true))
         .map(({ order, quote, decision }) => structuredClone({ order, quote, decision }));
     },
-    async decide(orderId, { decision, approver, note, quote_hash }) {
+    async decide(orderId, { decision, note, quote_hash, remember, remember_scope }) {
+      await ensureSignedIn();
+      const approver = session.who;
       await sleep(450);
       const rec = orders.get(orderId);
       if (!rec) throw Object.assign(new Error("404 order not found"), { status: 404 });
-      const { order, quote, run } = rec;
+      const { order, run } = rec;
       if (order.status !== "pending_approval") throw Object.assign(new Error(`409 order is ${order.status}`), { status: 409 });
+      // ?requote=1: prices moved since signing. The first approval is refused with a fresh signed quote to compare.
+      if (REQUOTE && decision === "approve" && !rec.fresh && quote_hash === rec.quote.quote_hash) {
+        const plan = { need: { delivery_by: rec.quote.delivery_date, ...(rec.quote.need || {}) }, lines: rec.quote.lines.map((l) => ({ ...l, unit_price: Math.round(l.unit_price * 1.06 * 100) / 100, line_total: Math.round(l.qty_sales_units * l.unit_price * 1.06 * 100) / 100 })) };
+        plan.total_net = Math.round(plan.lines.reduce((a, l) => a + l.line_total, 0) * 100) / 100;
+        rec.fresh = await makeQuote(order.customer_id, plan);
+        await audit("system:gateway", "quote.requote_needed", orderId, `Approval of ${orderId} not applied: the live price of 464306 moved from €1.01 to €1.07 since quote ${rec.quote.quote_id} was signed. New quote ${rec.fresh.quote_id} issued for €${plan.total_net.toFixed(2)}.`, {});
+        throw Object.assign(new Error("409 requote_needed"), { status: 409, code: "requote_needed", body: { error: "requote_needed", message: "The live price changed since this quote was signed.", detail: { new_quote: structuredClone(rec.fresh), order_id: orderId } } });
+      }
+      if (rec.fresh && quote_hash === rec.fresh.quote_hash) { rec.quote = rec.fresh; order.quote_id = rec.fresh.quote_id; order.quote_hash = rec.fresh.quote_hash; rec.fresh = null; }
+      const quote = rec.quote;
       if (quote_hash !== quote.quote_hash) throw Object.assign(new Error("409 quote hash mismatch: the approval does not match the signed quote"), { status: 409 });
+      if (remember && decision === "approve") {
+        const sub = quote.lines.find((l) => l.tier && l.tier !== "preferred") || quote.lines[0];
+        (learned[order.customer_id] = learned[order.customer_id] || []).push({ product_id: sub.product_id, product_name: sub.product_name, product_type: order.customer_id === "hotel-aurora" ? "milk" : null,
+          replaces_product_id: (quote.need?.preferred_product_ids || [])[0] || null, replaces_name: order.customer_id === "hotel-aurora" ? "Valio Eila 10 l Novobox (463038)" : null,
+          scope: remember_scope || "product", approved_by: approver, approved_at: iso() });
+        await audit(`human:${approver}`, "swap.learned", orderId, `${approver} chose “always allow this swap” (${remember_scope === "product_type" ? "any product of this type" : "this product"}): ${sub.product_name}.`, {});
+      }
       if (new Date(quote.expires_at) < new Date()) throw Object.assign(new Error("410 quote expired: request a new quote"), { status: 410 });
       const who = `human:${approver || "approver"}`;
       const roleText = (rec.decision.approver_role || "approver").replace(/_/g, " ");
