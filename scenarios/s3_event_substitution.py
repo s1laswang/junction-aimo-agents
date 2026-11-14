@@ -11,21 +11,35 @@ def _has_candidates(it):
     return bool(it.get("offers")) and bool(it.get("alternatives") or len(it["offers"]) > 1)
 
 
+def _candidate_key(it):
+    o0 = it["offers"][0]
+    s0 = o0.get("match_score")
+    alts = it.get("alternatives") or it["offers"][1:]
+    need_split = o0.get("units_needed", 0) > 1
+    all_lower = s0 is not None and bool(alts) and all((a.get("match_score") or 0) < s0 for a in alts)
+    any_lower = s0 is not None and bool(alts) and any((a.get("match_score") or 0) < s0 for a in alts)
+    return (not (need_split and all_lower), not (need_split and any_lower), not need_split)
+
+
 def run_scenario(c, r, day=None):
     day = day or next_delivery_day()
     r.say("last-minute event on the next delivery day: 400 portions of pasta carbonara, item short -> recipe-logic substitution")
     need = c.parse(f"Last-minute event on the next delivery day, we need pasta carbonara for 400 portions by {day}", "hotel-aurora")
     r.check("recipe expanded to ingredient lines", len(need["items"]) >= 3, f"{len(need['items'])} lines")
     offers = c.offers(need)
-    had_alts = any(_has_candidates(it) for it in offers["items"])
+    cands = sorted([it for it in offers["items"] if _has_candidates(it)], key=_candidate_key)
+    had_alts = bool(cands)
     simulated = False
     try:
         if not [o for it in offers["items"] for o in it["offers"] if is_substitute(o)]:
-            target = next((it for it in offers["items"] if _has_candidates(it)), None)
-            if target:
+            for idx, target in enumerate(cands):
+                if idx > 0:
+                    clear_simulation(c)
                 simulated = True
                 simulate(c, "stockout", product_id=target["offers"][0]["product_id"], available_amount=1)
                 offers = c.offers(need)
+                if [o for it in offers["items"] for o in it["offers"] if is_substitute(o)]:
+                    break
         short = [it for it in offers["items"] if it.get("shortfall", 0) > 0 or any(o.get("notes") for o in it["offers"])]
         covered = [it for it in offers["items"] if it["offers"]]
         r.check("offers or substitutes found for lines", len(covered) >= len(need["items"]) // 2, f"{len(covered)}/{len(need['items'])}")

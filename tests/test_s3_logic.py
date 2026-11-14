@@ -128,19 +128,31 @@ class FakeClient:
         raise AssertionError(f"unexpected {method} {path}")
 
 
+def _clear_common_cache():
+    for name in ("product_db", "_product_db"):
+        fn = getattr(_common, name, None)
+        if hasattr(fn, "cache_clear"):
+            fn.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def fake_product_db(tmp_path, monkeypatch):
-    p = tmp_path / "products.json"
-    p.write_text(json.dumps([
-        {"id": "p-pasta-1", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "UW", "unit": "CONTAINS"}]}]}},
-        {"id": "p-pasta-2", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "UW", "unit": "CONTAINS"}]}]}},
-        {"id": "p-bacon", "synkkaData": {"classifications": []}},
-        {"id": "p-eggs", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "AE", "unit": "CONTAINS"}]}]}},
-    ]))
-    _common.product_db.cache_clear()
-    monkeypatch.setattr(_common, "DATA", str(p))
+    p = tmp_path / "valio_aimo_junction26_product_data.json"
+    p.write_text(
+        json.dumps([
+            {"id": "p-pasta-1", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "UW", "unit": "CONTAINS"}]}]}},
+            {"id": "p-pasta-2", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "UW", "unit": "CONTAINS"}]}]}},
+            {"id": "p-bacon", "synkkaData": {"classifications": []}},
+            {"id": "p-eggs", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "AE", "unit": "CONTAINS"}]}]}},
+            {"id": "p-eggs-2", "synkkaData": {"classifications": [{"name": "allergen", "values": [{"id": "AE", "unit": "CONTAINS"}]}]}},
+        ]),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AIMO_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(_common, "DATA", str(p), raising=False)
+    _clear_common_cache()
     yield
-    _common.product_db.cache_clear()
+    _clear_common_cache()
 
 
 def test_natural_substitution():
@@ -224,4 +236,78 @@ def test_selects_first_item_with_multiple_candidates_when_earlier_has_none():
     assert c.sim_calls == [{"product_id": "p-bacon", "available_amount": 1}]
     assert c.clear_calls == 1
     assert all(ok for _, ok, _ in r.results)
+
+
+def test_prefers_lower_score_alternative_candidate():
+    class ScoreClient(FakeClient):
+        def offers(self, need):
+            self.offers_calls += 1
+            eggs_offers = [{"product_id": "p-eggs", "units_needed": 2, "substitute_for": None, "notes": [], "match_score": 0.98}]
+            eggs_alts = [{"product_id": "p-eggs-2", "units_needed": 2, "substitute_for": None, "notes": [], "match_score": 0.98}]
+            if "p-pasta-1" in self.simulated:
+                pasta_offers = [
+                    {"product_id": "p-pasta-1", "units_needed": 1, "substitute_for": None, "notes": [], "match_score": 0.775},
+                    {"product_id": "p-pasta-2", "units_needed": 5, "substitute_for": "p-pasta-1", "notes": ["swap"], "match_score": 0.77},
+                ]
+                pasta_alts = []
+            else:
+                pasta_offers = [{"product_id": "p-pasta-1", "units_needed": 6, "substitute_for": None, "notes": [], "match_score": 0.775}]
+                pasta_alts = [{"product_id": "p-pasta-2", "units_needed": 6, "substitute_for": None, "notes": [], "match_score": 0.77}]
+            return {
+                "items": [
+                    {"shortfall": 0, "offers": eggs_offers, "alternatives": eggs_alts},
+                    {"shortfall": 0, "offers": [{"product_id": "p-bacon", "units_needed": 4, "substitute_for": None, "notes": []}], "alternatives": []},
+                    {"shortfall": 0, "offers": pasta_offers, "alternatives": pasta_alts},
+                ]
+            }
+
+    c = ScoreClient()
+    r = FakeRun()
+    run_scenario(c, r, day=date(2026, 11, 17))
+    assert c.sim_calls == [{"product_id": "p-pasta-1", "available_amount": 1}]
+    assert c.clear_calls == 1
+    assert all(ok for _, ok, _ in r.results)
+
+
+def test_retries_next_candidate_when_first_sim_produces_no_substitute():
+    class RetryClient(FakeClient):
+        def offers(self, need):
+            self.offers_calls += 1
+            if "p-eggs" in self.simulated:
+                eggs_offers = [
+                    {"product_id": "p-eggs", "units_needed": 1, "substitute_for": None, "notes": []},
+                    {"product_id": "p-eggs-2", "units_needed": 3, "substitute_for": None, "notes": []},
+                ]
+                eggs_alts = []
+            else:
+                eggs_offers = [{"product_id": "p-eggs", "units_needed": 4, "substitute_for": None, "notes": []}]
+                eggs_alts = [{"product_id": "p-eggs-2", "units_needed": 4, "substitute_for": None, "notes": []}]
+            if "p-pasta-1" in self.simulated:
+                pasta_offers = [
+                    {"product_id": "p-pasta-1", "units_needed": 1, "substitute_for": None, "notes": []},
+                    {"product_id": "p-pasta-2", "units_needed": 7, "substitute_for": "p-pasta-1", "notes": ["swap"]},
+                ]
+                pasta_alts = []
+            else:
+                pasta_offers = [{"product_id": "p-pasta-1", "units_needed": 8, "substitute_for": None, "notes": []}]
+                pasta_alts = [{"product_id": "p-pasta-2", "units_needed": 8, "substitute_for": None, "notes": []}]
+            return {
+                "items": [
+                    {"shortfall": 0, "offers": eggs_offers, "alternatives": eggs_alts},
+                    {"shortfall": 0, "offers": pasta_offers, "alternatives": pasta_alts},
+                    {"shortfall": 0, "offers": [{"product_id": "p-bacon", "units_needed": 4, "substitute_for": None, "notes": []}], "alternatives": []},
+                ]
+            }
+
+    c = RetryClient()
+    r = FakeRun()
+    run_scenario(c, r, day=date(2026, 11, 17))
+    assert c.sim_calls == [
+        {"product_id": "p-eggs", "available_amount": 1},
+        {"product_id": "p-pasta-1", "available_amount": 1},
+    ]
+    assert c.clear_calls == 2
+    assert c.simulated == {}
+    assert all(ok for _, ok, _ in r.results)
+
 
