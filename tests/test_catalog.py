@@ -200,3 +200,28 @@ def test_get_product_allergens():
     assert p is not None and p.content_amount == 1.0 and p.content_unit == "L"
     assert p.allergens["milk"].value == "contains"
     assert len(p.allergens) == 14
+
+
+def test_gemini_inferred_allergens_never_make_free(monkeypatch):
+    from aimo.catalog import gemini_allergens, product_from_row
+    monkeypatch.setattr(gemini_allergens, "cached_inference",
+                        lambda pid: {"milk": "not_found", "gluten": "contains", "eggs": "not_found"})
+    d = {"id": "x", "name": "Test", "sales_unit": "ST", "claims": [], "labels": [],
+         "allergens": {"milk": "unknown", "gluten": "unknown", "eggs": "free"},
+         "allergen_source": {"milk": "none", "gluten": "none", "eggs": "structured"}}
+    p = product_from_row(d)
+    assert p.allergens["milk"].value == "unknown" and p.allergen_source["milk"] == "inferred:gemini"
+    assert p.allergens["gluten"].value == "contains" and p.allergen_source["gluten"] == "inferred:gemini"
+    assert p.allergens["eggs"].value == "free" and p.allergen_source["eggs"] == "structured"  # structured wins
+
+
+def test_no_usual_product_tiers_by_query_match():
+    from aimo.catalog.substitution import rank_substitutes
+    rows = {"a": _row("a", "Oatly Oat Drink Semi 1L", "Oatly", 1.5, 1.0, claims=(), allergens={"milk": "free"}),
+            "b": _row("b", "Oatly Barista 1L", "Oatly", 3.0, 1.0, claims=(), allergens={"milk": "free"})}
+    offers = {"a": _offer("a", 1.4, 1.4), "b": _offer("b", 1.6, 1.6)}
+    need = Need(customer_id="school-tampere", product_query="oat drink", excluded_allergens=["milk"], quantity=50,
+                unit="L", delivery_by=date(2026, 11, 16))
+    c = {x.product.id: x for x in rank_substitutes(need, offers, rows=rows, relevance={"a": 2, "b": 1})}
+    assert c["a"].tier == "best" and "no usual product" in c["a"].reasons[0]
+    assert "b" not in c or c["b"].tier != "best"   # 'Barista' lacks 'drink': not an exact match

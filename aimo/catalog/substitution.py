@@ -43,6 +43,7 @@ TYPE_MARKERS: dict[str, list[str]] = {
     "portion": ["portion", "100x2 cl", "annos"],
     "cheese": ["cheese", "juusto"],
     "protein": ["protein", "proteiini"],
+    "crumbs": ["breadcrumb", "korppujauho", "panko", "croutons", "krutonki"],
     "condensed/powder": ["condensed", "kondensoitu", "powder", "jauhe", "evaporated"],
     "kitchen": ["keittiön", "kiehu", "cooking"],
 }
@@ -127,6 +128,15 @@ def reference_spec(need: Need, rows: dict[str, dict[str, Any]], fallback_row: Op
     return spec
 
 
+def _query_coverage(query: str, d: dict[str, Any]) -> float:
+    from aimo.catalog.textsearch import parse_query
+    concepts = parse_query(query)
+    if not concepts:
+        return 1.0
+    names = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi"), d.get("name_sv"))).lower()
+    return sum(1 for _c, forms in concepts if any(f.lower() in names for f in forms)) / len(concepts)
+
+
 def _same_brand(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a and b and a.strip().lower() == b.strip().lower())
 
@@ -206,8 +216,13 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             if st == "unknown":
                 flags.append("allergen_unknown")
                 hint = (inferred_allergens.get(pid) or {}).get(g)
+                hint_txt = {"contains": f"Gemini reads the ingredients as containing {g}",
+                            "may_contain": f"Gemini reads the ingredients as possibly containing {g}",
+                            "not_found": f"Gemini found no {g} in the ingredients"}.get(hint or "", "")
                 reject.append(f"{g}: no structured allergen data (unknown is never treated as safe)"
-                              + (f"; Gemini hint from ingredients: {hint} (needs human check)" if hint else ""))
+                              + (f"; hint: {hint_txt} (inferred:gemini, needs human confirmation)" if hint_txt else ""))
+                if hint:
+                    flags.append("allergen_inferred_hint")
             else:
                 reject.append(f"{g}: {st.replace('_', ' ')} per supplier data")
         if cunit != need.unit:
@@ -239,11 +254,15 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         same_org = (spec.organic is None) or (is_organic(d) == bool(spec.organic))
         same_spec = same_fat and same_org
         same_cat = not spec.category or d.get("category") == spec.category
+        coverage = _query_coverage(need.product_query, d)
         if pid in prefs:
             tier = "preferred"
-        elif same_brand and same_spec and same_cat and spec.source != "none":
+        elif spec.source in ("top_hit", "none"):
+            # no usual product on file: tier by how exactly the product matches the request
+            tier = "best" if coverage >= 1.0 else ("better" if coverage >= 0.5 else "good")
+        elif same_brand and same_spec and same_cat:
             tier = "best"
-        elif same_spec and same_cat and spec.source != "none":
+        elif same_spec and same_cat:
             tier = "better"
         else:
             tier = "good"
@@ -256,7 +275,8 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             flags.append("outside_preference")
         scratch.append(dict(pid=pid, d=d, offer=offer, content=content, cunit=cunit, cnote=cnote, reasons=reasons,
                             flags=flags, reject=reject, tier=tier, tier_if_ok=tier_if_ok, summary=summary,
-                            same_brand=same_brand, same_fat=same_fat, same_org=same_org, same_cat=same_cat))
+                            same_brand=same_brand, same_fat=same_fat, same_org=same_org, same_cat=same_cat,
+                            coverage=coverage, spec_source=spec.source))
 
     # ---- scores (relative within the eligible set)
     eligible = [x for x in scratch if x["tier"] != "rejected"]
@@ -318,7 +338,12 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
     t = x["tier"] if x["tier"] != "rejected" else x["tier_if_ok"]
     if x["tier"] == "rejected":
         r.append("Rejected: " + "; ".join(x["reject"]))
-    if t == "preferred":
+    if x.get("spec_source") in ("top_hit", "none") and t != "preferred":
+        q = need.product_query
+        r.append({"best": f"Exact match for '{q}' (no usual product on file)",
+                  "better": f"Close match for '{q}' (most of the requested words)",
+                  "good": f"Partial match for '{q}'; meets the hard constraints"}[t])
+    elif t == "preferred":
         r.append("Your usual product")
     elif t == "best":
         bits = ["brand"]

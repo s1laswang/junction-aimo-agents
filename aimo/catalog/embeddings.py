@@ -83,6 +83,8 @@ def build(concurrency: int = 8, batch: int = 100) -> None:
         v = _embed_batch(tx, "catalog.embed.build")
         np.save(p, v.astype(np.float16))
 
+    from aimo import gemini
+    gemini.client()  # create the shared client once before threads (avoids a closed-client race)
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=min(8, concurrency)) as ex:
         for n, _ in enumerate(ex.map(work, chunks), 1):

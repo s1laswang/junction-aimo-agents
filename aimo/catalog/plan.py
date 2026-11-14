@@ -7,6 +7,7 @@ Quantities are pure arithmetic on catalog/offer fields (never an LLM):
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Callable, Optional
 
 from aimo.catalog.textsearch import fts_search, get_rows, _con
@@ -78,8 +79,54 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
             top_ids.append(pid)
     offers = _call_offers(offers_fn, top_ids, need) if top_ids else {}
     shortlist = {pid: rows[pid] for pid in top_ids}
-    cands = rank_substitutes(need, offers, limit=limit, rows=shortlist, relevance=rel)
-    return fill(need, cands)
+    hints: dict[str, dict[str, str]] = {}
+    if need.excluded_allergens:
+        try:
+            from aimo.catalog.gemini_allergens import cached_inference
+            for pid in shortlist:
+                h = cached_inference(pid)
+                if h:
+                    hints[pid] = h
+        except Exception:  # noqa: BLE001
+            pass
+    cands = rank_substitutes(need, offers, limit=limit, rows=shortlist, relevance=rel, inferred_allergens=hints)
+    plan = fill(need, cands)
+    if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
+        _recipe_checks(need, plan)
+    return plan
+
+
+def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
+    """Gemini recipe-compatibility note for substitute lines vs the usual product (cached; flags only)."""
+    if not need.preferred_product_ids:
+        return
+    orig = need.preferred_product_ids[0]
+    subs = [l for l in plan.lines if l.product_id not in need.preferred_product_ids][:3]
+    if not subs:
+        return
+    use = str((need.preferences or {}).get("use") or need.raw_text or need.product_query)
+    try:
+        from concurrent.futures import ThreadPoolExecutor, wait
+
+        from aimo import gemini
+        from aimo.catalog.gemini_allergens import recipe_compatible
+        gemini.client()
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futs = {ex.submit(recipe_compatible, orig, l.product_id, use): l for l in subs}
+            done, _ = wait(futs, timeout=timeout_s)
+            for f in done:
+                l = futs[f]
+                try:
+                    j = f.result()
+                except Exception:  # noqa: BLE001
+                    continue
+                verdict = "compatible" if j.get("compatible") else "NOT compatible"
+                l.reasons.append(f"Gemini recipe check vs usual product: {verdict} ({j.get('confidence')}): "
+                                 f"{j.get('reason')} [inferred:gemini]")
+                if not j.get("compatible"):
+                    l.flags = sorted(set(l.flags) | {"recipe_check_failed"})
+    except Exception:  # noqa: BLE001
+        return
 
 
 def _call_offers(fn, ids: list[str], need: Need) -> dict[str, Offer]:
