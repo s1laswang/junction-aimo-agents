@@ -22,8 +22,11 @@ def call(client, method, path, key=None, **kw):
 
 
 @pytest.mark.skipif(
-    not Path("data/valio_aimo_junction26_product_data.json").exists()
-    or (not os.environ.get("VALIO_API_BASE") and not any(Path("var/cache").glob("price__hotel-aurora__*.json"))),
+    not (Path(os.environ.get("AIMO_DATA_DIR", "data")) / "valio_aimo_junction26_product_data.json").exists()
+    or (
+        not os.environ.get("VALIO_API_BASE")
+        and not any(Path(os.environ.get("AIMO_CACHE_DIR", "var/cache")).glob("price__hotel-aurora__*.json"))
+    ),
     reason="needs product data and VALIO_API_BASE or cached prices",
 )
 def test_milk_flow(client, agent_key):
