@@ -1,7 +1,9 @@
+from datetime import date
+
 import httpx
 import pytest
 
-from agents.seller import accept, allowed, propose, rank, usable, usual_items
+from agents.seller import accept, allowed, delivery_day, explain, propose, rank, usable, usual_items
 
 
 def offer(pid, price, avail, rel, allergens=(), cat="dairy", need=100, co2=1.0):
@@ -160,3 +162,161 @@ def test_accept_monkeypatched(monkeypatch):
     res2 = accept({"offer": offer("7", 4, 500, 0.9, need=10)}, "demo-school-hervanta", "http://gw.test")
     assert res2["order_id"] == "ord_99"
     assert len(calls[0][4]["json"]["delivery_date"]) == 10
+
+
+def test_delivery_day_rolls_weekends_and_keeps_weekdays(monkeypatch):
+    import agents.seller as sl
+
+    assert delivery_day(date(2026, 11, 11)) == date(2026, 11, 16)
+    assert delivery_day(date(2026, 11, 12)) == date(2026, 11, 16)
+    assert delivery_day(date(2026, 11, 14)) == date(2026, 11, 17)
+    assert delivery_day(date(2026, 11, 16)) == date(2026, 11, 19)
+
+    for fake_today in (date(2026, 11, 11), date(2026, 11, 12)):
+        class FakeDate(date):
+            @classmethod
+            def today(cls):
+                return fake_today
+
+        monkeypatch.setattr(sl, "date", FakeDate)
+        seen_deliver_by = []
+        seen_quotes = []
+
+        def fake_call(method, path, key, url, **kw):
+            if path == "/mandate":
+                return M
+            if path == "/orders":
+                return [{"lines": [{"product_id": "1", "name": "milk", "quantity": 100}]}]
+            if path == "/offers":
+                seen_deliver_by.append(kw["json"]["deliver_by"])
+                return {"items": [{"offers": [offer("1", 5, 500, 0.8), offer("2", 4, 500, 0.9)]}]}
+            if path == "/quotes":
+                seen_quotes.append(kw["json"]["delivery_date"])
+                return {"quote_id": "q_1", "jws": "sig"}
+            if path == "/orders" and method == "POST":
+                return {"order_id": "ord_1", "status": "placed"}
+            raise AssertionError((method, path))
+
+        monkeypatch.setattr(sl, "_call", fake_call)
+        _, props = sl.explain("hotel-aurora", "k", "u")
+        assert seen_deliver_by == ["2026-11-16"]
+        assert props and props[0]["offer"]["product_id"] == "2"
+
+        sl.accept({"offer": offer("2", 4, 500, 0.9, need=10)}, "k", "u")
+        assert seen_quotes == ["2026-11-16"]
+
+
+def test_usable_and_allowed_reject_none_prices():
+    no_unit = {**offer("2", 4, 500, 0.9), "unit_price_net": None}
+    no_total = {**offer("3", 4, 500, 0.9), "total_net": None}
+    no_both = {**offer("4", 4, 500, 0.9), "unit_price_net": None, "total_net": None}
+    for bad in (no_unit, no_total, no_both):
+        assert not usable(bad)
+        assert not allowed(bad, M)
+    assert rank("1", [offer("1", 5, 500, 0.8), no_unit, no_total, no_both], M) == []
+
+
+def test_explain_audit_fallback_and_name_of_lookup(monkeypatch):
+    import agents.seller as sl
+
+    calls = []
+
+    def fake_call(method, path, key, url, **kw):
+        calls.append((method, path, kw))
+        if path == "/mandate":
+            return M
+        if path == "/orders":
+            return {"orders": []}
+        if path == "/audit":
+            return {
+                "events": [
+                    {"detail": {"lines": [{"product_id": "99", "quantity": 5}]}},
+                    {"detail": {"lines": [{"product_id": "42", "quantity": 15, "sales_unit": "l"}]}},
+                ]
+            }
+        if path == "/products/99":
+            raise httpx.ConnectError("lookup failed")
+        if path == "/products/42":
+            return {"product_id": "42", "name": "Valio Kevytmaito"}
+        if path == "/offers":
+            return {"items": [{"offers": [offer("42", 5, 500, 0.8), offer("43", 4, 500, 0.9)]}]}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(sl, "_call", fake_call)
+    notes, props = explain("hotel-aurora", "k", "u")
+    assert notes == []
+    assert len(props) == 1
+    assert props[0]["origin"] == "from your order history"
+    assert props[0]["offer"]["product_id"] == "43"
+    paths = [p for _, p, _ in calls]
+    assert "/audit" in paths and "/products/42" in paths and "/products/99" in paths
+    offer_calls = [kw["json"] for m, p, kw in calls if m == "POST" and p == "/offers"]
+    assert len(offer_calls) == 1
+    assert offer_calls[0]["items"][0]["query"] == "Valio Kevytmaito"
+    assert offer_calls[0]["items"][0]["quantity"] == 15.0
+    assert offer_calls[0]["items"][0]["unit"] == "l"
+
+
+def test_rank_zero_base_total_co2_and_limit():
+    zero_base = offer("1", 0, 500, 0.8)
+    neg_alt = {**offer("2", 0, 500, 0.8), "total_net": -10.0}
+    r_zero = rank("1", [zero_base, neg_alt], M)
+    assert len(r_zero) == 1 and r_zero[0]["offer"]["product_id"] == "2"
+    assert r_zero[0]["score"] == pytest.approx(1.0)
+
+    r_zero_rel = rank("1", [zero_base, offer("3", 0, 500, 0.95)], M)
+    assert len(r_zero_rel) == 1 and r_zero_rel[0]["offer"]["product_id"] == "3"
+
+    base_co2 = offer("1", 5, 500, 0.9, co2=2.5)
+    same_high_co2 = offer("2", 4, 500, 0.9, co2=2.6)
+    same_low_co2 = offer("3", 4, 500, 0.9, co2=1.2)
+    r_tie = rank("1", [base_co2, same_high_co2, same_low_co2], M, limit=2)
+    assert [x["offer"]["product_id"] for x in r_tie] == ["3", "2"]
+    assert "CO2 1.20 vs 2.50 kg CO2e/kg" in r_tie[0]["why"]
+    assert "CO2" not in r_tie[1]["why"]
+
+    cands = [
+        offer("1", 5, 500, 0.8, co2=2.0),
+        offer("2", 4, 500, 0.95, co2=1.0),
+        offer("3", 4, 500, 0.90, co2=1.5),
+        offer("4", 4, 500, 0.85, co2=2.0),
+    ]
+    assert [x["offer"]["product_id"] for x in rank("1", cands, M, limit=1)] == ["2"]
+    assert [x["offer"]["product_id"] for x in rank("1", cands, M, limit=2)] == ["2", "3"]
+    assert [x["offer"]["product_id"] for x in rank("1", cands, M, limit=3)] == ["2", "3", "4"]
+
+
+def test_usual_items_malformed_events_and_quantities():
+    assert usual_items(None) == []
+    assert usual_items("not-a-list") == []
+    assert usual_items({"lines": []}) == []
+
+    events = [
+        None,
+        "corrupt",
+        123,
+        ["nested"],
+        {"detail": "bad-detail"},
+        {"detail": {"lines": ["not-a-dict", None, {"product_id": None, "name": "ghost", "quantity": 5}]}},
+        {
+            "detail": {
+                "lines": [
+                    {"product_id": "10", "name": "milk", "quantity": "unparseable"},
+                    {"product_id": "11", "name": "butter", "quantity": 0},
+                    {"product_id": "12", "name": "quark", "quantity": -4},
+                    {"product_id": "13", "name": "cream", "quantity": None},
+                    {"product_id": "14", "name": "cheese", "quantity": True},
+                    {"product_id": "15", "name": "yogurt", "quantity": "nan"},
+                    {"product_id": "16", "name": "oat", "quantity": "inf"},
+                    {"product_id": "17", "name": "kefir", "quantity": "4.5", "unit": "l"},
+                    {"product_id": "10", "name": "milk duplicate", "quantity": 99},
+                ]
+            }
+        },
+    ]
+    got = {it["product_id"]: it for it in usual_items(events)}
+    assert set(got) == {"10", "11", "12", "13", "14", "15", "16", "17"}
+    for pid in ("10", "11", "12", "13", "14", "15", "16"):
+        assert got[pid]["quantity"] == 1.0
+    assert got["10"]["query"] == "milk"
+    assert got["17"] == {"product_id": "17", "query": "kefir", "quantity": 4.5, "unit": "l"}
