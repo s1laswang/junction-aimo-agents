@@ -387,3 +387,112 @@ def test_demo_tamper_routes(api, monkeypatch):
     assert api.get("/v1/audit/verify").json()["ok"] is True
     spec = api.get("/openapi.json").json()
     assert spec["paths"]["/v1/demo/tamper/{seq}"]["post"]["tags"] == ["demo"]
+
+
+# ------------------------------------------------------------------ round 3: server-side verification, identity, scope, live re-fetch
+MILK_NEED = {"customer_id": "hotel-aurora", "product_query": "lactose-free milk", "required_claims": ["FREE_FROM_LACTOSE"],
+             "quantity": 1000, "unit": "L", "delivery_by": "2026-11-16", "preferred_product_ids": ["463038"]}
+
+
+def _catalog_ready() -> bool:
+    try:
+        from aimo.catalog.textsearch import get_rows
+
+        return "464306" in get_rows(["464306"])
+    except Exception:  # noqa: BLE001
+        return False
+
+
+needs_catalog = pytest.mark.skipif(not _catalog_ready(), reason="catalog.sqlite not built")
+
+
+@needs_catalog
+def test_hero_line_is_best_against_usual_463038(api):
+    r = api.post("/v1/quotes", headers=H, json={"delivery_date": "2026-11-16", "need": MILK_NEED,
+                                               "lines": [{"product_id": "464306", "qty_sales_units": 1000}]})
+    assert r.status_code == 200, r.text
+    ln = r.json()["lines"][0]
+    assert ln["tier"] == "best" and "outside_preference" in ln["flags"]
+    assert r.json()["provenance"]["line_verification"]["464306"]["method"] == "catalog.rank_substitutes"
+
+
+@needs_catalog
+def test_forged_tier_and_flags_are_ignored(api):
+    r = api.post("/v1/quotes", headers=H, json={"delivery_date": "2026-11-16", "lines": [
+        {"product_id": "469363", "qty_sales_units": 10, "tier": "preferred", "flags": []}]})
+    assert r.status_code == 200, r.text
+    q = r.json()
+    ln = q["lines"][0]
+    assert ln["tier"] == "better" and "outside_preference" in ln["flags"]   # Arla vs usual Valio Eila: same spec, other brand
+    assert q["provenance"]["client_claims"] == [{"product_id": "469363", "tier": "preferred", "flags": []}]
+    evs = api.get("/v1/audit", params={"subject_id": q["quote_id"]}).json()
+    corr = [e for e in evs if e["action"] == "quote.claims_corrected"]
+    assert corr and "agent said 469363 is preferred" in corr[0]["summary"] and "verified better" in corr[0]["summary"]
+    # an omitted tier is not "preferred" either
+    q2 = api.post("/v1/quotes", headers=H, json={"delivery_date": "2026-11-16", "lines": [
+        {"product_id": "469363", "qty_sales_units": 10}]}).json()
+    assert q2["lines"][0]["tier"] == "better"
+    o = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
+    assert o["status"] != "placed"
+    if service.integration_status()["trust.evaluate"] == "aimo.trust":
+        assert any(h["rule_id"].startswith("substitution") and h["outcome"] == "needs_approval" for h in o["decision"]["hits"])
+
+
+def test_usual_product_is_preferred(api, monkeypatch):
+    from aimo.gateway import verify
+
+    monkeypatch.setitem(verify.USUAL_PRODUCTS, "hotel-aurora", ["464306"])
+    monkeypatch.setattr(verify, "_policy", lambda c: {})
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 10, "tier": "good"}]).json()
+    assert q["lines"][0]["tier"] == "preferred" and "outside_preference" not in q["lines"][0]["flags"]
+
+
+def test_body_customer_cannot_override_header(api):
+    body = {"customer_id": "hotel-aurora", "delivery_date": "2026-11-16",
+            "lines": [{"product_id": "464306", "qty_sales_units": 1}]}
+    r = api.post("/v1/quotes", headers={"X-Customer-Id": "school-tampere", "X-Agent-Id": "buyer-1"}, json=body)
+    assert r.status_code == 403 and r.json()["error"] == "customer_mismatch"
+    r = api.post("/v1/quotes", headers=H, json={**body, "agent_id": "hotel-aurora/planner-9"})
+    assert r.status_code == 403 and r.json()["error"] == "agent_mismatch"
+    assert api.post("/v1/quotes", headers=H, json={**body, "agent_id": "hotel-aurora/buyer-1"}).status_code == 200
+    with pytest.raises(service.ServiceError) as e:
+        service.create_quote("2026-11-16", [{"product_id": "464306", "qty_sales_units": 1}],
+                             identity={"customer_id": "school-tampere", "agent_id": "buyer-1"}, customer_id="hotel-aurora")
+    assert e.value.status == 403
+
+
+def test_unregistered_agent_gets_403_on_quote(api):
+    if service.integration_status()["trust.evaluate"] != "aimo.trust":
+        pytest.skip("mandates come from trust")
+    r = _quote(api, [{"product_id": "464306", "qty_sales_units": 1}], headers={**H, "X-Agent-Id": "mallory"})
+    assert r.status_code == 403 and r.json()["error"] == "scope_missing"
+    # planner-1 may quote (quote:create) but not order
+    r = _quote(api, [{"product_id": "464306", "qty_sales_units": 1}], headers={**H, "X-Agent-Id": "planner-1"})
+    assert r.status_code == 200, r.text
+    assert api.get("/v1/quotes/" + r.json()["quote_id"]).json()["agent_id"] == "planner-1"
+
+
+def test_quote_refetches_live_bypassing_cache(api, tmp_path):
+    calls = {"price": 0, "availability": 0}
+    raw = {"price": json.loads((FIX / "price_20261116.json").read_text()),
+           "availability": json.loads((FIX / "availability_20261116.json").read_text())}
+
+    def handler(req: httpx.Request):
+        ep = req.url.path.rsplit("/", 1)[-1]
+        calls[ep] += 1
+        ids = set(json.loads(req.content)["products"])
+        body = copy.deepcopy(raw[ep])
+        body["products"] = [p for p in body["products"] if p["productId"] in ids]
+        return httpx.Response(200, json=body)
+
+    c = bc.ValioClient(base_url="https://mock.invalid", api_key="k", cache_dir=tmp_path / "cache", offline=False)
+    c._http = httpx.Client(base_url="https://mock.invalid", transport=httpx.MockTransport(handler))
+    bc.set_client(c)
+    body = {"product_ids": ["464306"], "requested_date": "2026-11-16"}
+    assert api.post("/v1/offers", headers=H, json=body).headers["x-aimo-served-from"] == "live"
+    assert api.post("/v1/offers", headers=H, json=body).headers["x-aimo-served-from"] == "cache"
+    assert calls == {"price": 1, "availability": 1}
+    q = _quote(api, [{"product_id": "464306", "qty_sales_units": 10}]).json()
+    assert calls == {"price": 2, "availability": 2}
+    assert q["provenance"]["served_from"] == "live" and q["provenance"]["fresh_requested"] is True
+    assert api.post("/v1/offers", headers=H, json=body).headers["x-aimo-served-from"] == "cache"  # browsing still cached

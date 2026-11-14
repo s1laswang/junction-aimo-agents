@@ -299,7 +299,9 @@ class ValioClient:
             log.debug("cache write failed: %s", e)
 
     # -- core
-    def _fetch(self, endpoint: str, product_ids: list[str], requested_date: date, customer: str | None) -> dict:
+    def _fetch(self, endpoint: str, product_ids: list[str], requested_date: date, customer: str | None,
+               fresh: bool = False) -> dict:
+        """fresh=True skips the cache read (quotes, order placement) but still refreshes the cache."""
         cust = customer or DEFAULT_UPSTREAM_CUSTOMER or "aimo-gateway"
         d = requested_date.isoformat()
         ids = list(dict.fromkeys(str(p) for p in product_ids if str(p).strip()))
@@ -307,7 +309,7 @@ class ValioClient:
         with self._lock:
             missing = []
             for pid in ids:
-                hit = self._cache_get((endpoint, cust, d, pid), allow_stale=self.offline)
+                hit = None if (fresh and not self.offline) else self._cache_get((endpoint, cust, d, pid), allow_stale=self.offline)
                 if hit is not None:
                     items[pid] = hit
                     self.stats["cache_hits"] += 1
@@ -332,11 +334,12 @@ class ValioClient:
                 meta_out = meta_out or meta
         return {**meta_out, "products": products, "_oldest_fetch": oldest, "_customer": cust}
 
-    def price(self, product_ids: list[str], requested_date: date, customer: str | None = None) -> dict:
-        return self._fetch("price", product_ids, requested_date, customer)
+    def price(self, product_ids: list[str], requested_date: date, customer: str | None = None, fresh: bool = False) -> dict:
+        return self._fetch("price", product_ids, requested_date, customer, fresh)
 
-    def availability(self, product_ids: list[str], requested_date: date, customer: str | None = None) -> dict:
-        return self._fetch("availability", product_ids, requested_date, customer)
+    def availability(self, product_ids: list[str], requested_date: date, customer: str | None = None,
+                     fresh: bool = False) -> dict:
+        return self._fetch("availability", product_ids, requested_date, customer, fresh)
 
 
 _client: Any = None
@@ -522,8 +525,10 @@ def get_offers_with_meta(
     requested_date: date,
     customer_id: str | None = None,
     quantities: dict[str, float] | None = None,
+    fresh: bool = False,
 ) -> tuple[dict[str, Offer], dict[str, Any]]:
-    """Like get_offers, plus provenance meta {source, upstream, fetched_at, faults, ...}."""
+    """Like get_offers, plus provenance meta {source, upstream, fetched_at, faults, ...}.
+    fresh=True bypasses the 5-minute cache (used for quotes and order placement)."""
     faults = current_faults()
     if faults.latency_ms:
         time.sleep(faults.latency_ms / 1000.0)
@@ -535,8 +540,16 @@ def get_offers_with_meta(
     ids = list(dict.fromkeys(str(p) for p in product_ids))
     client = get_client()
     before = dict(getattr(client, "stats", {}) or {})
-    price = client.price(ids, requested_date, customer_id)
-    avail = client.availability(ids, requested_date, customer_id)
+    if fresh:
+        try:
+            price = client.price(ids, requested_date, customer_id, fresh=True)
+            avail = client.availability(ids, requested_date, customer_id, fresh=True)
+        except TypeError:  # a BackendClient without the fresh flag (fixtures, other adapters)
+            price = client.price(ids, requested_date, customer_id)
+            avail = client.availability(ids, requested_date, customer_id)
+    else:
+        price = client.price(ids, requested_date, customer_id)
+        avail = client.availability(ids, requested_date, customer_id)
     p_by = {str(x.get("productId")): x for x in price.get("products", []) or []}
     a_by = {str(x.get("productId")): x for x in avail.get("products", []) or []}
     offers = {
@@ -553,6 +566,7 @@ def get_offers_with_meta(
         "upstream": getattr(client, "base_url", type(client).__name__),
         "endpoints": ["/api/price", "/api/availability"],
         "served_from": "live" if calls else "cache",
+        "fresh_requested": fresh,
         "upstream_calls": calls,
         "fetched_at": fetched_at.isoformat(),
         "valid_for_s": int(getattr(client, "ttl_s", CACHE_TTL_S)),

@@ -132,3 +132,17 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
 - **Quote line flag `supplier_text_injection_suspected`**: added when trust's `screen_text` flags a line's supplier text (contains "injection", so the policy `injection` rule fires). The gateway also passes its product reads to `trust.evaluate(..., products=...)`.
 - **Demo-only:** `POST /v1/demo/tamper/{seq}[?summary=...]` and `POST /v1/demo/untamper/{seq}` (tag `demo`) -> `{..., verify: {...}}`; 404 when `AIMO_ENV=production` or the event does not exist.
 - **`aimo serve`**: fetch data -> `load_catalog()` -> if embeddings / allergen hints are missing and `GEMINI_API_KEY` is set, builds them in a background thread (FTS until done). `--build-sync` blocks, `--no-build` skips and prints `uv run python -m aimo.catalog build`.
+
+## Gateway round 3 (Sat night): server-side line verification
+- **`POST /v1/quotes` / `create_quote` ignore the caller's `tier` and `flags`.** The gateway derives them (`aimo/gateway/verify.py`):
+  tier `preferred` only for the customer's usual products held server-side (trust policy `preferred_products: [ids]` or `standing_orders[].product_id(s)`
+  when present; until then the gateway registry `hotel-aurora: [463038]`); otherwise `aimo.catalog.substitution.rank_substitutes` against the usual product
+  of the same kind (same category / product type) using the quote's `need` (claims, allergens; caller `preferences` and `preferred_product_ids` are NOT used)
+  or a minimal need built from the product's dietary claims. Flags: `cutoff_passed`, `unavailable`, `sales_block`, `partial_stock` (stock < line qty),
+  `allergen_unknown` (need + policy excluded allergens), `outside_preference`, `supplier_text_injection_suspected`, `limited_stock`, `terminal_unknown_qty`,
+  `injected:*`, `tier_unverified` (catalog unavailable: tier `good`).
+- **Provenance:** `Quote.provenance.client_claims` = what the agent sent `[{product_id, tier, flags}]`; `provenance.line_verification` = `{pid: {tier, method, reasons}}`.
+  When they differ the audit gets `quote.claims_corrected` ("agent said 469363 is preferred, gateway verified better …").
+- **Identity:** headers (MCP session / in-process `identity`) win. A body `customer_id` / `agent_id` that disagrees -> **403 `customer_mismatch` / `agent_mismatch`** (quotes and offers). Without the header the body value is used (demo convenience).
+- **Scope at quote time:** agents whose mandate lacks `quote:create` (e.g. unregistered `mallory`) get **403 `scope_missing`**; the refusal is audited as `request.refused`.
+- **Live re-fetch:** quotes and order placement call the mock API with `fresh=True` (bypass the 5-minute cache, refresh it); `provenance.served_from="live"`, `fresh_requested=true`. Search/offers browsing stays cached. `BackendClient.price/availability` accept optional `fresh=`.

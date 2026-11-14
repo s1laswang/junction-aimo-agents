@@ -2,6 +2,18 @@
 
 Branch `team/gateway`. Last updated Sat 14 Nov, around 17:30 Helsinki. **M1 gateway slice: done. Round 2: done** (merged main 57140c4; full suite 97 passed).
 
+## Round 3 (Sat night): pitch QA fixes. Done, merged main 94dc5a2, full suite 112 passed
+1. **HIGH, tier and flags are now computed server-side** (`aimo/gateway/verify.py`). The caller's `tier` and `flags` are ignored. They are kept in `provenance.client_claims` and audited as `quote.claims_corrected` when they differ.
+   - **How tiers are derived:** `preferred` only for the customer's usual products. Other lines go through `catalog.substitution.rank_substitutes` against the usual product of the same kind, using the quote's need without the caller's preferences or preferred ids.
+   - **Flags** come from live offers, the catalog and the trust injection screen.
+   - **Verified live:** the hero line 464306 is still `best` + `outside_preference`, and the order is still pending_approval with the same rule hits. A forged `469363 tier=preferred` becomes `better` + `outside_preference`, so the order needs approval. An omitted tier is no longer treated as `preferred`.
+   - **Ask for trust:** please add `preferred_products: [463038]` to `hotel-aurora.yaml`. The gateway reads it, and until then uses its own server-side copy (`USUAL_PRODUCTS` in verify.py).
+2. **MEDIUM, identity:** headers win. A body `customer_id` or `agent_id` that disagrees with them returns 403 `customer_mismatch` / `agent_mismatch`, on both quotes and offers. Verified live with the pitch repro.
+3. **LOW:**
+   - (a) Quotes and order placement re-fetch live with `fresh=True`; browsing stays cached. Tested with a mocked transport and verified live (`served_from: live`).
+   - (b) Agents without `quote:create` get 403 `scope_missing` at quote time (e.g. `mallory`). `planner-1` can still quote.
+4. **Tests:** 6 new, 26 gateway tests in total, all passing.
+
 ## Round 2 (Sat evening)
 1. **Doubled audit actor fixed.** Agent ids are normalised in one place (`service.Identity.__post_init__` / `normalize_agent_id`). Whether the header is `X-Agent-Id: buyer-1` or `hotel-aurora/buyer-1`, the actor is `agent:hotel-aurora/buyer-1` and quotes and orders store the bare `buyer-1`. Tested both header forms.
 2. **`approved_by` is now the plain id** (`anna@hotel-aurora.example`), with the role in a new optional field **`Order.approver_role`**, appended to `aimo/models.py`. Auto-approved orders use `approved_by="policy:<id>"`.

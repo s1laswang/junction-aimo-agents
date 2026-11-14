@@ -458,6 +458,21 @@ def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, *
 
 
 # ------------------------------------------------------------------ quotes
+def _require_scope(ident: Identity, scope: str) -> Mandate:
+    """403 unless the agent's mandate (trust) grants `scope`. Fallback mandates carry the default scopes."""
+    mandate = mandate_for(ident)
+    if scope not in (mandate.scopes or []):
+        audit(ident.actor, "request.refused", f"refused-{ident.customer_id}",
+              f"Agent {ident.full_agent_id} has no '{scope}' permission from {ident.customer_id}; request refused.",
+              {"scope": scope, "agent_id": ident.full_agent_id, "customer_id": ident.customer_id})
+        raise ServiceError(403, "scope_missing",
+                           f"agent {ident.full_agent_id} is not registered with scope {scope} for {ident.customer_id}")
+    mexp = mandate.expires_at
+    if mexp and (mexp if mexp.tzinfo else mexp.replace(tzinfo=timezone.utc)) <= _now():
+        raise ServiceError(403, "mandate_expired", "agent mandate has expired")
+    return mandate
+
+
 def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]], need: Need | None = None) -> Quote:
     if not lines:
         raise ServiceError(400, "no_lines", "a quote needs at least one line")
@@ -468,9 +483,15 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
             raise ServiceError(400, "bad_quantity", f"qty_sales_units must be > 0 for {ln.get('product_id')}")
         pid = str(ln["product_id"])
         qty_by[pid] = qty_by.get(pid, 0) + q
+    _require_scope(ident, "quote:create")
+    if need is not None and need.customer_id != ident.customer_id:
+        need = need.model_copy(update={"customer_id": ident.customer_id})
 
-    offers_list, meta = fetch_offers(list(qty_by), delivery_date, ident.customer_id, qty_by)
-    offers = {o.product_id: o for o in offers_list}
+    # Live re-fetch (bypasses the browsing cache): the quote fixes these prices.
+    try:
+        offers, meta = get_offers_with_meta(list(qty_by), delivery_date, ident.customer_id, qty_by, fresh=True)
+    except UpstreamError as e:
+        raise _upstream(e) from e
 
     refused = []
     for pid, q in qty_by.items():
@@ -490,19 +511,19 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
                            "some lines cannot be delivered for this date; re-plan (split or substitute) and re-quote",
                            {"refused": refused})
 
-    screen_flags: dict[str, list[str]] = {}
-    names: dict[str, str] = {}
+    products: dict[str, Product] = {}
     for pid in qty_by:
         try:
-            prod = get_product(pid)
+            products[pid] = get_product(pid)
         except ServiceError:
-            continue
-        names[pid] = prod.name
-        sc = screen_supplier_text(prod)
-        if sc.get("suspicious"):
-            screen_flags[pid] = ["supplier_text_injection_suspected"]
-            if "injected:inject_text" in prod.labels:
-                screen_flags[pid].append("injected:inject_text")
+            pass
+
+    # Server-side tier + flags. What the agent claimed is kept for the audit, never used.
+    from aimo.gateway.verify import verify_lines
+
+    verified = verify_lines(ident.customer_id, delivery_date, qty_by, offers, need, products, screen_supplier_text)
+    client_claims = [{"product_id": str(ln["product_id"]), "tier": ln.get("tier"), "flags": list(ln.get("flags") or [])}
+                     for ln in lines if ln.get("tier") is not None or ln.get("flags")]
 
     qlines: list[QuoteLine] = []
     total = gross = 0.0
@@ -513,13 +534,17 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         lt = round(q * float(o.unit_price), 2)
         total += lt
         gross += q * float(o.unit_price_gross or o.unit_price)
-        info = [i for i in o.issues if i in ("limited_stock", "terminal_unknown_qty") or i.startswith("injected:")]
-        info += screen_flags.get(pid, [])
-        qlines.append(QuoteLine(
-            product_id=pid, product_name=ln.get("product_name") or names.get(pid) or _product_name(pid), qty_sales_units=q,
-            sales_unit=o.sales_unit or "ST", unit_price=float(o.unit_price), line_total=lt,
-            tier=ln.get("tier") or "preferred", flags=list(dict.fromkeys(list(ln.get("flags") or []) + info)),
-        ))
+        v = verified[pid]
+        name = products[pid].name if pid in products else _product_name(pid)
+        qlines.append(QuoteLine(product_id=pid, product_name=name, qty_sales_units=q, sales_unit=o.sales_unit or "ST",
+                                unit_price=float(o.unit_price), line_total=lt, tier=v["tier"], flags=v["flags"]))
+
+    mismatches = []
+    for c in client_claims:
+        v = verified[c["product_id"]]
+        if (c["tier"] is not None and c["tier"] != v["tier"]) or (c["flags"] and set(c["flags"]) != set(v["flags"])):
+            mismatches.append({"product_id": c["product_id"], "agent_tier": c["tier"], "verified_tier": v["tier"],
+                               "agent_flags": c["flags"], "verified_flags": v["flags"]})
 
     created = _now().replace(microsecond=0)
     expires = created + timedelta(minutes=QUOTE_TTL_MIN)
@@ -532,10 +557,16 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         "closing_time": o.closing_time.isoformat() if o.closing_time else None,
         "logistic_model": o.logistic_model, "unit_price": o.unit_price, "issues": o.issues,
     } for o in offers.values()]
+    provenance = {
+        **meta, "price_locked_until": expires.isoformat(),
+        "line_verification": {pid: {"tier": v["tier"], "method": v["method"], "reasons": v["reasons"]}
+                              for pid, v in verified.items()},
+        "client_claims": client_claims,
+    }
     quote = Quote(
         quote_id=_id("Q"), customer_id=ident.customer_id, agent_id=ident.agent_id, delivery_date=delivery_date,
         lines=qlines, total_net=round(total, 2), total_gross=round(gross, 2), created_at=created, expires_at=expires,
-        need=need, provenance={**meta, "price_locked_until": expires.isoformat()}, availability_snapshot=snapshot,
+        need=need, provenance=provenance, availability_snapshot=snapshot,
     )
     quote = sign_quote(quote)
     store.save_quote(quote)
@@ -546,6 +577,14 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
               + ("" if quote.signature else " (UNSIGNED: trust module not loaded)"),
               {"quote_hash": quote.quote_hash, "kid": quote.kid, "total_net": quote.total_net,
                "lines": [l.model_dump(mode="json") for l in qlines], "provenance": quote.provenance})
+    if mismatches:
+        audit("system:gateway", "quote.claims_corrected", quote.quote_id,
+              "Gateway verified the lines itself: " + "; ".join(
+                  f"agent said {m['product_id']} is {m['agent_tier'] or 'untiered'}"
+                  + (f" with flags {m['agent_flags']}" if m["agent_flags"] else "")
+                  + f", gateway verified {m['verified_tier']}" + (f" with {m['verified_flags']}" if m["verified_flags"] else "")
+                  for m in mismatches) + ".",
+              {"mismatches": mismatches, "quote_hash": quote.quote_hash}, related_ids=[quote.quote_id])
     return quote
 
 
@@ -576,7 +615,7 @@ def _finalize(order: Order, quote: Quote, actor: str) -> Order:
     for ln in quote.lines:
         qty_by[ln.product_id] = qty_by.get(ln.product_id, 0) + ln.qty_sales_units
     try:
-        offers, meta = get_offers_with_meta(list(qty_by), quote.delivery_date, quote.customer_id, qty_by)
+        offers, meta = get_offers_with_meta(list(qty_by), quote.delivery_date, quote.customer_id, qty_by, fresh=True)
     except UpstreamError as e:
         order = order.model_copy(update={"status": "approved", "updated_at": _now()})
         store.save_order(order)
@@ -820,14 +859,27 @@ def manifest(base_url: str) -> dict[str, Any]:
 # so every transport returns the same JSON. Identity: pass `identity` (Identity or dict) or
 # agent_id/customer_id; defaults come from env AIMO_AGENT_ID / AIMO_CUSTOMER_ID.
 def resolve_identity(identity: Any = None, agent_id: str | None = None, customer_id: str | None = None) -> Identity:
+    """The authenticated identity (`identity`: HTTP headers / MCP session / transport) wins. A
+    customer_id / agent_id argument that disagrees with it is refused (403), never silently used."""
     if isinstance(identity, Identity):
         base = identity
-    elif isinstance(identity, dict):
+    elif isinstance(identity, dict) and (identity.get("customer_id") or identity.get("agent_id")):
         base = Identity(agent_id=identity.get("agent_id") or DEFAULT_AGENT,
                         customer_id=identity.get("customer_id") or DEFAULT_CUSTOMER)
     else:
-        base = Identity()
-    return Identity(agent_id=agent_id or base.agent_id, customer_id=customer_id or base.customer_id)
+        return Identity(agent_id=agent_id or DEFAULT_AGENT, customer_id=customer_id or DEFAULT_CUSTOMER)
+    return claim_identity(base, customer_id, agent_id)
+
+
+def claim_identity(auth: Identity, customer_id: str | None, agent_id: str | None) -> Identity:
+    """403 if a claimed customer/agent (e.g. in a request body) disagrees with the authenticated one."""
+    if customer_id and customer_id.strip() != auth.customer_id:
+        raise ServiceError(403, "customer_mismatch",
+                           f"request names customer {customer_id!r} but the caller is authenticated as {auth.customer_id!r}")
+    if agent_id and normalize_agent_id(auth.customer_id, agent_id) != auth.agent_id:
+        raise ServiceError(403, "agent_mismatch",
+                           f"request names agent {agent_id!r} but the caller is authenticated as {auth.full_agent_id!r}")
+    return auth
 
 
 def _as_date(d: Any) -> date:
