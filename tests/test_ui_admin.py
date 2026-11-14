@@ -32,3 +32,12 @@ def test_tokens_and_header():
     for t in ["--paper:#F5F4F0", "--valio:#1F4E8C", "--stop:#A3342B", "prefers-reduced-motion", "table.ledger"]:
         assert t in css
     assert 'aria-current="page"' in (WEB / "admin.html").read_text()
+
+
+def test_mock_approvers_match_mandates():
+    js = (WEB / "admin.js").read_text()
+    for name in ["Laura Virtanen", "Mikko Heikkinen", "Helena Korhonen", "Antti Lahtinen", "Sari Nieminen"]:
+        assert name in js
+    for stale in ["head.chef", "kitchen.manager", "dietitian", "school.cook"]:
+        assert stale not in js
+    assert "Limits must be greater than zero." in js
