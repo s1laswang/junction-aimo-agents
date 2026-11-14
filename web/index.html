@@ -21,6 +21,7 @@
         <span>Valio Aimo (mock) · agent gateway</span>
       </div>
       <span id="mode-pill" class="mode-pill"></span>
+      <button id="blocked-pill" class="blocked-pill" type="button" hidden title="Open the Valio Aimo ops view"></button>
     </div>
     <nav class="open-strip" aria-label="Open interfaces">
       <span class="open-label">Open interfaces</span>
@@ -30,6 +31,7 @@
       <a id="lnk-mcp" target="_blank" rel="noopener">MCP</a>
       <button id="btn-connect" class="btn btn-quiet btn-sm" type="button">Connect your agent</button>
     </nav>
+    <div id="approver-chip" class="approver-slot"></div>
   </header>
 
   <div id="global-banner" class="global-banner" hidden></div>
@@ -51,16 +53,22 @@
         <button role="tab" class="tab" data-tab="plan" id="tab-plan">Plan <span class="tab-count" id="cnt-plan"></span></button>
         <button role="tab" class="tab" data-tab="approvals" id="tab-approvals">Approvals <span class="tab-count" id="cnt-approvals"></span></button>
         <button role="tab" class="tab" data-tab="audit" id="tab-audit">Audit trail <span class="tab-count" id="cnt-audit"></span></button>
+        <button role="tab" class="tab" data-tab="recipes" id="tab-recipes">Recipes</button>
+        <span class="tab-sep" aria-hidden="true"></span>
+        <button role="tab" class="tab tab-ops" data-tab="ops" id="tab-ops">Valio Aimo ops <span class="tab-count" id="cnt-ops"></span></button>
       </div>
       <div class="tab-body">
         <div id="view-plan" class="view" role="tabpanel"></div>
         <div id="view-approvals" class="view" role="tabpanel" hidden></div>
         <div id="view-audit" class="view" role="tabpanel" hidden></div>
+        <div id="view-recipes" class="view" role="tabpanel" hidden></div>
+        <div id="view-ops" class="view" role="tabpanel" hidden></div>
       </div>
     </section>
   </main>
 
   <dialog id="connect-dialog" class="dialog"></dialog>
+  <dialog id="signin-dialog" class="dialog dialog-sm" aria-label="Sign in as approver"></dialog>
 
   <script type="module" src="app.js"></script>
 </body>
