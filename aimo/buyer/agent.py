@@ -611,7 +611,7 @@ class BuyerAgent:
             if isinstance(cur, dict) and cur.get("status") == "approved":
                 # gateway round 2: approved -> placement follows; give it a few polls to reach placed
                 self._approved_polls = getattr(self, "_approved_polls", 0) + 1
-                if self._approved_polls < 5:
+                if self._approved_polls < 15:  # up to ~30 s for placement
                     continue
                 break
             if isinstance(cur, dict) and cur.get("status") != "pending_approval":
