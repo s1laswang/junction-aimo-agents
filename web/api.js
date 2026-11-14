@@ -8,6 +8,27 @@ export function createLiveApi(base) {
   const url = (p) => base + p;
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
 
+  // Human approver sign-in: approvals need X-Approver-Pin, which no agent ever receives.
+  // Asked once per browser session (production: the customer's SSO).
+  const PIN_KEY = "aimoApproverPin";
+  function approverPin(forceAsk) {
+    let pin = null;
+    try { pin = forceAsk ? null : sessionStorage.getItem(PIN_KEY); } catch { /* storage blocked */ }
+    if (!pin) {
+      pin = window.prompt("Approver sign-in: enter the approver PIN (see data/keys/approver_pin or AIMO_APPROVER_PIN)") || "";
+      try { if (pin) sessionStorage.setItem(PIN_KEY, pin); } catch { /* storage blocked */ }
+    }
+    return pin;
+  }
+  async function humanReq(method, path, body) {
+    try {
+      return await req(method, path, body, { "X-Approver-Pin": approverPin(false) });
+    } catch (e) {
+      if (e.status !== 401) throw e;
+      return req(method, path, body, { "X-Approver-Pin": approverPin(true) });  // wrong/expired PIN: ask again once
+    }
+  }
+
   async function req(method, path, body, extraHeaders) {
     let res;
     try {
@@ -70,8 +91,8 @@ export function createLiveApi(base) {
       return close;
     },
 
-    approvals: (status = "pending") => req("GET", `/v1/approvals?status=${encodeURIComponent(status)}`),
-    decide: (orderId, body) => req("POST", `/v1/approvals/${encodeURIComponent(orderId)}/decision`, body),
+    approvals: (status = "pending") => humanReq("GET", `/v1/approvals?status=${encodeURIComponent(status)}`),
+    decide: (orderId, body) => humanReq("POST", `/v1/approvals/${encodeURIComponent(orderId)}/decision`, body),
     getOrder: (id) => req("GET", `/v1/orders/${encodeURIComponent(id)}`),
     getQuote: (id) => req("GET", `/v1/quotes/${encodeURIComponent(id)}`),
     audit: (subjectId) => req("GET", subjectId ? `/v1/audit?subject_id=${encodeURIComponent(subjectId)}` : "/v1/audit"),
@@ -86,8 +107,8 @@ export function createLiveApi(base) {
         return Object.keys(spec.paths || {}).some((p) => p.startsWith("/v1/demo/tamper"));
       } catch { return false; }
     },
-    tamper: (seq) => req("POST", `/v1/demo/tamper/${encodeURIComponent(seq)}`),
-    untamper: (seq) => req("POST", `/v1/demo/untamper/${encodeURIComponent(seq)}`),
+    tamper: (seq) => humanReq("POST", `/v1/demo/tamper/${encodeURIComponent(seq)}`),
+    untamper: (seq) => humanReq("POST", `/v1/demo/untamper/${encodeURIComponent(seq)}`),
     otap: () => req("GET", "/.well-known/otap.json"),
   };
 }
