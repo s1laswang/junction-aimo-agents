@@ -1,6 +1,32 @@
 # Buyer agent: status report
 
-Owner: buyer engineer (Claude). Branch `team/buyer`. Updated Sat 14 Nov 14:50 Helsinki.
+Owner: buyer engineer (Claude). Branch `team/buyer`. Updated Sat 14 Nov 15:15 Helsinki (round 2).
+
+## Round 2 (Sat afternoon)
+- **Montage:** `uv run aimo demo --montage` runs happy, stockout, school-allergen, injection, drift and event in sequence, with HTTP auto-approval by the policy's named approvers.
+  It prints a verdict per scenario plus the Gemini calls and tokens from the ledger, and writes `docs/demo-montage.md`. That file holds the results table; every number in it comes from the run.
+- **Multi-item requests:** `parse_request()` returns one Need per product (Gemini structured output `{items: [...]}` plus a regex split).
+  The agent plans each item, then makes ONE quote and ONE order. The quote's need is combined: claims are intersected, excluded allergens are unioned, and the items are listed in preferences.
+- **Quote = plan, enforced in code:** before create_quote, the lines are compared with the plan's lines (product_id, qty_sales_units). On a mismatch they are replaced by the plan's lines, and a `thought` step logs both versions.
+  create_quote is refused when an item has not been planned or the plan has no lines.
+- **Planner preferences:** plan_need now only receives spec preferences (brand, fat_pct, organic, pack, use). See finding 1.
+- **Query extraction fix:** guess_query strips quantities, date phrases ("by Wednesday", "for Wednesday's lunch") and allergy clauses, and keeps the noun phrase.
+- **Injection flags:** these are now plain strings ("<product_id> marketing_text: reasons"), with one aggregated `thought` per tool result.
+- **Event scenario wording:** "Last-minute conference dinner for 150 on Monday evening: we need 40 L cream and 20 kg butter, lactose-free."
+  A Sunday delivery is impossible in the live data: every candidate is past its cut-off or only arrives Monday. The agent correctly returned no_order for that.
+
+### Montage result (Sat 15:09, live gateway from main + team/buyer, MCP transport)
+All 6 scenarios PASS: happy, stockout (4 lines), school-allergen (Oatly, 6 candidates rejected, approved by liisa), injection (3 supplier texts flagged and redacted; policy cites injection; largest line 300 units), drift (held, needs_confirmation) and event (2 lines, EUR 251.20, auto-approved within mandate).
+Totals: 55 Gemini calls; 596,239 in / 9,812 out / 1,428 thinking tokens; 208 s wall clock for all six runs. Full table: docs/demo-montage.md.
+Cost note: about 90k input tokens per run, because tool results (plans with candidates) are replayed on every turn. Trimming candidates in function responses is the next optimisation.
+
+### Findings for other engineers
+1. **Catalog (serious):** any non-empty `need.preferences` without preferred_product_ids makes `reference_spec` skip the top-hit reference.
+   The plan then loses the product-type check. Repro: POST /v1/plan for school-tampere, "oat drink", 120 L, milk+nuts excluded, `preferences: {"parsed_by": "gemini"}`. The plan becomes **21 x 477410 "18 x Pepsi Max soft drink 0,33 l" = 124.74 L, EUR 249.69**.
+   With empty preferences it is 120 x Oatly 470863 = EUR 168.00. "cream" with preferences.notes returned 0 candidates.
+   The buyer now filters preferences, but a customer with brand prefs and no usual product would still hit this.
+2. **The frontend's €249.69 / 124.74 L plan, explained:** it was not the parser. The parser cross-checks against the text's quantity (120), and 124.74 is neither 120 nor 200.
+   It was the planner's pack rounding (21 packs x 5.94 L) on the wrong product, caused by finding 1. The model then "fixed" it to 120 x Oatly in create_quote, which the new quote=plan rule makes impossible.
 
 ## Status: M1 met (verified end to end against the real gateway, catalog and trust)
 Verified on a local integration branch (team/buyer + origin/team/gateway + origin/team/catalog + main with trust; not pushed):
