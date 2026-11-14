@@ -37,13 +37,17 @@ Claude Desktop (claude_desktop_config.json, stdio):
 
 
 ALLERGEN_ALIASES = {
-    "nuts": {"nuts", "peanuts", "peanut", "tree nuts"},
-    "nut": {"nuts", "peanuts", "peanut", "tree nuts"},
+    "nuts": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
+    "nut": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
     "peanut": {"peanut", "peanuts"},
     "peanuts": {"peanut", "peanuts"},
+    "tree nuts": {"tree nuts", "tree nut"},
+    "tree nut": {"tree nuts", "tree nut"},
     "milk": {"milk", "lactose"},
-    "dairy": {"milk", "lactose"},
+    "dairy": {"dairy", "milk", "lactose"},
     "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
+    "egg": {"egg", "eggs"},
+    "eggs": {"egg", "eggs"},
 }
 
 
@@ -62,6 +66,8 @@ def _allergen(a):
 def usable(offer, need_item, deliver_by):
     if offer.get("sales_block"):
         return False
+    if offer.get("unit_price_net") is None:
+        return False
     amt = offer.get("available_amount")
     if amt is not None and amt <= 0:
         return False
@@ -71,8 +77,9 @@ def usable(offer, need_item, deliver_by):
     banned = set()
     for a in (need_item.get("constraints") or {}).get("exclude_allergens") or []:
         k = _allergen(a)
-        banned |= {k} | ALLERGEN_ALIASES.get(k, set())
-    if banned & {_allergen(a) for a in offer["product"].get("allergens") or []}:
+        if k:
+            banned |= {k} | ALLERGEN_ALIASES.get(k, set())
+    if banned & {_allergen(a) for a in (offer.get("product") or {}).get("allergens") or [] if _allergen(a)}:
         return False
     return True
 
@@ -81,15 +88,22 @@ BASE = {"kg": 1, "g": 0.001, "l": 1, "dl": 0.1, "cl": 0.01, "ml": 0.001}
 
 
 def units_for(offer, need_item):
-    us = offer["product"].get("unit_size") or {}
+    us = (offer.get("product") or {}).get("unit_size") or {}
     f, n = BASE.get(str(us.get("unit", "")).lower()), BASE.get(str(need_item.get("unit", "")).lower())
-    if f and n and us.get("value") and need_item.get("quantity"):
-        return math.ceil(need_item["quantity"] * n / (us["value"] * f) - 1e-9)
-    return offer["units_needed"] or 1
+    val, qty = us.get("value"), need_item.get("quantity")
+    if f and n and val and val > 0 and qty and qty > 0:
+        return max(1, math.ceil(qty * n / (val * f) - 1e-9))
+    return max(1, math.ceil(offer.get("units_needed") or 0))
 
 
 def rank(offers, need_item):
-    return sorted(offers, key=lambda o: (o["unit_price_net"] * units_for(o, need_item), -(o.get("reliability") or 0)))
+    return sorted(
+        offers,
+        key=lambda o: (
+            (o["unit_price_net"] if o.get("unit_price_net") is not None else float("inf")) * units_for(o, need_item),
+            -(o.get("reliability") or 0),
+        ),
+    )
 
 
 def pick(need_item, offers, deliver_by, first=None):
@@ -152,18 +166,19 @@ async def _run(text, customer, key, url, log, poll, interval, stdio=False):
     async with _session(url, key, stdio) as s:
         need = await _call(s, "parse_request", {"text": text, "customer": customer})
         out["need"] = need
+        deliver_by = need.get("deliver_by")
         log.append(f"Understood the request for {customer}: " + "; ".join(
-            f"{i['quantity']:g} {i['unit']} {i['query']}" for i in need["items"]) + f", delivery by {_day(need['deliver_by'])}.")
+            f"{i['quantity']:g} {i['unit']} {i['query']}" for i in (need.get("items") or [])) + f", delivery by {_day(deliver_by)}.")
         try:
             res = await _call(s, "get_offers", need)
         except RuntimeError:
             res = await _call(s, "get_offers", {"need": need})
-        chosen, lines = [], []
-        for entry in res["items"]:
-            ni, offers = entry["need_item"], entry["offers"]
+        chosen = []
+        for entry in (res or {}).get("items") or []:
+            ni, offers = entry["need_item"], entry.get("offers") or []
             log.append(f"Found {len(offers)} offers for {ni['query']}.")
-            first = llm.choose(text, [o for o in offers if usable(o, ni, need["deliver_by"])])
-            got, left = pick(ni, offers, need["deliver_by"], first)
+            first = llm.choose(text, [o for o in offers if usable(o, ni, deliver_by)])
+            got, left = pick(ni, offers, deliver_by, first)
             if not got:
                 log.append(f"No offer for {ni['query']} is available in time and within constraints.")
             for c in got:
@@ -184,20 +199,20 @@ async def _run(text, customer, key, url, log, poll, interval, stdio=False):
              **({"substitute_for": c["substitute_for"]} if c.get("substitute_for") else {})}
             for c in chosen
         ]
-        quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(need["deliver_by"])})
+        quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(deliver_by)})
         out["quote"] = quote
         log.append(f"Signed quote {quote['quote_id']}: {quote['total_net']:.2f} {quote['currency']} net, valid until {quote['valid_until']}.")
         order = await _call(s, "place_order", {"quote_id": quote["quote_id"], "jws": quote["jws"]})
         out["order"] = order
         d = order["decision"]
-        why = " ".join(r["text"] for r in d["reasons"])
+        why = " ".join(r["text"] for r in (d.get("reasons") or []))
         if d["outcome"] == "auto":
             log.append(f"Order {order['order_id']} placed automatically within mandate. {why}".strip())
         elif d["outcome"] == "blocked":
             log.append(f"Order {order['order_id']} blocked. {why}".strip())
         else:
             log.append(f"Order {order['order_id']} needs human approval. {why}".strip())
-            for _ in range(poll):
+            for _ in range(max(0, poll)):
                 if order["status"] != "pending_approval":
                     break
                 await asyncio.sleep(interval)
@@ -243,7 +258,7 @@ def main():
     out = run(a.text, a.customer, a.key, a.url, a.poll, stdio=a.stdio)
     print("\n".join(out["log"]))
     o = out["order"]
-    sys.exit(0 if o and o["status"] not in ("blocked", "rejected") else 1)
+    sys.exit(0 if o and o.get("status") not in ("blocked", "rejected", "expired") and (o.get("decision") or {}).get("outcome") != "blocked" else 1)
 
 
 if __name__ == "__main__":

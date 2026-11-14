@@ -205,8 +205,6 @@ def test_all_js_api_routes_exist_on_gateway(client):
         for m in route_re.finditer(text):
             raw = m.group(1).split()[0]
             base = raw.split("?", 1)[0].split("#", 1)[0]
-            if base == "/v1/audit/verify":
-                continue
             matched = base in oa_paths or base in known_static
             if not matched:
                 for prefix, templ in param_prefixes.items():

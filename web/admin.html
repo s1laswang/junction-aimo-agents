@@ -5,19 +5,30 @@
 <main>
 <div class="panel-head"><div><h1>Mandate <span class="tag neutral mono" id="agent"></span></h1><p class="muted small">What a buying agent may do for <span class="mono" id="who"></span> without a human.</p></div></div>
 <p class="muted" id="off" role="status"></p>
-<form id="f" class="panel form" autocomplete="off">
+<form id="f" class="panel form" autocomplete="off" novalidate>
 <div class="row2">
-<div class="field"><label for="per_order_eur">Per order limit (EUR)</label><input id="per_order_eur" type="number" min="0" step="1" inputmode="decimal" required></div>
-<div class="field"><label for="per_week_eur">Per week limit (EUR)</label><input id="per_week_eur" type="number" min="0" step="1" inputmode="decimal" required></div>
+<div class="field"><label for="per_order_eur">Per order limit (EUR)</label><input id="per_order_eur" type="number" min="0" step="any" inputmode="decimal" required></div>
+<div class="field"><label for="per_week_eur">Per week limit (EUR)</label><input id="per_week_eur" type="number" min="0" step="any" inputmode="decimal" required></div>
 </div>
 <div class="field"><label for="substitutions">Substitution policy</label><select id="substitutions"><option value="never">never</option><option value="within_prefs">within_prefs</option><option value="ask">ask</option></select><p class="muted small">never: exact products only. within_prefs: swap inside allergens and brands. ask: propose, human decides.</p></div>
 <div class="field"><label for="exclude_allergens-in">Excluded allergens</label><div class="chips" data-k="exclude_allergens"><input id="exclude_allergens-in" placeholder="add and press Enter"></div></div>
 <div class="field"><label for="allowed_categories-in">Allowed categories (empty = all)</label><div class="chips" data-k="allowed_categories"><input id="allowed_categories-in" placeholder="add and press Enter"></div></div>
 <div class="field"><label for="preferred_brands-in">Preferred brands</label><div class="chips" data-k="preferred_brands"><input id="preferred_brands-in" placeholder="add and press Enter"></div></div>
 <div class="field"><label for="approvers-in">Approvers</label><div class="chips" data-k="approvers"><input id="approvers-in" placeholder="add and press Enter"></div></div>
-<div class="actions"><button class="btn btn-primary" type="submit">Save mandate</button><button class="btn btn-quiet" type="button" id="reset">Reset</button><span class="small muted" id="msg" role="status"></span></div>
+<div class="actions"><button class="btn btn-primary" type="submit" id="save">Save mandate</button><button class="btn btn-quiet" type="button" id="reset" disabled>Reset</button><span class="small muted" id="msg" role="status"></span></div>
 </form>
 <p class="muted small note">Changes apply to the next order; every change is in the audit trail.</p>
 <p class="small" id="last"></p>
+<section id="sim-sec">
+<div class="panel-head" style="margin-top:28px"><div><h2>Stock simulation</h2><p class="muted small">Override supplier availability for one product to test stock-outs and substitutions.</p></div></div>
+<form id="sim-form" class="panel form" autocomplete="off" novalidate>
+<div class="field"><label for="sim-product">Product ID</label><input id="sim-product" type="text" placeholder="e.g. 410008" spellcheck="false" required></div>
+<div class="row2">
+<div class="field"><label for="sim-amount">Available amount</label><input id="sim-amount" type="number" min="0" step="any" value="0" inputmode="decimal" required></div>
+<div class="field"><label for="sim-date">Available date (optional)</label><input id="sim-date" type="date"></div>
+</div>
+<div class="actions"><button class="btn btn-primary" type="submit" id="sim-apply">Simulate stock-out</button><button class="btn btn-quiet" type="button" id="sim-clear">Clear simulation</button><span class="small muted" id="sim-msg" role="status"></span></div>
+</form>
+</section>
 </main>
 <script src="/shell.js"></script><script src="/admin.js"></script></body></html>
