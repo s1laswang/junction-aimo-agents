@@ -16,6 +16,7 @@ from starlette.routing import Route
 
 from aimo import config
 from aimo.backend.client import reset_request_faults, set_request_faults
+from aimo.backend import clock
 from aimo.gateway import service
 from aimo.gateway.schemas import DecisionRequest, OffersRequest, OrderRequest, QuoteRequest
 from aimo.models import Need, Offer, Order, Plan, Product, ProductSummary, Quote
@@ -82,7 +83,7 @@ def _with_body_claims(ident: service.Identity, customer_id: Optional[str], agent
 
 
 class FaultsMiddleware:
-    """Pure ASGI middleware: header X-Aimo-Faults -> per-request fault context var."""
+    """Pure ASGI middleware: headers X-Aimo-Faults and X-Aimo-Now (demo mode) -> per-request context vars."""
 
     def __init__(self, app):
         self.app = app
@@ -90,15 +91,42 @@ class FaultsMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        spec = None
+        spec = now_hdr = None
         for k, v in scope.get("headers", []):
             if k == b"x-aimo-faults":
                 spec = v.decode("latin-1")
+            elif k == b"x-aimo-now":
+                now_hdr = v.decode("latin-1")
         token = set_request_faults(spec)
+        ntoken = clock.set_request_now(now_hdr)
         try:
             await self.app(scope, receive, send)
         finally:
+            clock.reset_request_now(ntoken)
             reset_request_faults(token)
+
+
+def _replay_info() -> dict[str, Any]:
+    from aimo.backend import replay
+
+    return replay.info()
+
+
+def _breakers() -> dict[str, Any]:
+    from aimo.gateway import resilience
+
+    return resilience.states()
+
+
+def _upstream_state() -> dict[str, Any]:
+    import time as _t
+
+    from aimo.backend.client import get_client
+
+    c = get_client()
+    down = getattr(c, "down_until", 0.0) or 0.0
+    return {"client": type(c).__name__, "circuit_open": down > _t.time(),
+            "retry_in_s": max(0, round(down - _t.time())), "last_error": getattr(c, "last_error", None)}
 
 
 def _prov_headers(meta: dict[str, Any]) -> dict[str, str]:
@@ -125,7 +153,8 @@ def build_router() -> APIRouter:
     @r.get("/healthz", tags=["discovery"], summary="Health and integration status")
     def healthz() -> dict[str, Any]:
         return {"ok": True, "version": service.VERSION, "integrations": service.integration_status(),
-                "offline": config.OFFLINE}
+                "offline": config.OFFLINE, "clock": clock.describe(), "replay": _replay_info(),
+                "upstream": _upstream_state(), "breakers": _breakers()}
 
     # ---------------------------------------------------------- catalog
     @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary])
@@ -207,7 +236,8 @@ def build_router() -> APIRouter:
     def decide(order_id: str, body: DecisionRequest):
         """Human decision. `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409
         "re-quote needed". Approve places the order and returns the order response."""
-        return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role)
+        return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role,
+                              remember=body.remember, remember_scope=body.remember_scope)
 
     # ---------------------------------------------------------- audit
     @r.get("/v1/audit", tags=["audit"], summary="Audit events")
@@ -236,6 +266,13 @@ def build_router() -> APIRouter:
         return service.demo_untamper(seq)
 
     # ---------------------------------------------------------- customers
+    @r.get("/v1/customers/{customer_id}/learned", tags=["customers"], summary="Learned approvals (remembered swaps)")
+    def learned(customer_id: str, x_customer_id: Optional[str] = Header(None)) -> dict[str, Any]:
+        """Swaps a human approved with `remember: true`. Visible only to the customer itself (403 otherwise)."""
+        if x_customer_id and x_customer_id != customer_id:
+            raise service.ServiceError(403, "customer_mismatch", "you can only read your own customer's learned approvals")
+        return service.learned_for(customer_id)
+
     @r.get("/v1/customers", tags=["customers"], summary="Demo customers and policy summaries")
     def customers() -> list[dict[str, Any]]:
         return service.list_customers()

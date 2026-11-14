@@ -40,6 +40,7 @@ from typing import Any, Iterable
 import httpx
 
 from aimo import config
+from aimo.backend import clock
 from aimo.models import Offer
 
 log = logging.getLogger("aimo.backend")
@@ -210,7 +211,10 @@ class ValioClient:
         self._lock = threading.RLock()
         self._last_call = 0.0
         self._http: httpx.Client | None = None
-        self.stats = {"upstream_calls": 0, "cache_hits": 0, "retries": 0}
+        self.stats = {"upstream_calls": 0, "cache_hits": 0, "retries": 0, "circuit_opened": 0}
+        self.down_until = 0.0          # circuit breaker: skip the network while > time.time()
+        self.circuit_s = float(os.environ.get("AIMO_UPSTREAM_CIRCUIT_S", "30"))
+        self.last_error: str | None = None
 
     # -- http
     def _client(self) -> httpx.Client:
@@ -232,6 +236,19 @@ class ValioClient:
             raise UpstreamError("offline mode (AIMO_OFFLINE=1) and no cached response", status_code=503)
         if not self._api_key:
             raise UpstreamError("AIMO_API_KEY is not configured", status_code=503)
+        if time.time() < self.down_until:
+            raise UpstreamError(f"upstream circuit open after repeated failures ({self.last_error})", 503,
+                                retry_after=max(1.0, self.down_until - time.time()))
+        try:
+            return self._post_retrying(endpoint, body)
+        except UpstreamError as e:
+            if e.status_code == 429 or e.status_code >= 500:
+                self.down_until = time.time() + (e.retry_after if e.status_code == 429 and e.retry_after else self.circuit_s)
+                self.last_error = str(e)
+                self.stats["circuit_opened"] += 1
+            raise
+
+    def _post_retrying(self, endpoint: str, body: dict) -> dict:
         attempt = 0
         while True:
             wait = MIN_INTERVAL_S - (time.monotonic() - self._last_call)
@@ -251,8 +268,12 @@ class ValioClient:
                 else:
                     # 4xx other than 429: not retryable. Never echo request headers.
                     raise UpstreamError(f"upstream {endpoint} HTTP {r.status_code}: {r.text[:300]}", r.status_code)
-            except (httpx.TimeoutException, httpx.TransportError) as e:
-                err = UpstreamError(f"upstream {endpoint} transport error: {type(e).__name__}", 504)
+            except httpx.TimeoutException as e:
+                err = UpstreamError(f"upstream {endpoint} timed out ({type(e).__name__})", 504)
+            except httpx.TransportError as e:  # DNS / connect refused / no network: retry once, then give up fast
+                err = UpstreamError(f"upstream {endpoint} unreachable ({type(e).__name__})", 503)
+                if attempt >= 1:
+                    raise err
             if attempt >= self.max_retries:
                 raise err
             delay = retry_after if retry_after is not None else min(8.0, 0.5 * (2**attempt)) + random.uniform(0, 0.25)
@@ -350,7 +371,10 @@ def get_client():
     global _client
     with _client_lock:
         if _client is None:
-            _client = ValioClient()
+            from aimo.backend import replay
+
+            d = replay.replay_dir()
+            _client = replay.ReplayClient(d) if d is not None else ValioClient()
         return _client
 
 
@@ -383,6 +407,8 @@ def merge_offer(
     fetched_at = datetime.fromtimestamp(min(fetched_ts), tz=timezone.utc) if fetched_ts else datetime.now(timezone.utc)
 
     # Estimated upstream "now": the availability response's timeNow plus time elapsed since fetch.
+    if now is None and clock.simulated():
+        now = clock.now()
     if now is None:
         now = datetime.now(timezone.utc)
         if avail_item:
@@ -540,16 +566,20 @@ def get_offers_with_meta(
     ids = list(dict.fromkeys(str(p) for p in product_ids))
     client = get_client()
     before = dict(getattr(client, "stats", {}) or {})
-    if fresh:
-        try:
-            price = client.price(ids, requested_date, customer_id, fresh=True)
-            avail = client.availability(ids, requested_date, customer_id, fresh=True)
-        except TypeError:  # a BackendClient without the fresh flag (fixtures, other adapters)
-            price = client.price(ids, requested_date, customer_id)
-            avail = client.availability(ids, requested_date, customer_id)
-    else:
-        price = client.price(ids, requested_date, customer_id)
-        avail = client.availability(ids, requested_date, customer_id)
+    fallback_reason = None
+    try:
+        price, avail = _fetch_pair(client, ids, requested_date, customer_id, fresh)
+    except UpstreamError as e:
+        from aimo.backend import replay
+
+        rc = None if isinstance(client, replay.ReplayClient) else replay.fallback_client()
+        if rc is None or e.injected or not (e.status_code == 429 or e.status_code >= 500):
+            raise
+        log.warning("upstream unavailable (%s); serving from replay snapshot %s", e, rc.dir)
+        fallback_reason = str(e)
+        client = rc
+        before = dict(rc.stats)
+        price, avail = _fetch_pair(rc, ids, requested_date, customer_id, fresh)
     p_by = {str(x.get("productId")): x for x in price.get("products", []) or []}
     a_by = {str(x.get("productId")): x for x in avail.get("products", []) or []}
     offers = {
@@ -561,19 +591,34 @@ def get_offers_with_meta(
     calls = after.get("upstream_calls", 0) - before.get("upstream_calls", 0)
     oldest = [x for x in (price.get("_oldest_fetch"), avail.get("_oldest_fetch")) if x]
     fetched_at = datetime.fromtimestamp(min(oldest), tz=timezone.utc) if oldest else datetime.now(timezone.utc)
+    replayed = bool(price.get("_replay") or avail.get("_replay"))
     meta = {
         "source": "valio-aimo-mock-api",
         "upstream": getattr(client, "base_url", type(client).__name__),
         "endpoints": ["/api/price", "/api/availability"],
-        "served_from": "live" if calls else "cache",
+        "served_from": "replay" if replayed else ("live" if calls else "cache"),
         "fresh_requested": fresh,
         "upstream_calls": calls,
         "fetched_at": fetched_at.isoformat(),
         "valid_for_s": int(getattr(client, "ttl_s", CACHE_TTL_S)),
         "upstream_time_now": avail.get("timeNow"),
         "faults": faults.spec or None,
+        "clock": clock.describe(),
     }
+    if replayed:
+        meta["replay"] = {"recorded_at": price.get("_recorded_at") or avail.get("_recorded_at"),
+                          "fallback_reason": fallback_reason}
     return offers, meta
+
+
+def _fetch_pair(client, ids: list[str], requested_date: date, customer_id: str | None, fresh: bool) -> tuple[dict, dict]:
+    if fresh:
+        try:
+            return (client.price(ids, requested_date, customer_id, fresh=True),
+                    client.availability(ids, requested_date, customer_id, fresh=True))
+        except TypeError:  # a BackendClient without the fresh flag (fixtures, other adapters)
+            pass
+    return client.price(ids, requested_date, customer_id), client.availability(ids, requested_date, customer_id)
 
 
 def get_offers(

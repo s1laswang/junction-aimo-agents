@@ -52,6 +52,10 @@ class DecisionRequest(BaseModel):
     quote_hash: str = Field(..., description="The quote_hash the approver reviewed; 409 if it does not match the order")
     approver_role: Optional[str] = Field(None, description="Role the approver acts in (e.g. procurement_manager). "
                                          "Defaults to the role in the customer's approver directory.")
+    remember: bool = Field(False, description="Learned approvals: remember this approved swap so the policy can "
+                                              "auto-allow it next time (aimo.trust.learned)")
+    remember_scope: Literal["product", "product_type"] = Field(
+        "product", description="product = exactly this substitute; product_type = any equivalent of this kind")
 
     model_config = {"json_schema_extra": {"examples": [
         {"decision": "approve", "approver": "anna@hotel-aurora.example", "approver_role": "procurement_manager",

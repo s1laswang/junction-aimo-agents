@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import date
 from typing import Any, Callable, Optional
 
 from aimo.catalog.allergens import blocking
@@ -120,18 +121,139 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
     full = rank_substitutes(need, offers, limit=200, rows=shortlist, relevance=rel, inferred_allergens=hints)
     cands = _trim(full, limit)
     plan = fill(need, cands)
+    late_notes: list[str] = []
+    if plan.shortfall > 1e-9:
+        plan, late_notes = _late_split(need, plan, full, shortlist, rel, hints)
     notes = []
     if need.product_query != original.product_query:
         notes.append(f"Searched the catalog for '{need.product_query}'"
                      + (" (taken from the request text because the parsed product phrase found nothing)"
                         if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
                         " enforced as exclusions, not searched for)") + ".")
-    advice = shortfall_advice(need, plan, full)
-    plan = plan.model_copy(update={"need": original,
-                                   "explanation": " ".join([*notes, plan.explanation, *advice]).strip()})
+    advice = shortfall_advice(need, plan, full) if plan.shortfall > 1e-9 else []
+    cover = coverage_sentence(need, plan)
+    plan = plan.model_copy(update={"need": original, "explanation": " ".join(
+        [*notes, cover, plan.explanation, *late_notes, *advice]).strip()})
     if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
         _recipe_checks(original, plan)
     return plan
+
+
+_ORDERABILITY = ("order cut-off passed", "earliest delivery", "not available for the requested date")
+
+
+def _only_orderability(c: Candidate) -> bool:
+    if c.tier != "rejected" or not c.reasons or not c.reasons[0].startswith("Rejected: "):
+        return False
+    parts = c.reasons[0].removeprefix("Rejected: ").split("; ")
+    return bool(parts) and all(any(x.startswith(o) for o in _ORDERABILITY) for x in parts)
+
+
+def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, rel: dict,
+                hints: dict) -> tuple[Plan, list[str]]:
+    """Cover a shortfall with products that are only blocked by date (cut-off / late availability).
+    Lines after delivery_by always carry `late_option` + `delivery_date:<iso>`; they are added to the
+    plan only when need.preferences['allow_split_delivery'] is true, otherwise reported as the
+    earliest date that covers the rest."""
+    from aimo.catalog.delivery import earliest_feasible, fmt, late_offer
+    allow = bool((need.preferences or {}).get("allow_split_delivery"))
+    late: dict[str, tuple[Candidate, date, bool]] = {}
+    for c in full:
+        if not _only_orderability(c) or c.offer is None:
+            continue
+        d, est = earliest_feasible(c.offer)
+        if d is None or d <= need.delivery_by and not c.offer.cutoff_passed:
+            continue
+        late[c.product.id] = (c, d, est)
+        if "late_option" not in c.flags:
+            c.flags.append("late_option")
+            c.reasons.append(f"late option: earliest delivery {fmt(d)}" + (" (estimated from the product's lead time;"
+                             " the API's closing time does not move with the requested date)" if est else ""))
+    if not late:
+        return plan, []
+    last = max(d for _c, d, _e in late.values())
+    late_need = need.model_copy(update={"delivery_by": last})
+    late_offers = {pid: late_offer(c.offer, d) for pid, (c, d, _e) in late.items()}
+    ranked = rank_substitutes(late_need, late_offers, limit=50, rows={p: shortlist[p] for p in late if p in shortlist},
+                              relevance=rel, inferred_allergens=hints)
+    ranked = [c for c in ranked if c.tier != "rejected"]
+    ranked.sort(key=lambda c: (late[c.product.id][1], TIER_ORDER[c.tier], -c.rank_score))
+    remaining = plan.shortfall
+    from aimo.catalog.textsearch import get_rows as _gr
+    lots = {pid: d.get("allowed_lot_size") for pid, d in _gr([c.product.id for c in ranked]).items()}
+    new_lines: list[PlanLine] = []
+    for c in ranked:
+        if remaining <= 1e-9:
+            break
+        content = c.product.content_amount
+        if not content or c.product.content_unit != need.unit or c.offer is None or c.offer.unit_price is None:
+            continue
+        units = _round_lot(remaining / content, lots.get(c.product.id), up=True)
+        if c.offer.available_amount is not None and c.offer.available_amount < units:
+            units = _round_lot(c.offer.available_amount, lots.get(c.product.id), up=False)
+        if units <= 0:
+            continue
+        d, est = late[c.product.id][1], late[c.product.id][2]
+        covered = round(units * content, 4)
+        total = round(units * c.offer.unit_price, 2)
+        flags = sorted(set([f for f in c.flags if f not in ("cutoff_passed",)] +
+                           ["late_option", f"delivery_date:{d.isoformat()}"] + (["split_delivery"] if allow else [])))
+        reasons = [c.reasons[0] if c.reasons else "",
+                   f"Delivered {fmt(d)}, after the requested {fmt(need.delivery_by)}"
+                   + (" (estimated date)" if est else "") + ("; split delivery allowed by the customer"
+                                                              if allow else "; needs a human decision"),
+                   f"{units:g} x {c.product.sales_unit} x {content:g} {need.unit} = {covered:g} {need.unit}; "
+                   f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}"]
+        new_lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
+                                  qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
+                                  unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=flags))
+        remaining -= covered
+    if not new_lines:
+        return plan, []
+    late_cov = sum(l.covered_amount for l in new_lines)
+    first = new_lines[-1]
+    d_all = max(late[l.product_id][1] for l in new_lines)
+    if not allow:
+        note = (f"Earliest date that covers the remaining {plan.shortfall:g} {need.unit}: {fmt(d_all)}"
+                f" ({', '.join(f'{l.covered_amount:g} {need.unit} of {l.product_name} ({l.product_id})' for l in new_lines)})"
+                f"{' (estimated)' if any(late[l.product_id][2] for l in new_lines) else ''}. Not added to the plan: "
+                f"re-plan for {fmt(d_all)} or allow split delivery.")
+        return plan, [note]
+    lines = [*plan.lines, *new_lines]
+    covered_total = round(sum(l.covered_amount for l in lines), 4)
+    total_net = round(sum(l.line_total for l in lines), 2)
+    shortfall = round(max(0.0, need.quantity - covered_total), 4)
+    note = (f"Split delivery: {late_cov:g} {need.unit} arrive {fmt(d_all)} (late_option lines, flagged for review).")
+    _ = first
+    return plan.model_copy(update={"lines": lines, "covered_amount": covered_total, "total_net": total_net,
+                                   "shortfall": shortfall}), [note]
+
+
+def _line_date(need: Need, l: PlanLine) -> date:
+    for f in l.flags:
+        if f.startswith("delivery_date:"):
+            return date.fromisoformat(f.split(":", 1)[1])
+    return need.delivery_by
+
+
+def coverage_sentence(need: Need, plan: Plan) -> str:
+    """'1000 L: 600 L Mon 16 Nov (Valio Eila 1 L), 400 L Thu 19 Nov (...); because only 600 L are in stock for Mon 16 Nov.'"""
+    from aimo.catalog.delivery import fmt
+    if not plan.lines:
+        return f"{need.quantity:g} {need.unit}: nothing orderable by {fmt(need.delivery_by)}."
+    parts = []
+    for l in plan.lines:
+        d = _line_date(need, l)
+        tag = ", late option" if "late_option" in l.flags else ""
+        parts.append(f"{l.covered_amount:g} {need.unit} {fmt(d)} ({l.product_name}{tag})")
+    why = []
+    for l in plan.lines:
+        if "partial_stock" in l.flags and _line_date(need, l) == need.delivery_by:
+            why.append(f"only {l.qty_sales_units:g} {l.sales_unit} of {l.product_id} in stock for {fmt(need.delivery_by)}")
+    if plan.shortfall > 1e-9:
+        why.append(f"{plan.shortfall:g} {need.unit} not covered")
+    return (f"{need.quantity:g} {need.unit}: " + ", ".join(parts)
+            + (f"; because {', '.join(why)}" if why else "") + ".")
 
 
 def _trim(full: list[Candidate], limit: int) -> list[Candidate]:
@@ -195,6 +317,9 @@ def shortfall_advice(need: Need, plan: Plan, full: list[Candidate]) -> list[str]
 def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
     """Gemini recipe-compatibility note for substitute lines vs the usual product (cached; flags only)."""
     if not need.preferred_product_ids:
+        return
+    from aimo.catalog.netcheck import gemini_online
+    if not gemini_online():
         return
     orig = need.preferred_product_ids[0]
     subs = [l for l in plan.lines if l.product_id not in need.preferred_product_ids][:3]

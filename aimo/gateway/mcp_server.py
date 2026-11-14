@@ -18,6 +18,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from aimo.backend.client import reset_request_faults, set_request_faults
+from aimo.backend import clock
 from aimo.gateway import service
 from aimo.gateway.schemas import QuoteLineIn
 from aimo.models import Need
@@ -55,12 +56,15 @@ def _headers(ctx: Context | None) -> dict[str, str]:
 
 
 def _call(ctx: Context | None, fn, *args, **kwargs):
-    token = set_request_faults(_headers(ctx).get("x-aimo-faults"))
+    h = _headers(ctx)
+    token = set_request_faults(h.get("x-aimo-faults"))
+    ntoken = clock.set_request_now(h.get("x-aimo-now"))
     try:
         return fn(*args, **kwargs)
     except service.ServiceError as e:
         raise ToolError(json.dumps(e.to_dict(), default=str)) from e
     finally:
+        clock.reset_request_now(ntoken)
         reset_request_faults(token)
 
 
@@ -175,8 +179,9 @@ def build_mcp() -> MCPServer:
     @mcp.tool()
     def list_policies(ctx: Context = None) -> dict[str, Any]:
         """Customers known to this gateway and a plain-language summary of each customer's purchasing policy
-        (spend limits, approver roles, substitution and allergen rules)."""
-        return _call(ctx, service.list_policies)
+        (spend limits, approver roles, substitution and allergen rules), plus `learned_swaps`: substitutions your
+        customer's humans approved with "remember", which the policy may now allow without asking again."""
+        return _call(ctx, service.list_policies, identity=_identity(ctx))
 
     try:  # recipes, drift, proactive seller tools (ported from Momin's junction26-valio)
         from aimo.gateway.extras import register_mcp_tools
