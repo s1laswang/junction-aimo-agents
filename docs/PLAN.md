@@ -9,6 +9,7 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 15:00 Helsinki. Deadline: **
 2. **Live demo hosting.** By default the demo runs on a laptop with one command, and we also record a backup video. Do you want a public URL for judges, such as Cloud Run? That needs your GCP project. If you don't answer, we go local plus video.
 3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
 4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
+5. **When is the pitch slot?** The live "by Monday" story depends on a real mock-API cut-off. Stock milk can be ordered for Monday delivery only until **Sun 15 Nov 17:00**. If judging runs after about 16:30 on Sunday, we switch the request to "by Tuesday", or use the recorded video or mock mode. Tell us the slot once you know it.
 
 Everything else is decided below. Change it here if you disagree.
 
