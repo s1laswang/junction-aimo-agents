@@ -80,7 +80,7 @@ def test_naive_valid_until_and_audit_and_cli(tmp_path, capsys):
     from aimo import audit
 
     line = QuoteLine(product_id="p1", quantity=1, unit_price_net=1.0, line_total_net=1.0)
-    q = quotes.issue("hotel-aurora", "a1", [line], date(2026, 11, 16), datetime.utcnow() + timedelta(hours=1), 1.24)
+    q = quotes.issue("hotel-aurora", "a1", [line], date(2026, 11, 16), (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None), 1.24)
     quotes.redeem(q.quote_id, q.jws, "hotel-aurora", "a1")
     ev = audit.events(order_id=q.quote_id)
     assert [e.action for e in ev] == ["quote.issued", "quote.redeemed"]
@@ -203,3 +203,31 @@ def test_rotation_keeps_old_quotes_valid(tmp_path, capsys):
     forged = f"{b64({**h, 'kid': 'evil'})}.{b64(p)}.{s}"
     with pytest.raises(quotes.QuoteError):
         quotes.verify(forged)
+
+
+def test_quotes_cli_usage_and_expired(capsys):
+    assert quotes.main(["quotes.py"]) == 2
+    assert "usage: python -m aimo.quotes verify" in capsys.readouterr().out
+    expired_quote = make(hours=-1)
+    assert quotes.main(["quotes.py", "verify", expired_quote.jws]) == 0
+    out = capsys.readouterr().out
+    assert f"OK {expired_quote.quote_id}" in out and "(EXPIRED)" in out
+
+
+def test_keys_rotate_cli():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    old_kid = keys.kid()
+    root = str(Path(__file__).resolve().parents[1])
+    pypath = root if not os.environ.get("PYTHONPATH") else f"{root}{os.pathsep}{os.environ['PYTHONPATH']}"
+    env = {**os.environ, "PYTHONPATH": pypath}
+    res = subprocess.run([sys.executable, "-m", "aimo.keys", "rotate"], check=True, capture_output=True, text=True, env=env)
+    assert res.stdout.startswith("new kid ")
+    new_kid = res.stdout.strip().split()[-1]
+    keys._cache.clear()
+    assert new_kid != old_kid and keys.kid() == new_kid
+    usage = subprocess.run([sys.executable, "-m", "aimo.keys"], check=True, capture_output=True, text=True, env=env)
+    assert usage.stdout.strip() == "usage: python -m aimo.keys rotate"
