@@ -1,7 +1,7 @@
 import argparse
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -41,20 +41,83 @@ def usual_items(events, name_of=None):
     return list(seen.values())
 
 
-def allowed(offer, mandate):
+ALLERGEN_ALIASES = {
+    "nuts": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
+    "nut": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
+    "peanut": {"peanut", "peanuts"},
+    "peanuts": {"peanut", "peanuts"},
+    "tree nuts": {"tree nuts", "tree nut"},
+    "tree nut": {"tree nuts", "tree nut"},
+    "milk": {"milk", "lactose"},
+    "dairy": {"dairy", "milk", "lactose"},
+    "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
+    "egg": {"egg", "eggs"},
+    "eggs": {"egg", "eggs"},
+}
+
+
+def _norm_allergen(a):
+    s = str(a).strip().lower()
+    for pfx in ("may_contain:", "may:"):
+        if s.startswith(pfx):
+            return s[len(pfx):].strip()
+    return s
+
+
+def _expand_allergens(items):
+    out = set()
+    for a in items or []:
+        s = _norm_allergen(a)
+        if s:
+            out.add(s)
+            out |= ALLERGEN_ALIASES.get(s, set())
+    return out
+
+
+def _day(s):
+    return str(s)[:10] if s else None
+
+
+def usable(offer, deliver_by=None, now=None):
+    if offer.get("sales_block"):
+        return False
+    amt = offer.get("available_amount", 1)
+    if amt is None or amt <= 0:
+        return False
+    d = _day(offer.get("available_date"))
+    if d and deliver_by and d > _day(deliver_by):
+        return False
+    ct = offer.get("closing_time")
+    if ct:
+        try:
+            t = datetime.fromisoformat(str(ct))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            ref = now or datetime.now(timezone.utc)
+            if ref.tzinfo is None:
+                ref = ref.replace(tzinfo=timezone.utc)
+            if t <= ref:
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def allowed(offer, mandate, deliver_by=None):
+    if not usable(offer, deliver_by):
+        return False
     p = offer["product"]
-    if set(a.lower() for a in p.get("allergens") or []) & set(a.lower() for a in mandate.get("exclude_allergens") or []):
+    have = {_norm_allergen(a) for a in p.get("allergens") or [] if _norm_allergen(a)}
+    if have & _expand_allergens(mandate.get("exclude_allergens")):
         return False
     cats = mandate.get("allowed_categories")
     if cats and p.get("category") not in cats:
         return False
-    if offer.get("sales_block"):
-        return False
     return offer["total_net"] <= mandate.get("per_order_eur", float("inf"))
 
 
-def rank(usual_id, offers, mandate, limit=1):
-    ok = [o for o in offers if allowed(o, mandate) and o["available_amount"] >= o["units_needed"]]
+def rank(usual_id, offers, mandate, limit=1, deliver_by=None):
+    ok = [o for o in offers if allowed(o, mandate, deliver_by) and (o.get("available_amount") or 0) > 0 and o["available_amount"] >= o["units_needed"]]
     base = next((o for o in offers if str(o["product_id"]) == str(usual_id)), None)
     prefix = ""
     if base is None:
@@ -119,7 +182,7 @@ def explain(customer, key, url=URL, max_offers=3):
             }
             res = _call("POST", "/offers", key, url, json=need)
             for group in res.get("items", []):
-                got = rank(it["product_id"], group["offers"], mandate)
+                got = rank(it["product_id"], group["offers"], mandate, deliver_by=deliver_by)
                 for g in got:
                     g["origin"] = origin
                 props += got
@@ -141,7 +204,7 @@ def propose(customer, key, url=URL, max_offers=3):
 
 def accept(proposal, key, url=URL):
     o = proposal["offer"]
-    delivery = (o.get("available_date") or (date.today() + timedelta(days=3)).isoformat())[:10]
+    delivery = str(o.get("available_date") or (date.today() + timedelta(days=3)).isoformat())[:10]
     q = _call("POST", "/quotes", key, url, json={"offers": [{"product_id": o["product_id"], "quantity": o["units_needed"]}], "delivery_date": delivery})
     return _call("POST", "/orders", key, url, json={"quote_id": q["quote_id"], "jws": q["jws"]})
 
