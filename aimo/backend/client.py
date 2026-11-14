@@ -477,6 +477,7 @@ def apply_faults(offers: dict[str, Offer], faults: Faults, quantities: dict[str,
         o = o.model_copy(deep=True)
         if faults._hit(faults.stockout, pid):
             o.available, o.available_amount = False, 0.0
+            o.issues = [i for i in o.issues if i not in ("limited_stock", "partial_stock")]
             o.issues += ["out_of_stock", "injected:stockout"]
         pv = faults._val(faults.partial, pid)
         if pv is not None:
