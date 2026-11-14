@@ -32,7 +32,8 @@ def test_mini_catalog_files_and_mock_server(tmp_path):
     write_mini_data(data_dir)
     products = json.loads((data_dir / "valio_aimo_junction26_product_data.json").read_text(encoding="utf-8"))
     ids = {p["id"] for p in products}
-    assert {"464073", "464201", "463335", "460396", "461578", "461765", "463982", "480001"} <= ids
+    seed_ids = {"460396", "461578", "460573", "462775", "461765", "460200", "463982", "460468", "460884"}
+    assert {"464073", "464201", "463335", "480001"} | seed_ids <= ids
     assert (data_dir / "valio_aimo_junction26_delivery_reliability.csv").exists()
     assert (data_dir / "valio_aimo_junction26_carbon_footprint.csv").exists()
     valio_base, server = start_mock_valio_server()
