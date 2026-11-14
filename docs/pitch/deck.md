@@ -44,7 +44,7 @@ Second half (or a build): wind tunnel table, "Trusted gateway vs naive agent wit
 | Policy violations | **TODO (target 0)** | **TODO** |
 | Allergen violations | **TODO (target 0)** | **TODO** |
 | Injection block rate | **TODO** | **TODO** |
-Footnote facts already measured: 0 false positives on 34,159 real supplier texts [docs/TRUST.md]; 138 offline tests pass [pytest, Sat 14 Nov 18:27].
+Footnote facts already measured: 0 false positives on 34,159 real supplier texts [docs/TRUST.md]; 165 offline tests pass [pytest, Sat 14 Nov 19:05; docs/NUMBERS.md].
 **Speaker notes (25 s):** "We didn't test one happy path. Six live scenarios, end to end with the Gemini agent against the real mock API: stock-out, school allergens, prompt injection, standing-order drift, a last-minute event. All six pass. And our wind tunnel replays recorded API data across TODO synthetic customers, scored against an independent oracle." Read the wind-tunnel headline number when it lands.
 
 ## Slide 6: Openness and production path
