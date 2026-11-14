@@ -48,6 +48,10 @@ ALLERGEN_ALIASES = {
     "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
     "egg": {"egg", "eggs"},
     "eggs": {"egg", "eggs"},
+    "soy": {"soy", "soya"},
+    "soya": {"soy", "soya"},
+    "shellfish": {"shellfish", "crustaceans"},
+    "crustaceans": {"shellfish", "crustaceans"},
 }
 
 
@@ -131,6 +135,30 @@ def pick(need_item, offers, deliver_by, first=None):
     return chosen, max(left, 0.0)
 
 
+def _err_info(e):
+    while hasattr(e, "exceptions") and e.exceptions:
+        e = e.exceptions[0]
+    msg = str(e).strip()
+    idx = msg.find("{")
+    if idx >= 0:
+        try:
+            d = json.loads(msg[idx:])
+            if isinstance(d, dict) and "code" in d:
+                return str(d["code"]), d.get("text") or msg
+        except Exception:
+            pass
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            d = resp.json()
+            if isinstance(d, dict) and "code" in d:
+                return str(d["code"]), d.get("text") or msg
+        except Exception:
+            pass
+        return f"HTTP_{resp.status_code}", msg
+    return None, msg
+
+
 def _data(res):
     if res.is_error:
         raise RuntimeError("".join(getattr(c, "text", "") for c in res.content))
@@ -161,7 +189,7 @@ async def _session(url, key, stdio):
                 yield s
 
 
-async def _run(text, customer, key, url, log, poll, interval, stdio=False):
+async def _run(text, customer, key, url, log, poll, interval, stdio=False, ask_human=False):
     out = {"need": None, "chosen": [], "quote": None, "order": None, "log": log}
     async with _session(url, key, stdio) as s:
         need = await _call(s, "parse_request", {"text": text, "customer": customer})
@@ -171,9 +199,11 @@ async def _run(text, customer, key, url, log, poll, interval, stdio=False):
             f"{i['quantity']:g} {i['unit']} {i['query']}" for i in (need.get("items") or [])) + f", delivery by {_day(deliver_by)}.")
         try:
             res = await _call(s, "get_offers", need)
-        except RuntimeError:
+        except RuntimeError as e:
+            if _err_info(e)[0]:
+                raise
             res = await _call(s, "get_offers", {"need": need})
-        chosen = []
+        chosen, shortfalls = [], []
         for entry in (res or {}).get("items") or []:
             ni, offers = entry["need_item"], entry.get("offers") or []
             log.append(f"Found {len(offers)} offers for {ni['query']}.")
@@ -187,22 +217,42 @@ async def _run(text, customer, key, url, log, poll, interval, stdio=False):
                 log.append(f"Chose {c['quantity']} x {o['product']['name']} at {o['unit_price_net']:.2f} {o['currency']} net"
                            + (f", delivery reliability {rel:.0%}" if rel is not None else "")
                            + f", available {_day(o.get('available_date'))}.")
+            sf = entry.get("shortfall") or 0
             if left > 1e-6:
-                log.append(f"Shortfall: {left:.0%} of {ni['query']} cannot be covered.")
+                msg = f"Shortfall: {left:.0%} of {ni['query']} cannot be covered."
+                log.append(msg)
+                shortfalls.append(msg)
+            elif sf > 1e-6:
+                pct = f"{sf / ni['quantity']:.0%}" if ni.get("quantity") else f"{sf:g}"
+                msg = f"Shortfall: {pct} of {ni['query']} cannot be covered."
+                log.append(msg)
+                shortfalls.append(msg)
             chosen += got
         out["chosen"] = chosen
         if not chosen:
             log.append("Nothing to order.")
             return out
-        lines = [
-            {"product_id": c["product_id"], "quantity": c["quantity"],
-             **({"substitute_for": c["substitute_for"]} if c.get("substitute_for") else {})}
-            for c in chosen
-        ]
+        merged = {}
+        for c in chosen:
+            k = (c["product_id"], c.get("substitute_for"))
+            if k in merged:
+                merged[k]["quantity"] += c["quantity"]
+            else:
+                merged[k] = {
+                    "product_id": c["product_id"],
+                    "quantity": c["quantity"],
+                    **({"substitute_for": c["substitute_for"]} if c.get("substitute_for") else {}),
+                }
+        lines = list(merged.values())
         quote = await _call(s, "request_quote", {"offers": lines, "delivery_date": _day(deliver_by)})
         out["quote"] = quote
         log.append(f"Signed quote {quote['quote_id']}: {quote['total_net']:.2f} {quote['currency']} net, valid until {quote['valid_until']}.")
-        order = await _call(s, "place_order", {"quote_id": quote["quote_id"], "jws": quote["jws"]})
+        place_args = {"quote_id": quote["quote_id"], "jws": quote["jws"]}
+        if ask_human or shortfalls:
+            place_args["ask_human"] = True
+            if shortfalls:
+                place_args["note"] = "; ".join(shortfalls)
+        order = await _call(s, "place_order", place_args)
         out["order"] = order
         d = order["decision"]
         why = " ".join(r["text"] for r in (d.get("reasons") or []))
@@ -222,9 +272,9 @@ async def _run(text, customer, key, url, log, poll, interval, stdio=False):
     return out
 
 
-def run(text, customer, key=None, url="http://127.0.0.1:8080/mcp", poll=0, interval=2.0, stdio=False):
+def run(text, customer, key=None, url="http://127.0.0.1:8080/mcp", poll=0, interval=2.0, stdio=False, ask_human=False):
     log = []
-    out = asyncio.run(_run(text, customer, key or "demo-" + customer, url, log, poll, interval, stdio))
+    out = asyncio.run(_run(text, customer, key or "demo-" + customer, url, log, poll, interval, stdio, ask_human=ask_human))
     summary = llm.explain({"request": text, "log": log})
     if summary:
         log.append(summary)
@@ -241,6 +291,7 @@ def main():
     p.add_argument("--demo", action="store_true")
     p.add_argument("--stdio", action="store_true")
     p.add_argument("--mcp-config", action="store_true")
+    p.add_argument("--ask-human", action="store_true")
     a = p.parse_args()
     if a.mcp_config:
         print(MCP_CONFIG)
@@ -251,11 +302,18 @@ def main():
             try:
                 print("\n".join(run(t, c, a.key, a.url, min(a.poll, 2), stdio=a.stdio)["log"]))
             except Exception as e:
-                print(f"failed: {e}")
+                code, txt = _err_info(e)
+                print(f"failed ({code}): {txt}" if code else f"failed: {txt}")
         return
     if not a.text:
         p.error("text is required")
-    out = run(a.text, a.customer, a.key, a.url, a.poll, stdio=a.stdio)
+    kw = {"stdio": a.stdio, **({"ask_human": True} if a.ask_human else {})}
+    try:
+        out = run(a.text, a.customer, a.key, a.url, a.poll, **kw)
+    except Exception as e:
+        code, txt = _err_info(e)
+        print(f"failed ({code}): {txt}" if code else f"failed: {txt}")
+        sys.exit(1)
     print("\n".join(out["log"]))
     o = out["order"]
     sys.exit(0 if o and o.get("status") not in ("blocked", "rejected", "expired") and (o.get("decision") or {}).get("outcome") != "blocked" else 1)
