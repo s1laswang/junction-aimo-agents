@@ -66,7 +66,7 @@ def isolated(tmp_path, monkeypatch):
 def api():
     from aimo.gateway.app import create_app
 
-    return TestClient(create_app(with_mcp=False))
+    return TestClient(create_app(with_mcp=False), headers={"X-Approver-Pin": "test-pin"})
 
 
 # ------------------------------------------------------------------ backend client

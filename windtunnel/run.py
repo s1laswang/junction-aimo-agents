@@ -369,7 +369,9 @@ def run_agent_one(sc: Scenario, base_url: str, timeout_s: float = 240.0, model: 
                 try:
                     c.post(f"/v1/approvals/{pending['order_id']}/decision",
                            json={"decision": "reject", "approver": "windtunnel@sim", "note": "wind tunnel: recorded",
-                                 "quote_hash": pending.get("quote_hash")})
+                                 "quote_hash": pending.get("quote_hash")},
+                           headers={"X-Agent-Id": "", "X-Customer-Id": "",
+                                    "X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "")})
                     res.extra["auto_rejected_pending"] = True
                 except Exception:  # noqa: BLE001
                     pass

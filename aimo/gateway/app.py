@@ -17,7 +17,7 @@ from starlette.routing import Route
 from aimo import config
 from aimo.backend.client import reset_request_faults, set_request_faults
 from aimo.backend import clock
-from aimo.gateway import service
+from aimo.gateway import human_auth, service
 from aimo.gateway.schemas import DecisionRequest, OffersRequest, OrderRequest, QuoteRequest
 from aimo.models import Need, Offer, Order, Plan, Product, ProductSummary, Quote
 
@@ -71,6 +71,17 @@ def identity(
                              customer_id=x_customer_id or service.DEFAULT_CUSTOMER)
     ident.authenticated = {"customer": bool(x_customer_id), "agent": bool(x_agent_id)}  # type: ignore[attr-defined]
     return ident
+
+
+def strict_identity(
+    x_agent_id: Optional[str] = Header(None, description="Calling agent id, e.g. buyer-1 (required)"),
+    x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for, e.g. hotel-aurora (required)"),
+) -> service.Identity:
+    """Routes that create quotes or orders need an explicit, known caller: no default identity."""
+    if not x_agent_id or not x_customer_id:
+        raise service.ServiceError(401, "identity_required",
+                                   "Quotes and orders need X-Customer-Id and X-Agent-Id (production: OAuth 2.1 bearer).")
+    return identity(x_agent_id, x_customer_id)
 
 
 def _with_body_claims(ident: service.Identity, customer_id: Optional[str], agent_id: Optional[str]) -> service.Identity:
@@ -191,7 +202,7 @@ def build_router() -> APIRouter:
 
     # ---------------------------------------------------------- quotes
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
-    def create_quote(body: QuoteRequest, ident: service.Identity = Depends(identity)):
+    def create_quote(body: QuoteRequest, ident: service.Identity = Depends(strict_identity)):
         """Re-fetches live offers, refuses lines that are unavailable / past cut-off / short of stock (409 with
         per-line reasons), computes totals, signs the quote (quote_hash + JWS) and fixes the price until
         `expires_at`."""
@@ -204,7 +215,7 @@ def build_router() -> APIRouter:
 
     # ---------------------------------------------------------- orders
     @r.post("/v1/orders", tags=["orders"], summary="Place an order for a signed quote", response_model=Order, responses=ERR)
-    def place_order(body: OrderRequest, ident: service.Identity = Depends(identity)):
+    def place_order(body: OrderRequest, ident: service.Identity = Depends(strict_identity)):
         """Verifies quote hash, signature and expiry, then evaluates the customer's policy:
         `placed` (auto-approved, with Peppol-style response), `pending_approval` or `rejected`. Idempotent per quote."""
         return service.submit_order(ident, body.quote_id, body.quote_hash)
@@ -228,14 +239,37 @@ def build_router() -> APIRouter:
     def approvals(
         status: Optional[str] = Query("pending", description="pending | placed | rejected | expired | all"),
         customer_id: Optional[str] = Query(None),
+        x_customer_id: Optional[str] = Header(None),
+        x_approver_pin: Optional[str] = Header(None, description="Human approver credential (never given to agents)"),
     ) -> list[dict[str, Any]]:
-        """Orders with their exact quote and policy decision: `[{order, quote, decision, expired, approvals}]`."""
-        return service.list_approvals(status, customer_id)
+        """Orders with their exact quote and policy decision: `[{order, quote, decision, expired, approvals}]`.
+        A signed-in human approver (X-Approver-Pin) sees the inbox; an agent sees only its own customer's orders."""
+        if human_auth.check_pin(x_approver_pin):
+            return service.list_approvals(status, customer_id)
+        if not x_customer_id:
+            raise service.ServiceError(401, "identity_required",
+                                       "Send X-Customer-Id (agents) or X-Approver-Pin (human approvers).")
+        if customer_id and customer_id != x_customer_id:
+            raise service.ServiceError(403, "customer_mismatch", "you can only list your own customer's orders")
+        return service.list_approvals(status, x_customer_id)
 
-    @r.post("/v1/approvals/{order_id}/decision", tags=["approvals"], summary="Approve or reject", response_model=Order, responses=ERR)
-    def decide(order_id: str, body: DecisionRequest):
-        """Human decision. `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409
-        "re-quote needed". Approve places the order and returns the order response."""
+    @r.post("/v1/approvals/{order_id}/decision", tags=["approvals"], summary="Approve or reject (humans only)",
+            response_model=Order, responses=ERR)
+    def decide(order_id: str, body: DecisionRequest,
+               x_agent_id: Optional[str] = Header(None),
+               x_approver_pin: Optional[str] = Header(None, description="Human approver credential (never given to agents)")):
+        """Human decision. Requires `X-Approver-Pin`; any request carrying agent identity (`X-Agent-Id`) is refused,
+        and the approver must be a human in the order customer's directory with an allowed role.
+        `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409 "re-quote needed".
+        Approve places the order and returns the order response."""
+        if x_agent_id:
+            service.audit_refusal(order_id, f"agent:{x_agent_id}", "agent identity on the approval endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve",
+                                       "Agents can never approve orders; a human approver must decide in the inbox.")
+        if not human_auth.check_pin(x_approver_pin):
+            service.audit_refusal(order_id, f"human:{body.approver}", "missing or wrong approver credential")
+            raise service.ServiceError(401, "approver_auth_required",
+                                       "Approval needs a signed-in human approver (X-Approver-Pin).")
         return service.decide(order_id, body.decision, body.approver, body.quote_hash, body.note, body.approver_role,
                               remember=body.remember, remember_scope=body.remember_scope)
 
@@ -256,13 +290,18 @@ def build_router() -> APIRouter:
     # ---------------------------------------------------------- demo-only
     @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
     def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
-                                                                                 "'approved' to 'rejected')")):
+                                                                                 "'approved' to 'rejected')"),
+                    x_approver_pin: Optional[str] = Header(None)):
         """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
-        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. 404 when AIMO_ENV=production."""
+        broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs X-Approver-Pin; 404 when AIMO_ENV=production."""
+        if not human_auth.check_pin(x_approver_pin):
+            raise service.ServiceError(401, "approver_auth_required", "Demo tamper needs X-Approver-Pin.")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
-    def demo_untamper(seq: int):
+    def demo_untamper(seq: int, x_approver_pin: Optional[str] = Header(None)):
+        if not human_auth.check_pin(x_approver_pin):
+            raise service.ServiceError(401, "approver_auth_required", "Demo untamper needs X-Approver-Pin.")
         return service.demo_untamper(seq)
 
     # ---------------------------------------------------------- customers
