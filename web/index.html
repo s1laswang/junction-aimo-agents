@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trusted Trade Console</title>
+  <meta name="description" content="Valio Aimo (mock) Trusted Trade gateway: agent console, approval inbox and signed audit trail.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5aa6'/%3E%3Cpath d='M9 17l5 5 9-11' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong>Trusted Trade</strong>
+        <span>Valio Aimo (mock) · agent gateway</span>
+      </div>
+      <span id="mode-pill" class="mode-pill"></span>
+    </div>
+    <nav class="open-strip" aria-label="Open interfaces">
+      <span class="open-label">Open interfaces</span>
+      <a id="lnk-docs" target="_blank" rel="noopener">OpenAPI</a>
+      <a id="lnk-otap" target="_blank" rel="noopener">otap.json</a>
+      <a id="lnk-jwks" target="_blank" rel="noopener">JWKS</a>
+      <a id="lnk-mcp" target="_blank" rel="noopener">MCP</a>
+      <button id="btn-connect" class="btn btn-quiet btn-sm" type="button">Connect your agent</button>
+    </nav>
+  </header>
+
+  <div id="global-banner" class="global-banner" hidden></div>
+
+  <main class="workspace">
+    <section class="pane pane-left" aria-label="Agent console">
+      <div id="request-card" class="request-card"></div>
+      <div class="timeline-scroll" id="timeline-scroll">
+        <div class="timeline-head">
+          <h2>Agent activity</h2>
+          <span id="run-meta" class="muted mono small"></span>
+        </div>
+        <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      </div>
+    </section>
+
+    <section class="pane pane-right" aria-label="Results">
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab" data-tab="plan" id="tab-plan">Plan <span class="tab-count" id="cnt-plan"></span></button>
+        <button role="tab" class="tab" data-tab="approvals" id="tab-approvals">Approvals <span class="tab-count" id="cnt-approvals"></span></button>
+        <button role="tab" class="tab" data-tab="audit" id="tab-audit">Audit trail <span class="tab-count" id="cnt-audit"></span></button>
+      </div>
+      <div class="tab-body">
+        <div id="view-plan" class="view" role="tabpanel"></div>
+        <div id="view-approvals" class="view" role="tabpanel" hidden></div>
+        <div id="view-audit" class="view" role="tabpanel" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="connect-dialog" class="dialog"></dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
