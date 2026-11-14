@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -66,6 +67,28 @@ def usual_items(events, name_of=None):
     return list(seen.values())
 
 
+ALLERGEN_CODES = {
+    "ac": "crustaceans",
+    "ae": "egg",
+    "af": "fish",
+    "am": "milk",
+    "an": "tree nuts",
+    "ap": "peanuts",
+    "as": "sesame",
+    "au": "sulphites",
+    "aw": "gluten",
+    "ay": "soy",
+    "bc": "celery",
+    "bm": "mustard",
+    "nl": "lupin",
+    "um": "molluscs",
+    "ml": "lactose",
+    "uw": "wheat",
+    "gb": "barley",
+    "go": "oats",
+    "nr": "rye",
+}
+
 ALLERGEN_ALIASES = {
     "nuts": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
     "nut": {"nuts", "nut", "peanuts", "peanut", "tree nuts", "tree nut"},
@@ -78,6 +101,10 @@ ALLERGEN_ALIASES = {
     "gluten": {"gluten", "wheat", "barley", "rye", "oats"},
     "egg": {"egg", "eggs"},
     "eggs": {"egg", "eggs"},
+    "soy": {"soy", "soya"},
+    "soya": {"soy", "soya"},
+    "shellfish": {"shellfish", "crustaceans", "molluscs"},
+    "crustaceans": {"crustaceans", "shellfish"},
 }
 
 
@@ -85,8 +112,9 @@ def _norm_allergen(a):
     s = str(a).strip().lower()
     for pfx in ("may_contain:", "may:"):
         if s.startswith(pfx):
-            return s[len(pfx):].strip()
-    return s
+            s = s[len(pfx):].strip()
+            break
+    return ALLERGEN_CODES.get(s, s)
 
 
 def _expand_allergens(items):
@@ -128,7 +156,7 @@ def usable(offer, deliver_by=None, now=None):
     ct = offer.get("closing_time")
     if ct:
         try:
-            t = datetime.fromisoformat(str(ct))
+            t = datetime.fromisoformat(str(ct).replace("Z", "+00:00"))
             if t.tzinfo is None:
                 t = t.replace(tzinfo=timezone.utc)
             ref = now or datetime.now(timezone.utc)
@@ -203,12 +231,18 @@ def explain(customer, key, url=URL, max_offers=3):
         except httpx.HTTPError:
             return None
 
-    orders = _call("GET", "/orders", key, url, params={"customer": customer})
-    events = orders.get("orders", []) if isinstance(orders, dict) else orders
-    items = usual_items(events, name_of)
+    try:
+        orders = _call("GET", "/orders", key, url, params={"customer": customer})
+        events = orders.get("orders", []) if isinstance(orders, dict) else orders
+        items = usual_items(events, name_of)
+    except httpx.HTTPError:
+        items = []
     if not items:
-        audit = _call("GET", "/audit", key, url, params={"customer": customer})
-        items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit, name_of)
+        try:
+            audit = _call("GET", "/audit", key, url, params={"customer": customer})
+            items = usual_items(audit.get("events", []) if isinstance(audit, dict) else audit, name_of)
+        except httpx.HTTPError:
+            items = []
     seeds = [{"product_id": None, "query": q, "quantity": 100.0, "unit": "kg"} for q in SEED.get(customer, [])]
     deliver_by = delivery_day().isoformat()
     excl = mandate.get("exclude_allergens") or []
@@ -220,7 +254,10 @@ def explain(customer, key, url=URL, max_offers=3):
                 "deliver_by": deliver_by,
                 "items": [{"query": it["query"], "quantity": it["quantity"], "unit": it["unit"], "constraints": {"exclude_allergens": excl, "labels": [], "brands": []}}],
             }
-            res = _call("POST", "/offers", key, url, json=need)
+            try:
+                res = _call("POST", "/offers", key, url, json=need)
+            except httpx.HTTPError:
+                continue
             for group in res.get("items", []):
                 got = rank(it["product_id"], group["offers"], mandate, deliver_by=deliver_by)
                 for g in got:
@@ -249,7 +286,7 @@ def accept(proposal, key, url=URL):
     return _call("POST", "/orders", key, url, json={"quote_id": q["quote_id"], "jws": q["jws"]})
 
 
-def show(customer, key, url):
+def show(customer, key, url=URL):
     notes, ps = explain(customer, key, url)
     for n in notes:
         print("note:", n)
@@ -258,27 +295,41 @@ def show(customer, key, url):
     return ps
 
 
-if __name__ == "__main__":
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--customer")
     ap.add_argument("--key", default=None)
     ap.add_argument("--url", default=URL)
     ap.add_argument("--accept", type=int, nargs="?", const=0)
     ap.add_argument("--demo", action="store_true")
-    a = ap.parse_args()
-    if a.demo:
-        top = None
-        for c in KEYS:
-            print("==", c)
-            ps = show(c, KEYS[c], a.url)
-            if c == "hotel-aurora" and ps:
-                top = ps[0]
-        if top and a.accept is not None:
-            print("== accepting top hotel-aurora proposal")
-            o = accept(top, KEYS["hotel-aurora"], a.url)
-            print(o["order_id"], o["status"], json.dumps(o["decision"]))
-        raise SystemExit
-    a.key = a.key or os.environ.get(a.customer.upper().replace("-", "_") + "_KEY", KEYS[a.customer])
-    ps = show(a.customer, a.key, a.url)
-    if a.accept is not None:
-        print(json.dumps(accept(ps[a.accept], a.key, a.url), indent=1))
+    a = ap.parse_args(argv)
+    try:
+        if a.demo:
+            top = None
+            for c in KEYS:
+                print("==", c)
+                ps = show(c, KEYS[c], a.url)
+                if c == "hotel-aurora" and ps:
+                    top = ps[0]
+            if top and a.accept is not None:
+                print("== accepting top hotel-aurora proposal")
+                o = accept(top, KEYS["hotel-aurora"], a.url)
+                print(o["order_id"], o["status"], json.dumps(o.get("decision")))
+            return 0
+        if not a.customer:
+            ap.error("--customer or --demo is required")
+        key = a.key or os.environ.get(a.customer.upper().replace("-", "_") + "_KEY", KEYS.get(a.customer, f"demo-{a.customer}"))
+        ps = show(a.customer, key, a.url)
+        if a.accept is not None:
+            if a.accept < 0 or a.accept >= len(ps):
+                print(f"error: proposal index {a.accept} out of range ({len(ps)} available)", file=sys.stderr)
+                return 1
+            print(json.dumps(accept(ps[a.accept], key, a.url), indent=1))
+        return 0
+    except httpx.HTTPError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
