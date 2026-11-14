@@ -691,7 +691,7 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
     provenance = {
         **meta, "price_locked_until": expires.isoformat(),
         "line_verification": {pid: {"tier": v["tier"], "method": v["method"], "reasons": v["reasons"],
-                                    "reference": v.get("reference")}
+                                    "reference": v.get("reference"), "injection_screen": v.get("injection_screen")}
                               for pid, v in verified.items()},
         "client_claims": client_claims,
     }

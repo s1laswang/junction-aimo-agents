@@ -7,7 +7,7 @@ Sat 14 Nov 2026. Branch `combined` in `s1laswang/junction-aimo-agents` = Silas's
 | | Silas's build (`aimo/`) | Ours (`ours/`) |
 |---|---|---|
 | Size | 14.8k Python lines in `aimo/` (27.7k across 136 `.py` files, 241 tracked files; 157 commits on `main`, 834 on `fr8/valio/main`) | 6.5k app/scenario Python lines (51.1k incl. tests across 133 `.py` files, 176 tracked files; 349 pre-merge commits) |
-| Tests | 600 collected in `tests/` (`pytest -q`: 591 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
+| Tests | 748 collected in `tests/` (`pytest -q`: 739 passed, 7 skipped, 2 xfailed; standalone `main` before fleet suites: 285 passed, 7 skipped, 2 xfailed; judge run on prior `main`: 169 passed) | 924 test functions in `ours/tests/` (525 passed in standalone `ours/` harness incl. scenarios) |
 | Run | `uv run aimo serve` (one command, downloads data when `AIMO_API_KEY` is set); `make accept` for keyless judge check | `make demo` (boots, runs 8 scenarios, keeps a stage server) |
 | Agent interface | MCP (13 tools in both `build_mcp().list_tools()` and README), OpenAPI 3.1, OTAP discovery manifest, JWKS | MCP (12 tools) + REST, agent card, JWKS |
 | Buyer | Gemini buyer agent (escalates to gemini-4-hydrogen) + scripted/mock offline fallback when `GEMINI_API_KEY` is absent (`0f86383`, `a5e3881`) | Rule-based parser (en/fi, works offline) + scripted buyer, seller and drift agents |
@@ -26,44 +26,48 @@ Ours: everything that works with no key, strict input models, per-customer auth 
 
 | # | Port | From | Fixes judge point | Status on `fr8/valio/*` |
 |---|---|---|---|---|
-| 1 | Input validation: `quantity: float = Field(gt=0)` and the policy `quantity <= 0` check, clean 4xx instead of 500 | `ours/aimo/models.py:111`, `ours/aimo/policy.py:50` | Robustness: qty 0 gives 500, qty -5 gives 200 (+2) | **ACTIVE (`inputs`)**: baseline `Field(gt=0)` + `invalid_need` / `bad_quantity` checks merged via `6449bf5` / `502572e`; squad `inputs` closing pre-planning `quantity <= 0` rejection and `/v1` edge cases |
+| 1 | Input validation: `quantity: float = Field(gt=0)` and the policy `quantity <= 0` check, clean 4xx instead of 500 | `ours/aimo/models.py:111`, `ours/aimo/policy.py:50` | Robustness: qty 0 gives 500, qty -5 gives 200 (+2) | **DONE (`8f61ea4`, `502572e`)**: Need and lot inputs validated before planning and ranking (`quantity <= 0` rejected cleanly with 4xx, `tests/test_plan_input_validation.py`, `tests/test_quantity_validation.py`) |
 | 2 | Offline buyer: rule-based parser + scripted buyer as the fallback when `GEMINI_API_KEY` is absent, so `aimo demo` finishes | `ours/aimo/parse.py`, `ours/agents/buyer.py` | End-to-end: demo stops without a key (+3) | **DONE (`0f86383`, `a5e3881`)**: scripted keyless buyer, config aliases, `judge_accept.sh` keyless `aimo demo`, profile `usual_match` (initial mock buyer in `6449bf5` / `502572e`) |
 | 3 | Allergen hard-block inside planning (school planner must never return whole milk) | `ours/aimo/substitute.py`, `ours/aimo/policy.py` | User need (+2) | **DONE (`a4fa4fc`, `3d88d0e`)**: customer policy allergen hard-block enforced inside `plan_need`, with GS1 EU14 alias mapping and Nordic Bakery Supply / school tests |
-| 4 | Known customer on mutating `/v1` routes (per-customer keys / known customer check) | `ours/aimo/api.py`, `ours/aimo/mandates.py` | Autonomy and controls: identity is a demo header (+1) | **ACTIVE (`auth`)**: squad `auth` enforcing known customer validation on mutating `/v1` routes |
+| 4 | Known customer on mutating `/v1` routes (per-customer keys / known customer check) | `ours/aimo/api.py`, `ours/aimo/mandates.py` | Autonomy and controls: identity is a demo header (+1) | **DONE (`0a792f0`)**: known customer enforced across `/v1`, catalog search, MCP and `/v1/agent/runs` (`aimo/gateway/auth.py`, `tests/test_auth_known_customer.py`) |
 | 5 | Offline e2e harness + mock Valio server so all scenarios and tests run with no key and no live API | `ours/tests`, `ours/scenarios` | Reproducibility, craft | **DONE (`502572e`, `0f86383`)**: `scripts/judge_accept.sh`, `FakeGateway`, and `toywholesaler` MCP e2e run full keyless acceptance |
 | 6 | Hash-chained audit verify, if stronger than the current signed audit | `ours/aimo/audit.py` | Integrity story | **DONE**: `aimo/trust` runs append-only hash-chained + Ed25519-signed audit verified by `GET /v1/audit/verify` |
 
 ## Weak spots of the combined system (fix after porting)
 
 1. **[DONE: `0f86383`, `a5e3881`]** `aimo demo` must finish with no Gemini key (port 2): scripted/mock buyer and `judge_accept.sh` finish end-to-end without `GEMINI_API_KEY`.
-2. **[ACTIVE in squad `inputs`]** Bad input must never 500 (port 1), plus fuzz tests on every `/v1` route: baseline `Field(gt=0)` and `tests/test_quantity_validation.py` + `tests/test_edge_cases.py` landed in `502572e`; squad `inputs` is hardening pre-planning `quantity <= 0` rejection across `/v1` and MCP.
+2. **[DONE: `8f61ea4`, `502572e`]** Bad input must never 500 (port 1), plus fuzz tests on every `/v1` route: `Field(gt=0)` plus pre-planning Need and lot input validation (`tests/test_plan_input_validation.py`, `tests/test_quantity_validation.py`, `tests/test_edge_cases.py`); squad `inputs` syncing `team/harden` (`cf6534e`) fuzz suite.
 3. **[DONE: `a4fa4fc`, `3d88d0e`]** School planner allergen leak (port 3): `plan_need` now hard-blocks products matching customer policy allergens before returning candidates or substitutes.
-4. **[ACTIVE in squad `auth`]** Identity is a demo header; require a known customer (port 4): squad `auth` is requiring a known customer on mutating `/v1` routes.
-5. **[ACTIVE in squad `inputs`]** Injection-screen result is only shown on the order decision; show it on plan lines: injection screen v2 landed in `a6c21c8` / `502572e`, and squad `inputs` is surfacing screen results directly on plan lines.
-6. **[DONE: `502572e`, squad `docs`]** README says 9 MCP tools, server has 13: README and architecture diagram now state 13 MCP tools, matching `build_mcp().list_tools()`.
+4. **[DONE: `0a792f0`]** Identity is a demo header; require a known customer (port 4): `aimo/gateway/auth.py` requires a known customer across `/v1`, catalog search, MCP and `/v1/agent/runs` (plus optional `X-Agent-Key`).
+5. **[DONE: `70289e6`]** Injection-screen result is only shown on the order decision; show it on plan lines: `injection_screen` is surfaced directly on `PlanLine`, `Candidate`, and `verify_lines` (`aimo/catalog/screening_bridge.py`, `tests/test_plan_injection_screen.py`).
+6. **[DONE: `502572e`, squad `docs`]** README says 9 MCP tools, server has 13: README and architecture diagram state 13 MCP tools, matching `build_mcp().list_tools()`.
 7. **[DONE: `0b33695` / `502572e`]** Approved alternatives always need a human, even for a 10 EUR line: gateway learned approvals (`4e6d82d`: `remember` / `remember_scope`, `/v1/customers/{id}/learned`) let customers pre-authorize recurring substitutions within policy.
-8. **[ACTIVE in squad `auth` / `docs`]** Catalog search works without a customer header: read-only catalog/discovery remains open while mutating `/v1` routes require a known customer; documented alongside auth rules.
-9. **[DONE: `502572e`, `46e30df`]** Five `team/*` branches hold unmerged commits: all 8 `origin/team/*` branches (plus `origin/justSilas-aimo-integration`) are now 100% merged into `main` (`502572e`) and `fr8/valio/main` (`46e30df`) with `0` unmerged commits remaining (see disposition table below).
-10. **[OPEN: post-freeze]** README screenshot: re-capture from `main` after the freeze.
-11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest -q` runs 591 passed, 7 skipped, 2 xfailed across 600 tests; `ours/` remains intact with nothing deleted yet.
+8. **[DONE: `0a792f0`]** Catalog search works without a customer header: catalog search, `/v1` routes, MCP and buyer runs now enforce a known customer while discovery (`/.well-known/*`, `/healthz`) stays open.
+9. **[DONE on `main`, active sync on `fr8/valio/*`]** `team/*` branches hold unmerged commits: all 12 `origin/team/*` branches (plus `origin/justSilas-aimo-integration`) have `0` unmerged commits relative to `origin/main` (`e337c7b`); 9 `team/*` branches + `justSilas-aimo-integration` are already 100% in `combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged here on `fr8/valio/docs`, and `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), and `team/need` (`e337c7b`) are syncing into `fr8/valio/*` (see disposition table below).
+10. **[DONE: `4ae14c6`, `74b5e79`]** README screenshot: updated to live S5 capture `docs/reports/frontend/s5-approval-signed-in.png` (refresh again at freeze if UI changes).
+11. **[IN PROGRESS]** One test command for both halves until `ours/` is fully ported, then delete only what is truly duplicated, with a note in this file: root `pytest -q` runs 739 passed, 7 skipped, 2 xfailed across 748 collected tests; `ours/` remains intact with nothing deleted yet.
 
 ## Disposition of stale team/* branches
 
-Audited with `git rev-list --left-right --count origin/fr8/valio/main...origin/<branch>`, `git log -1 --oneline origin/<branch>`, and `git log --merges --oneline origin/main`. Every `origin/team/*` branch (all 8) and `origin/justSilas-aimo-integration` has **0 unmerged commits** relative to both `origin/main` and `origin/fr8/valio/main` (and `0` relative to `HEAD` on `fr8/valio/docs`). All round-5 branch merges were rolled into `main` at `502572e` and synced into `fr8/valio/main` at `46e30df`.
+Audited with `git rev-list --left-right --count origin/main...origin/<branch>` and `git rev-list --left-right --count origin/combined...origin/<branch>`. Every `origin/team/*` branch (all 12) and `origin/justSilas-aimo-integration` has **0 unmerged commits** relative to `origin/main` (`e337c7b`). Nine round-5 `team/*` branches (plus `justSilas-aimo-integration`) also have **0 unmerged commits** relative to `origin/combined` (`cfd6c6b`), `team/submit` (`92a7752`) is merged into `fr8/valio/docs`, and the late-night session tips `team/harden` (`cf6534e`), `team/ui` (`dfe58ef`), and `team/need` (`e337c7b`) are being synced into `fr8/valio/main`.
 
-| Remote branch | Tip SHA | Ahead / behind vs `fr8/valio/main` | Unmerged commits | Direct merge on `main` | Round-5 rollup on `main` | Disposition |
-|---|---|---:|---:|---|---|---|
-| `origin/team/buyer` | `bf961e7` | `0 / 723` | `0` | `8b99450` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/catalog` | `67a3a90` | `0 / 723` | `0` | `e09055c` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/frontend` | `da3d6fe` | `0 / 783` | `0` | `67b810e` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/gateway` | `87d2d77` | `0 / 722` | `0` | `0b33695` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/pitch` | `59a44b6` | `0 / 719` | `0` | `50ea268` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/port` | `b333e1e` | `0 / 716` | `0` | `7313679` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/trust` | `2b21faf` | `0 / 725` | `0` | `a6c21c8` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/team/windtunnel` | `4dfb6ad` | `0 / 745` | `0` | `0f39945` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
-| `origin/justSilas-aimo-integration` | `6449bf5` | `0 / 708` | `0` | `502572e` | `502572e` | 100% merged; safe to close/delete once `fr8/valio/main` lands on `combined` |
+| Remote branch | Tip SHA | Unmerged vs `origin/main` | Unmerged vs `combined` (`cfd6c6b`) | Landed on `main` | Disposition |
+|---|---|---:|---:|---|---|
+| `origin/team/buyer` | `bf961e7` | `0` | `0` | `8b99450` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/catalog` | `67a3a90` | `0` | `0` | `e09055c` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/frontend` | `da3d6fe` | `0` | `0` | `67b810e` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/gateway` | `87d2d77` | `0` | `0` | `0b33695` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/pitch` | `59a44b6` | `0` | `0` | `50ea268` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/port` | `b333e1e` | `0` | `0` | `7313679` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/trust` | `2b21faf` | `0` | `0` | `a6c21c8` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/windtunnel` | `4dfb6ad` | `0` | `0` | `0f39945` / `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/justSilas-aimo-integration` | `6449bf5` | `0` | `0` | `502572e` | 100% merged on `main` and `combined`; safe to close/delete |
+| `origin/team/submit` | `92a7752` | `0` | `4` (merged on `fr8/valio/docs`) | `92a7752` | 100% merged on `main` and `fr8/valio/docs`; safe to close/delete once `fr8/valio/docs` lands on `combined` |
+| `origin/team/harden` | `cf6534e` | `0` | `5` (4 `submit` + `cf6534e`) | `cf6534e` | 100% merged on `main`; squad `inputs` syncing `cf6534e` into `fr8/valio/main` |
+| `origin/team/ui` | `dfe58ef` | `0` | `6` (`4ae14c6` in `combined`; `dfe58ef` syncing) | `dfe58ef` | 100% merged on `main`; UI docs/screenshots synced on `fr8/valio/docs`, `web/` delta syncing into `fr8/valio/main` |
+| `origin/team/need` | `e337c7b` | `0` | `9` (incl. `c01f066`..`e337c7b`) | `e337c7b` | 100% merged on `main`; active session tip, keep until code syncs into `fr8/valio/main` |
 
-All 8 `team/*` branches (plus `justSilas-aimo-integration`) are 100% merged into `main` (`502572e`) and `fr8/valio/main` (`46e30df`), so no cherry-picks or backports remain; each branch is safe to close and delete after `fr8/valio/main` lands on `combined`.
+All 9 round-5 `team/*` branches (`buyer`, `catalog`, `frontend`, `gateway`, `pitch`, `port`, `trust`, `windtunnel`, plus `justSilas-aimo-integration`) are 100% merged into both `main` and `combined`; `team/submit` (`92a7752`) is merged via `fr8/valio/docs`, and `team/harden`, `team/ui`, and `team/need` are already on `origin/main` (`e337c7b`) and syncing into `fr8/valio/main`.
 
 ## Rules for the port
 

@@ -179,3 +179,16 @@ Audit actions: `drift.checked`, `proposal.created`, `proposal.accepted`, `propos
   `GET /v1/customers/{id}/learned` -> `{customer_id, available, swaps}` from `learned.list_learned(customer_id)` (or `learned_for`/`get_learned`); 403 for another customer's header. MCP `list_policies` returns `learned_swaps` for the caller's customer. `Quote.provenance.line_verification[pid].reference` = the usual product id the tier was judged against.
 - **Re-quote:** approving an order whose quote expired, or whose line passed its cut-off / became undeliverable while waiting, returns **409 `requote_needed`** with `detail {reason: quote_expired|cutoff_passed|line_unavailable, old_order_id, new_quote, new_order (pending_approval, provenance.supersedes), changes {old/new totals and lines}, approve_with {method, path, body}}`. The proposal re-prices the same lines (or re-plans from `quote.need` if they cannot be delivered); if neither works, `detail` has no `new_order`. The old order becomes `expired` (`provenance.requoted_as`); audit `order.requoted`. Approving the old order again returns the same proposal. The agent path (`POST /v1/orders` on an expired quote) still returns 409 `quote_expired`.
 - **Idempotency:** concurrent duplicate `POST /v1/orders` for one quote are serialised (one order). A repeated identical approval (same decision, approver, quote_hash) returns the same order with 200 instead of 409.
+
+## Voice approval (S5, Sat night): `aimo/voice/`, mounted by a guarded hook in `aimo/gateway/app.py`
+Voice never decides. It reads the order out, transcribes the answer and suggests an intent; the human confirms with one
+click on `POST /v1/approvals/{order_id}/decision` (same `X-Approver-Session`, the quote hash).
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/v1/voice/status` | | `{elevenlabs, tts: elevenlabs\|browser, stt: elevenlabs\|browser, intent: gemini\|rules, decides: false}` |
+| POST | `/v1/voice/prompt` | `{order_id, audio?: bool}` | `{order_id, status, quote_hash, text, approver, tts, audio_b64?, mime?, tts_error?}` |
+| POST | `/v1/voice/transcribe` | multipart `audio` (+`language?`) | `{transcript, language, engine, model, approver}`; 503 `voice_unavailable` without `ELEVENLABS_API_KEY` |
+| POST | `/v1/voice/intent` | `{transcript, order_id?}` | `{intent: approve\|reject\|unclear, confidence, source: gemini\|rules, note?, transcript, decides: false, confirm_with}` |
+All except status need `X-Approver-Session` (401 `approver_session_required`); any `X-Agent-Id` gets 403 `agent_cannot_approve`.
+Env: `ELEVENLABS_API_KEY`, optional `ELEVENLABS_VOICE_ID`, `ELEVENLABS_TTS_MODEL` (eleven_flash_v2_5), `ELEVENLABS_STT_MODEL` (scribe_v1).
+Gemini ledger feature: `voice.intent`. A negated or mixed answer is never returned as `approve`.

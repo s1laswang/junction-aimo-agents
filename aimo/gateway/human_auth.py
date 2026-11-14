@@ -1,122 +1,328 @@
-"""Human-approver authentication (demo grade).
+"""Human-approver authentication with per-approver credentials and per-identity lockout.
 
 Agents must never be able to approve. In production, humans sign in with the customer's SSO (OIDC) and agents use
 OAuth client credentials, so the two can never be confused. In this demo:
 
-- a human signs in once with the approver credential (`X-Approver-Pin`) at `POST /v1/auth/approver-session` and
-  gets a short-lived signed session token (`X-Approver-Session`, 8 h); credentialed routes accept either;
-- the credential comes from env `AIMO_APPROVER_PIN`, or is generated once into `<data>/keys/approver_pin` (mode
-  0600) as a random 12-character passphrase; no API route or MCP tool ever returns it;
-- brute force is capped PER SOURCE: after MAX_FAILURES wrong credentials from one client address within WINDOW_S,
-  that address is locked for LOCK_S (HTTP 429). A valid session token is never locked, so an attacker cannot lock
-  the signed-in human approver out (no denial of service on approvals);
-- any decision request that carries agent identity (`X-Agent-Id`) is refused outright;
-- on top of this, aimo.trust.check_approval requires the approver to be a human in the order customer's directory
-  with an allowed role, and binds the approval to the quote hash.
+- each canonical human approver in the customer policies gets a distinct 12-character passphrase stored in
+  `<data>/keys/approver_pins.json` (mode 0600), overridable via `AIMO_APPROVER_PINS` (JSON object or `id=pin` CSV),
+  with `AIMO_APPROVER_PIN` kept as an operator fallback for single-credential test and conformance harnesses;
+- a human signs in with their credential (`X-Approver-Pin`) at `POST /v1/auth/approver-session` and receives an
+  8-hour signed session token (`X-Approver-Session`) bound to that approver and their credential;
+- brute force is capped per `(approver_id, source)` (MAX_FAILURES within WINDOW_S -> HTTP 429 for LOCK_S) plus a
+  per-approver backstop (`GLOBAL_MAX` across all sources for that approver only), so attacking one approver never
+  locks out other approvers or active `X-Approver-Session` tokens.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import threading
 import time
+from pathlib import Path
 
-from aimo.config import KEY_DIR
+from aimo import config
 
-PIN_FILE = KEY_DIR / "approver_pin"
-SECRET_FILE = KEY_DIR / "approver_session_secret"
+_ORIG_KEY_DIR = config.KEY_DIR
+PIN_FILE = config.KEY_DIR / "approver_pin"
+PINS_FILE = config.KEY_DIR / "approver_pins.json"
+SECRET_FILE = config.KEY_DIR / "approver_session_secret"
 MAX_FAILURES = int(os.environ.get("AIMO_APPROVER_MAX_FAILURES", "5"))
 WINDOW_S = 600.0
 LOCK_S = float(os.environ.get("AIMO_APPROVER_LOCK_S", "300"))
 SESSION_S = 8 * 3600
+GLOBAL_MAX = int(os.environ.get("AIMO_APPROVER_GLOBAL_MAX", "30"))
+MAX_SOURCES = 2048
 
 _lock = threading.Lock()
-_failures: dict[str, list[float]] = {}
-_locked_until: dict[str, float] = {}
+_failures: dict[tuple[str, str], list[float]] = {}
+_locked_until: dict[tuple[str, str], float] = {}
+_identity_failures: dict[str, list[float]] = {}
+_identity_locked_until: dict[str, float] = {}
 
 
-def _read_or_create(path, make) -> str:
+def _pin_path() -> Path:
+    return config.KEY_DIR / "approver_pin" if config.KEY_DIR != _ORIG_KEY_DIR else PIN_FILE
+
+
+def _pins_path() -> Path:
+    return config.KEY_DIR / "approver_pins.json" if config.KEY_DIR != _ORIG_KEY_DIR else PINS_FILE
+
+
+def _secret_path() -> Path:
+    return config.KEY_DIR / "approver_session_secret" if config.KEY_DIR != _ORIG_KEY_DIR else SECRET_FILE
+
+
+def _read_or_create(path: Path, make) -> str:
     if path.exists():
-        return path.read_text().strip()
-    KEY_DIR.mkdir(parents=True, exist_ok=True)
+        return path.read_text(encoding="utf-8").strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
     val = make()
-    path.write_text(val)
+    path.write_text(val, encoding="utf-8")
     os.chmod(path, 0o600)
     return val
+
+
+def _directory_approver_ids() -> list[str]:
+    from aimo.gateway import service
+
+    out: list[str] = []
+    for c in service.list_customers():
+        for a in c.get("approvers") or []:
+            aid = str(a.get("id") or "").strip()
+            if aid and aid not in out:
+                out.append(aid)
+    return out
+
+
+def _canonical_approver_id(approver_id: str | None) -> str | None:
+    raw = (approver_id or "").strip()
+    if not raw:
+        return None
+    from aimo.gateway import service
+
+    resolved = service.directory_approver_id(raw)
+    return resolved if resolved else raw.lower()
+
+
+def _configured_approver_pins() -> dict[str, str]:
+    raw = os.environ.get("AIMO_APPROVER_PINS", "").strip()
+    if not raw:
+        return {}
+    entries: dict[str, str] = {}
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            for k, v in parsed.items():
+                ks = _canonical_approver_id(str(k))
+                vs = str(v).strip() if v is not None else ""
+                if ks and vs:
+                    entries[ks] = vs
+            return entries
+    for part in raw.split(","):
+        item = part.strip()
+        sep = "=" if "=" in item else (":" if ":" in item else "")
+        if not sep:
+            continue
+        k, v = item.split(sep, 1)
+        ks = _canonical_approver_id(k)
+        vs = v.strip()
+        if ks and vs:
+            entries[ks] = vs
+    return entries
+
+
+def _ensure_pins_file() -> dict[str, str]:
+    path = _pins_path()
+    pin_file = _pin_path()
+    dir_ids = _directory_approver_ids()
+    primary_id = (
+        "anna@hotel-aurora.example"
+        if ("anna@hotel-aurora.example" in dir_ids or not dir_ids)
+        else dir_ids[0]
+    )
+    with _lock:
+        data: dict[str, str] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = {
+                        str(k).strip(): str(v).strip()
+                        for k, v in loaded.items()
+                        if str(k).strip() and v is not None and str(v).strip()
+                    }
+            except (OSError, ValueError):
+                data = {}
+        legacy_pin = ""
+        if pin_file.exists():
+            try:
+                legacy_pin = pin_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                legacy_pin = ""
+        changed = not path.exists()
+        if legacy_pin and not data.get(primary_id) and legacy_pin not in data.values():
+            data[primary_id] = legacy_pin
+            changed = True
+        existing_vals = set(data.values())
+        for aid in dir_ids:
+            if not data.get(aid):
+                cand = secrets.token_urlsafe(9)
+                while cand in existing_vals:
+                    cand = secrets.token_urlsafe(9)
+                data[aid] = cand
+                existing_vals.add(cand)
+                changed = True
+        if changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            os.chmod(path, 0o600)
+        primary_val = data.get(primary_id)
+        if primary_val and legacy_pin != primary_val:
+            pin_file.parent.mkdir(parents=True, exist_ok=True)
+            pin_file.write_text(primary_val, encoding="utf-8")
+            os.chmod(pin_file, 0o600)
+        return data
+
+
+def approver_pins() -> dict[str, str]:
+    pins = dict(_ensure_pins_file())
+    pins.update(_configured_approver_pins())
+    return pins
 
 
 def expected_pin() -> str:
     env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
     if env:
         return env
-    return _read_or_create(PIN_FILE, lambda: secrets.token_urlsafe(9))  # 12 chars, ~72 bits
+    pins = _ensure_pins_file()
+    if "anna@hotel-aurora.example" in pins:
+        return pins["anna@hotel-aurora.example"]
+    if pins:
+        return next(iter(pins.values()))
+    return _read_or_create(_pin_path(), lambda: secrets.token_urlsafe(9))
 
 
-def _secret() -> bytes:
-    # bound to the current credential, so changing the PIN invalidates every session
-    base = _read_or_create(SECRET_FILE, lambda: secrets.token_hex(32))
-    return hashlib.sha256((base + "|" + expected_pin()).encode()).digest()
+def expected_pin_for(approver_id: str) -> str | None:
+    cid = _canonical_approver_id(approver_id)
+    if not cid:
+        return None
+    overrides = _configured_approver_pins()
+    if cid in overrides:
+        return overrides[cid]
+    single_env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
+    if single_env:
+        return single_env
+    pins = _ensure_pins_file()
+    return pins.get(cid)
 
 
-GLOBAL_MAX = int(os.environ.get("AIMO_APPROVER_GLOBAL_MAX", "30"))   # wrong guesses / window, all sources together
-MAX_SOURCES = 2048                                                    # cap on tracked client addresses (memory bound)
-_global_failures: list[float] = []
-_global_locked_until = 0.0
+def _secret_for(approver_id: str) -> bytes:
+    cid = _canonical_approver_id(approver_id) or approver_id.strip()
+    base = _read_or_create(_secret_path(), lambda: secrets.token_hex(32))
+    pin = expected_pin_for(cid) or ""
+    return hashlib.sha256(f"{base}|{cid}|{pin}".encode("utf-8")).digest()
 
 
 def credential_warning() -> str | None:
-    pin = expected_pin()
-    if len(pin) < 12:
-        return (f"AIMO_APPROVER_PIN is only {len(pin)} characters; use a 12+ character passphrase "
-                "(demo only; production uses SSO)")
+    single_env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
+    if single_env and len(single_env) < 12:
+        return (
+            f"AIMO_APPROVER_PIN is only {len(single_env)} characters; use a 12+ character passphrase "
+            "(demo only; production uses SSO)"
+        )
+    for aid, apin in _configured_approver_pins().items():
+        if len(apin) < 12:
+            return (
+                f"AIMO_APPROVER_PINS entry for {aid} is only {len(apin)} characters; use a 12+ character passphrase "
+                "(demo only; production uses SSO)"
+            )
+    pins = _ensure_pins_file()
+    for aid, apin in pins.items():
+        if len(apin) < 12:
+            return (
+                f"approver passphrase for {aid} is only {len(apin)} characters; use a 12+ character passphrase "
+                "(demo only; production uses SSO)"
+            )
     return None
 
 
-def locked_for(source: str = "?") -> float:
-    """Seconds until PIN checks from this source are accepted again (per-source lock or global backstop)."""
+def _lock_key_id(approver_id: str | None) -> str:
+    cid = _canonical_approver_id(approver_id)
+    return cid if cid else "*"
+
+
+def locked_for(source: str = "?", approver_id: str | None = None) -> float:
     now = time.time()
-    return max(0.0, _locked_until.get(source, 0.0) - now, _global_locked_until - now)
+    id_key = _lock_key_id(approver_id)
+    return max(
+        0.0,
+        _locked_until.get((id_key, source), 0.0) - now,
+        _identity_locked_until.get(id_key, 0.0) - now,
+    )
+
+
+def _record_failure(id_key: str, source: str) -> None:
+    now = time.time()
+    pair = (id_key, source)
+    with _lock:
+        if pair not in _failures and len(_failures) >= MAX_SOURCES:
+            stale = min(_failures, key=lambda k: (_failures[k][-1] if _failures[k] else 0.0))
+            _failures.pop(stale, None)
+            _locked_until.pop(stale, None)
+        f = [t for t in _failures.get(pair, []) if now - t < WINDOW_S] + [now]
+        if len(f) >= MAX_FAILURES:
+            _locked_until[pair] = now + LOCK_S
+            f = []
+        _failures[pair] = f
+        if id_key not in _identity_failures and len(_identity_failures) >= MAX_SOURCES:
+            stale_id = min(
+                _identity_failures,
+                key=lambda k: (_identity_failures[k][-1] if _identity_failures[k] else 0.0),
+            )
+            _identity_failures.pop(stale_id, None)
+            _identity_locked_until.pop(stale_id, None)
+        gf = [t for t in _identity_failures.get(id_key, []) if now - t < WINDOW_S] + [now]
+        if len(gf) >= GLOBAL_MAX:
+            _identity_locked_until[id_key] = now + LOCK_S
+            gf = []
+        _identity_failures[id_key] = gf
+
+
+def check_pin_for(pin: str | None, approver_id: str | None, source: str = "?") -> bool:
+    if approver_id is None or not str(approver_id).strip():
+        return check_pin(pin, source)
+    if locked_for(source, approver_id) > 0:
+        return False
+    provided = str(pin).strip() if pin is not None else ""
+    if not provided:
+        return False
+    exp = expected_pin_for(approver_id)
+    if exp is not None and hmac.compare_digest(provided.encode("utf-8"), exp.encode("utf-8")):
+        return True
+    hmac.compare_digest(provided.encode("utf-8"), b"invalid-approver-credential")
+    _record_failure(_lock_key_id(approver_id), source)
+    return False
 
 
 def check_pin(pin: str | None, source: str = "?") -> bool:
-    """Constant-time check. Wrong credentials count toward this source's lockout and a global backstop (which
-    only blocks PIN checks: signed-in approver sessions are never affected); while locked nothing is accepted."""
-    global _global_locked_until
-    if locked_for(source) > 0:
+    if locked_for(source, None) > 0:
         return False
-    if pin and hmac.compare_digest(str(pin).strip(), expected_pin()):
+    provided = str(pin).strip() if pin is not None else ""
+    if not provided:
+        return False
+    matched = False
+    single_env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
+    if single_env:
+        if hmac.compare_digest(provided.encode("utf-8"), single_env.encode("utf-8")):
+            matched = True
+    elif _pin_path().exists():
+        legacy = _pin_path().read_text(encoding="utf-8").strip()
+        if legacy and hmac.compare_digest(provided.encode("utf-8"), legacy.encode("utf-8")):
+            matched = True
+    for aid, apin in approver_pins().items():
+        if locked_for(source, aid) <= 0 and hmac.compare_digest(provided.encode("utf-8"), apin.encode("utf-8")):
+            matched = True
+    if matched:
         return True
-    if pin:  # a wrong guess (an absent credential is not a guess)
-        now = time.time()
-        with _lock:
-            if source not in _failures and len(_failures) >= MAX_SOURCES:  # bounded memory: drop the stalest source
-                stale = min(_failures, key=lambda s: (_failures[s][-1] if _failures[s] else 0.0))
-                _failures.pop(stale, None)
-                _locked_until.pop(stale, None)
-            f = [t for t in _failures.get(source, []) if now - t < WINDOW_S] + [now]
-            if len(f) >= MAX_FAILURES:
-                _locked_until[source] = now + LOCK_S
-                f = []
-            _failures[source] = f
-            _global_failures[:] = [t for t in _global_failures if now - t < WINDOW_S] + [now]
-            if len(_global_failures) >= GLOBAL_MAX:
-                _global_locked_until = now + LOCK_S
-                _global_failures.clear()
+    _record_failure("*", source)
     return False
 
 
 def issue_session(approver: str) -> dict:
-    """Signed 8-hour session bound to ONE named human approver (directory id)."""
+    canonical = _canonical_approver_id(approver) or approver.strip()
     exp = int(time.time() + SESSION_S)
-    payload = f"v2.{exp}.{approver}"
-    sig = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
-    return {"session": f"{payload}.{sig}", "approver": approver, "expires_at": exp}
+    payload = f"v2.{exp}.{canonical}"
+    sig = hmac.new(_secret_for(canonical), payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    return {"session": f"{payload}.{sig}", "approver": canonical, "expires_at": exp}
 
 
 def session_approver(token: str | None) -> str | None:
-    """The approver id a valid session is bound to, else None."""
     if not token or token.count(".") < 3:
         return None
     payload, sig = token.rsplit(".", 1)
@@ -127,10 +333,13 @@ def session_approver(token: str | None) -> str | None:
         exp = int(parts[1])
     except ValueError:
         return None
-    good = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(sig, good) or exp <= time.time() or not parts[2]:
+    who = parts[2].strip()
+    if not who or exp <= time.time():
         return None
-    return parts[2]
+    good = hmac.new(_secret_for(who), payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(sig, good):
+        return None
+    return who
 
 
 def check_session(token: str | None) -> bool:
@@ -138,14 +347,22 @@ def check_session(token: str | None) -> bool:
 
 
 def reset_for_tests() -> None:
-    global _global_locked_until
     with _lock:
         _failures.clear()
         _locked_until.clear()
-        _global_failures.clear()
-        _global_locked_until = 0.0
+        _identity_failures.clear()
+        _identity_locked_until.clear()
 
 
-def local_pin() -> str:
-    """For trusted local tooling on the same machine as the gateway (demo scripts, tests): the operator's PIN."""
+def local_pin(approver_id: str | None = None) -> str:
+    if approver_id:
+        p = expected_pin_for(approver_id)
+        if p:
+            return p
+    single_env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
+    if single_env:
+        return single_env
+    default_approver = expected_pin_for("anna@hotel-aurora.example")
+    if default_approver:
+        return default_approver
     return expected_pin()

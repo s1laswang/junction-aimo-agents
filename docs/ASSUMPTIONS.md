@@ -28,7 +28,7 @@ Status words: **VERIFIED** = we measured it; **ASSUMED** = our choice, not given
 
 ### A2. Customers, policies, approvers and usual products are invented
 - **Evidence:** `aimo/trust/policies/hotel-aurora.yaml`, `school-tampere.yaml`, `hospital-meilahti.yaml` (v1.1.0). Hotel usual product 463038 with 464306 pre-approved as best; school usual 472833 and hospital usual 473328 are demo assumptions (trust report, round 2). Standing orders (hotel milk 300 L/week) and approver names (`anna@hotel-aurora.example`) are invented.
-- **Impact:** the €500 / €5,000 thresholds, the 3× drift rule and the approver roles are illustrative; customer procurement leads and clinical dietitians set real thresholds during Phase 1 pilot onboarding ([ARCHITECTURE.md](ARCHITECTURE.md) §5).
+- **Impact:** the €500 / €5,000 thresholds, the 3× drift rule and the approver roles are illustrative examples (not validated with Valio or a customer); customer procurement leads and clinical dietitians set real thresholds during Phase 1 pilot onboarding ([ARCHITECTURE.md](ARCHITECTURE.md) §5).
 - **Production:** each customer authors and versions its own policy (or brings OPA/Cedar), maintains its approver directory in its identity provider, and issues mandates to its agents.
 
 ### A3. Category groupings are inferred from category codes
@@ -41,7 +41,7 @@ Measured with `uv run python docs/pitch/probe_mock_quirks.py` (Sat 14 Nov 18:59 
 - **Availability ignores `requestedDate`.** Requests for 16 Nov, 20 Nov and 1 Dec return the same single schedule line dated 2026-11-16 for 463038, 464306 and 469363 (the upstream echoes the requested date but does not change the schedule).
 - **`closingTime` is fixed per product.** 463038: 2026-11-12 15:00; 464306 and 469363: 2026-11-15 17:00, for every requested date.
 - **Terminal stock is unknown.** Terminal product 463038 reports 999,999, which we map to "unknown quantity" (`terminal_unknown_qty`); Stock items report 9,999,999,999 for unlimited (catalog report).
-- **Impact:** we cannot show multi-date delivery splits from real data, and the hero story depends on the wall clock: after Sun 15 Nov 17:00, Monday delivery is closed for stock milk (docs/SCENARIOS.md). Mitigation: fault injection (`X-Aimo-Faults: cutoff:…`, `partial:…`), the simulated clock (`AIMO_NOW` in `aimo/backend/clock.py`), and snapshot replay (`AIMO_REPLAY` / `windtunnel/serve_replay.py`) make each exception reproducible regardless of wall-clock time.
+- **Impact:** we cannot show multi-date delivery splits from real data, and the hero story depends on the wall clock: after Sun 15 Nov 17:00, Monday delivery is closed for stock milk (docs/SCENARIOS.md). Mitigation: fault injection (`X-Aimo-Faults: cutoff:…`, `partial:…`) makes each exception reproducible; `AIMO_NOW` (simulated clock, also per request with `X-Aimo-Now`) and replay mode (`AIMO_REPLAY=tests/fixtures/snapshot`, recorded mock-API responses) keep the story reproducible after the real cut-off (README, DEMO checklist step 5; verified Sat 23:15).
 - **Production:** SAP available-to-promise per date, route and delivery slot.
 
 ### A5. CO2 is a category average
@@ -60,11 +60,11 @@ Measured with `uv run python docs/pitch/probe_mock_quirks.py` (Sat 14 Nov 18:59 
 - **Production:** customer price conditions from SAP; the signed quote format already carries whatever price the backend returns.
 
 ### A8–A10
-- **A8 identity:** agent headers `X-Customer-Id` / `X-Agent-Id` (docs/interfaces.md); the header wins over any body field, unregistered agents are refused, and human approvals require a separate human-only credential (`X-Approver-Pin` or a signed per-approver session token from `POST /v1/auth/approver-session`) with per-client brute-force lockout ([TRUST.md](TRUST.md)). Production: OAuth 2.1 per the MCP authorization spec for agents and customer SSO (OIDC) for humans.
+- **A8 identity:** headers `X-Customer-Id` / `X-Agent-Id` (docs/interfaces.md); the gateway enforces a known customer across `/v1`, catalog search, MCP and `/v1/agent/runs`, the header wins over any body field, and unregistered agents are refused (`tests/test_auth_known_customer.py`). The demo headers are not cryptographically authenticated, so a caller that knows a registered customer/agent pair can claim it; this is the main demo-only shortcut ([pitch/QA.md](pitch/QA.md) Q4). Human approvers are separate and do authenticate (`X-Approver-Pin` -> signed per-person `X-Approver-Session` with per-client 429 lockout; [TRUST.md](TRUST.md)). Production: OAuth 2.1 client credentials per the MCP authorization spec for agents and customer SSO (OIDC) for humans.
 - **A9 keys:** `data/keys/` (gitignored, generated on first use). Production: KMS/HSM.
 - **A10 units:** the content-per-sales-unit parser agrees with live comparison prices for 702 of 752 sampled products (93%); at plan time the live price wins and the line is flagged `content_from_price` (catalog report).
 
-## Evaluation coverage
-- **Wind tunnel ([windtunnel-results.md](windtunnel-results.md)):** 640 Gemini-written scenarios (`wt640`: 1 vs 372 policy violations, 0 vs 193 allergen violations) and 2,560 template scenarios (`wt2560`: 11 vs 1,452 policy violations, 0 vs 728 allergen violations), plus 48 live-gateway agent runs (0 violations).
-- **Gold-set harness (`aimo/buyer/eval_gold.py`):** 20 smoke-test gold examples committed under `tests/fixtures/` measuring zero-correction rate, escalation match, and allergen safety.
-- **Multimodal intake (`aimo/buyer/vision.py`):** Gemini vision intake on `POST /v1/agent/runs` and `aimo demo --image` with deterministic keyless fallback.
+## Not measured
+- Gold set: zero-correction rate on fi/sv/en requests. Only a 20-request set exists (`tests/fixtures/gold_smoke.jsonl` / `tests/fixtures/gold/gold-buyer-20.jsonl`), with no committed live run, so we claim no accuracy number.
+- Wind tunnel scale: the largest run is 2,560 template scenarios (`wt2560`) plus 640 Gemini-written ones (`wt640`) and 48 live-gateway agent runs ([windtunnel-results.md](windtunnel-results.md)), not ≥10k attacks.
+- Photo intake (`aimo/buyer/vision.py`): built (with deterministic keyless fallback), 4 development calls, no accuracy number.
