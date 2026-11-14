@@ -51,6 +51,84 @@ def screen_text(text: str) -> dict:
     return {"suspicious": bool(hits), "reasons": hits[:3], "screen": "buyer-local"}
 
 
+_TIER_ORDER = ["preferred", "best", "better", "good", "rejected"]
+
+
+def _rs(reasons: Any, n: int = 2, m: int = 110) -> list[str]:
+    return [str(r)[:m] for r in (reasons or [])[:n]]
+
+
+def _pick(d: dict, keys: tuple) -> dict:
+    return {k: d[k] for k in keys if k in d and d[k] not in (None, [], {}, "")}
+
+
+def _compact_order(o: Any) -> Any:
+    if not isinstance(o, dict) or "order_id" not in o:
+        return o
+    out = _pick(o, ("order_id", "quote_id", "quote_hash", "status", "approved_by", "approver_role",
+                    "approval_note", "response_code", "timed_out"))
+    dec = o.get("decision") or {}
+    out["decision"] = {**_pick(dec, ("outcome", "approver_role")),
+                       "hits": [{"rule_id": h.get("rule_id"), "outcome": h.get("outcome"), "message": str(h.get("message", ""))[:160]}
+                                for h in dec.get("hits", []) if h.get("outcome") != "allow"]}
+    return out
+
+
+def compact_for_model(name: str, result: Any) -> Any:
+    """What the MODEL sees of a tool result (replayed on every later turn, so it dominates input
+    tokens). The full result still goes to the AgentStep stream for the UI and audit.
+    Keeps every id, hash, price, quantity, flag and reason the agent needs to decide."""
+    if not isinstance(result, (dict, list)) or (isinstance(result, dict) and "error" in result):
+        return result
+    if name == "search_products":
+        items = result.get("products", []) if isinstance(result, dict) else result
+        return {"products": [_pick(p, ("id", "name", "brand", "sales_unit", "content_amount", "content_unit",
+                                        "claims", "delivery_reliability", "_untrusted_text_flagged"))
+                             for p in items[:12]], "total_returned": len(items)}
+    if name == "get_offers":
+        items = result.get("offers", []) if isinstance(result, dict) else result
+        return {"offers": [_pick(o, ("product_id", "available", "available_amount", "unit_price", "comparison_price",
+                                     "comparison_unit", "sales_unit", "closing_time", "cutoff_passed",
+                                     "logistic_model", "issues")) for o in items]}
+    if name == "get_product" and isinstance(result, dict):
+        out = _pick(result, ("id", "name", "brand", "sales_unit", "content_amount", "content_unit", "claims",
+                             "allergens", "country_of_origin", "delivery_reliability", "_untrusted_text_flagged"))
+        for k in ("ingredients_text", "marketing_text"):
+            if result.get(k):
+                out[k] = str(result[k])[:300]
+        return out
+    if name == "plan_need" and isinstance(result, dict) and "lines" in result:
+        lines = [{**_pick(l, ("product_id", "product_name", "tier", "qty_sales_units", "sales_unit", "covered_amount",
+                              "unit_price", "line_total", "flags")), "reasons": _rs(l.get("reasons"))}
+                 for l in result.get("lines", [])]
+        by_tier: dict[str, list] = {}
+        for cd in result.get("candidates", []):
+            by_tier.setdefault(cd.get("tier", "?"), []).append(cd)
+        cands = []
+        for t in _TIER_ORDER + [t for t in by_tier if t not in _TIER_ORDER]:
+            for cd in by_tier.get(t, [])[:3]:
+                p, o = cd.get("product") or {}, cd.get("offer") or {}
+                cands.append({"id": p.get("id"), "name": p.get("name"), "tier": t,
+                              **_pick(o, ("unit_price", "available_amount", "cutoff_passed")),
+                              "flags": cd.get("flags") or [], "reasons": _rs(cd.get("reasons"))})
+        return {"lines": lines, "covered_amount": result.get("covered_amount"), "shortfall": result.get("shortfall"),
+                "total_net": result.get("total_net"), "explanation": str(result.get("explanation") or "")[:400],
+                "candidates_top3_per_tier": cands, "candidates_total": len(result.get("candidates", []))}
+    if name == "create_quote" and isinstance(result, dict) and "quote_id" in result:
+        return {**_pick(result, ("quote_id", "quote_hash", "total_net", "total_gross", "delivery_date", "expires_at")),
+                "lines": [_pick(l, ("product_id", "product_name", "qty_sales_units", "sales_unit", "unit_price",
+                                    "line_total", "tier", "flags")) for l in result.get("lines", [])]}
+    if name in ("place_order", "get_order_status") and isinstance(result, dict):
+        if "human_decision" in result:
+            return {"order_as_submitted": _compact_order(result.get("order_as_submitted")),
+                    "human_decision": _compact_order(result.get("human_decision")), "note": result.get("note")}
+        return _compact_order(result)
+    if name == "get_audit_trail" and isinstance(result, dict):
+        return {"events": len(result.get("events") or []), "verify": result.get("verify"),
+                "report": str(result.get("report") or "")[:1500]}
+    return result
+
+
 def _short(x: Any, n: int = 140) -> str:
     s = json.dumps(x, ensure_ascii=False, default=str) if not isinstance(x, str) else x
     return s if len(s) <= n else s[: n - 1] + "…"
@@ -246,6 +324,7 @@ class BuyerAgent:
             for fc in calls:
                 args = dict(fc.args or {})
                 result = self._tool(fc.name, args, model=model, thinking=level, latency_s=dt)
+                result = compact_for_model(fc.name, result)  # full result already went to the step stream
                 payload = result if isinstance(result, dict) else {"result": result}
                 responses.append(types.Part(function_response=types.FunctionResponse(
                     id=getattr(fc, "id", None), name=fc.name, response=payload)))
