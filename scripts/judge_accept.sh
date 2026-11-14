@@ -94,7 +94,7 @@ else
   say "-- aimo serve --"
   # one human-approver credential shared by the gateway and the acceptance scripts (never given to agents)
   if [ -z "${AIMO_APPROVER_PIN:-}" ]; then
-    AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(f"{secrets.randbelow(10**6):06d}")')"
+    AIMO_APPROVER_PIN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(9))')"
   fi
   export AIMO_APPROVER_PIN
   # keyless: serve recorded mock-API responses instead of the live API

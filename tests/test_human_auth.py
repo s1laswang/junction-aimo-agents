@@ -56,8 +56,10 @@ def test_signed_in_approver_is_not_locked_out_by_guessers(api):
     """No denial of service: a signed-in approver session keeps working while a guesser triggers the lock."""
     from aimo.gateway import human_auth
     human_auth.reset_for_tests()
-    sess = api.post("/v1/auth/approver-session").json()["session"]
-    assert api.post("/v1/auth/approver-session", headers={"X-Agent-Id": "buyer-1"}).status_code == 403
+    sess = api.post("/v1/auth/approver-session", json={"approver": "anna@hotel-aurora.example"}).json()["session"]
+    assert api.post("/v1/auth/approver-session", headers={"X-Agent-Id": "buyer-1"},
+                    json={"approver": "anna@hotel-aurora.example"}).status_code == 403
+    assert api.post("/v1/auth/approver-session", json={"approver": "nobody@example.com"}).status_code == 404
     q, o = _pending(api)
     anon = _anon()
     body = {"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER}
@@ -68,6 +70,23 @@ def test_signed_in_approver_is_not_locked_out_by_guessers(api):
     assert anon.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Approver-Session": sess + "x"},
                      json=body).status_code in (401, 429)
     human_auth.reset_for_tests()
+
+
+def test_session_is_bound_to_one_approver(api):
+    """Anna's session cannot decide as someone else; the decision is recorded under the session's approver."""
+    from aimo.gateway import human_auth
+    human_auth.reset_for_tests()
+    q, o = _pending(api)
+    anon = _anon()
+    sess = api.post("/v1/auth/approver-session", json={"approver": "Anna Virtanen"}).json()
+    assert sess["approver"] == "anna@hotel-aurora.example"
+    h = {"X-Approver-Session": sess["session"]}
+    r = anon.post(f"/v1/approvals/{o['order_id']}/decision", headers=h,
+                  json={"decision": "approve", "quote_hash": q["quote_hash"], "approver": "mikko@hotel-aurora.example"})
+    assert r.status_code == 403 and r.json()["error"] == "approver_mismatch"
+    r = anon.post(f"/v1/approvals/{o['order_id']}/decision", headers=h,
+                  json={"decision": "approve", "quote_hash": q["quote_hash"]})
+    assert r.status_code == 200 and r.json()["approved_by"] == "anna@hotel-aurora.example"
 
 
 def test_approver_ids_hidden_from_agents(api):

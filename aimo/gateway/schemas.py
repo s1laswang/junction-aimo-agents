@@ -47,7 +47,7 @@ class OrderRequest(BaseModel):
 
 class DecisionRequest(BaseModel):
     decision: Literal["approve", "reject"]
-    approver: str = Field(..., description="Human approver identity, e.g. anna@aurora")
+    approver: str = Field("", description="Human approver identity, e.g. anna@aurora. With X-Approver-Session it defaults to (and must match) the signed-in approver")
     note: Optional[str] = None
     quote_hash: str = Field(..., description="The quote_hash the approver reviewed; 409 if it does not match the order")
     approver_role: Optional[str] = Field(None, description="Role the approver acts in (e.g. procurement_manager). "
