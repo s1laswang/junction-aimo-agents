@@ -35,7 +35,8 @@ Bottom line: *Unknown is never safe. AI can add warnings, never remove them.*
 **Speaker notes (30 s):** "An API key tells you who. Our mandate and policy tell you what they may do. The signature proves what was offered, the hash binding proves what the human approved, and the chain proves nothing was changed afterwards. Gemini reads allergens from Finnish ingredient text, but its reading can only block a product, never clear one."
 
 ## Slide 5: Robustness numbers
-**On slide:** a big headline number plus a small comparison table, "Trusted gateway vs naive agent with direct API access":
+**On slide:** headline **"6 of 6 live scenarios pass"** with six small tiles: happy (approved, placed) · stock-out (split into 4 lines) · school allergen (milk rejected, oat drink approved) · prompt injection (4 texts flagged and redacted) · standing-order drift (held for a human) · last-minute event (2 items, one order). Caption: *Gemini agent, live mock API, 22–37 s each* [docs/demo-montage.md].
+Second half (or a build): wind tunnel table, "Trusted gateway vs naive agent with direct API access":
 | Metric | Ours | Naive |
 |---|---|---|
 | Scenarios (Gemini-generated hotels, schools, hospitals, events) | **TODO** | same |
@@ -43,8 +44,8 @@ Bottom line: *Unknown is never safe. AI can add warnings, never remove them.*
 | Policy violations | **TODO (target 0)** | **TODO** |
 | Allergen violations | **TODO (target 0)** | **TODO** |
 | Injection block rate | **TODO** | **TODO** |
-Footnote facts already measured: 0 false positives on 34,159 real supplier texts [docs/TRUST.md]; 63 offline tests pass [pytest, Sat 14 Nov].
-**Speaker notes (25 s):** "We didn't test one happy path. Our wind tunnel replays recorded API data with stock-outs, outages and injections across TODO synthetic customers, scored against an independent oracle." Read the headline number.
+Footnote facts already measured: 0 false positives on 34,159 real supplier texts [docs/TRUST.md]; 138 offline tests pass [pytest, Sat 14 Nov 18:27].
+**Speaker notes (25 s):** "We didn't test one happy path. Six live scenarios, end to end with the Gemini agent against the real mock API: stock-out, school allergens, prompt injection, standing-order drift, a last-minute event. All six pass. And our wind tunnel replays recorded API data across TODO synthetic customers, scored against an independent oracle." Read the wind-tunnel headline number when it lands.
 
 ## Slide 6: Openness and production path
 **On slide:** left column "Open today": MCP · OpenAPI 3.1 · otap.json discovery · JWS/JWKS · GS1 GTIN · Peppol AP/CA/RE · EU14 allergens. Right column "Production next": SAP adapter behind one interface · OAuth 2.1 (MCP auth spec) · mandates as W3C Verifiable Credentials · KMS keys · Peppol BIS Ordering · WORM audit store.
@@ -52,8 +53,8 @@ Footnote facts already measured: 0 false positives on 34,159 real supplier texts
 
 ## Slide 7: Gemini
 **On slide:** "Gemini on both sides of the gateway" with 6 small tiles: buyer agent (function calling over MCP) · need parsing (structured output) · hybrid search over 17,546 products (gemini-embedding-2) · allergen inference for 4,076 products from Finnish ingredient text (can only block) · injection screen layer 2 · wind tunnel customers and judge.
-**Numbers:** 638 Gemini calls, 1.2M input tokens, 17,574 texts embedded as of Sat 14:46 [docs/GEMINI.md §5; **TODO** final numbers]; embedding the whole catalog took 44 s, allergen inference 49 s [catalog report]; flash LOW for routine steps, 4-hydrogen HIGH thinking for substitution decisions.
-**Speaker notes (20 s):** "Gemini reads Finnish, embeds the catalog, runs the buyer, screens for injection and plays thousands of customers. And we use thinking levels as a policy knob: reasoning is spent on the one decision a human later has to defend."
+**Numbers:** **$0.034 per order** in Gemini calls, down 59% from $0.082 after a token trim; hero run 87k → 27k input tokens; 31% of input from Gemini's implicit cache [docs/demo-montage.md]. Escalation to 4-hydrogen HIGH thinking on only the quote-decision turn: 19% of agent steps [same]. Team usage so far: 3,449 Gemini calls, 9.8M input tokens [docs/GEMINI.md §5, Sat 18:27; **TODO** final]. Embedding the whole catalog took 44 s, allergen inference 49 s [catalog report].
+**Speaker notes (20 s):** "Gemini reads Finnish, embeds the catalog, runs the buyer, screens for injection and plays thousands of customers. We use thinking levels as a policy knob: deep reasoning only on the one decision a human later has to defend, 19% of the steps. And a whole order costs about three cents in Gemini calls."
 
 ## Slide 8: Team and ask
 **On slide:** team names and roles; the ask: *"Pilot with one Valio Aimo customer segment: schools or hotels."* Repo link and QR code (**TODO** link).

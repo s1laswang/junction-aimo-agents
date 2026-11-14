@@ -18,6 +18,7 @@ UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes
 4. **Cut-off clock.** The story depends on real mock-API data: 463038's cut-off passed Thu 12 Nov 15:00, and 464306 can be ordered for Monday until **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). If you present after Sun 16:30, use the fallback (mock mode) or say "delivery Tuesday" and check the plan first.
 5. Open three tabs: (a) `http://localhost:8000/ui/?customer=hotel-aurora`, (b) `http://localhost:8000/ui/?mock=1` (backup), (c) a terminal with large font in the repo directory.
 6. Phone on silent, laptop on power, Wi-Fi checked (the mock API and Gemini are both online services).
+7. **T-4 min:** start the robustness montage in tab (c) against the second gateway on port 8031 (see "Robustness montage" below). Run it under `caffeinate -i` so the laptop cannot sleep mid-run (the buyer report lost a run that way).
 
 ## The script
 
@@ -30,24 +31,45 @@ UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes
 | **1:35–2:05** | Timeline shows **Waiting for procurement_manager to approve**. Click **Open approval inbox →** (Approvals tab). Point at the banner "Needs approval by Procurement Manager" and the three NEEDS APPROVAL rows (spend > €500, outside standing preferences, 3.3× usual weekly volume). Point at the quote hash and the **Ed25519 signature** badge and the price-lock countdown. Approver is preset to Anna (procurement manager). Click **Approve €1,010.00**. | "The hotel's policy, a versioned YAML file the hotel owns, checked 12 rules and three need a human: over the €500 limit, a pack outside their usual preference, and 3.3 times their normal weekly milk. The agent has paused. Anna approves *this exact* signed quote: the signature is verified right here in the browser, and if the price changed, her approval would not apply. There is no approve tool for agents." | [CTRL] [E2E] |
 | **2:05–2:15** | Order response card: **Placed**, **AP** Accepted, 1,000 confirmed. | "Order placed, with a Peppol-style order response: accepted." | [E2E] [OPEN] |
 | **2:15–2:35** | Click **View audit trail →**. Show the chain rail (agent, system, human nodes). Click **Verify chain** → green. Scroll the readable report for two lines. Hover **Download evidence pack**. | "And afterwards anyone can check what happened: every event is hash-chained and signed, in plain sentences. Verify recomputes every hash and signature. The evidence pack lets an auditor check it offline with our public key." | [CTRL] |
-| **2:35–2:50** | Switch to the robustness slide (deck) or terminal: show wind-tunnel numbers. **TODO: numbers from the wind tunnel run.** | "We didn't test this on one happy path. Our wind tunnel had Gemini generate **TODO N** synthetic hotels, schools and hospitals, with stock-outs, outages and prompt injections. Result: **TODO**% correct escalations, **TODO 0** policy violations, **TODO 0** allergen violations, versus a naive agent with direct API access that **TODO**." | [ROB] [GEM] |
+| **2:35–2:50** | **Robustness montage.** Switch to terminal tab (c), where `uv run aimo demo --montage` was started about 4 minutes before going on stage (see "Robustness montage" below). Scroll to **== Montage verdicts ==**: six green **PASS** lines. Optional build on the deck: wind tunnel table. | "That was one request. Here are six more, run live by the same Gemini agent while we were talking: a stock-out split into four lines, a school with milk and nut allergies, a prompt injection planted in supplier text, a standing order thirteen times too big, a last-minute event. Six of six pass, 22 to 37 seconds each, about three cents of Gemini per order. **TODO:** wind tunnel line when the numbers land." | [ROB] [GEM] |
 | **2:50–3:00** | Click **Connect your agent** in the header (MCP config dialog), or open `/.well-known/otap.json`. | "It's all open: MCP, OpenAPI 3.1, a discovery manifest, JWS signatures, Peppol semantics. Swap the mock for SAP behind one interface, put OAuth in front, and this goes to production. Trusted Trade Agents." | [OPEN] |
 
 ### Lines to have ready for questions
-- **"What if the agent lies about the tier?"** Today the quote line's tier and flags come from the agent (see "Issues for engineers" in `docs/reports/pitch.md`). TODO: answer once the gateway derives them server-side.
+- **"What if the agent lies about the tier?"** It can't help itself: the gateway recomputes tier and substitution flags server-side and the policy re-verifies them. A substitute sent as "preferred" still comes back as "better, outside preference" and needs approval (verified Sat 18:26).
+- **"Can the agent approve its own order through REST?"** No. Approvals are accepted only from a named person in the customer's approver directory; agent identities get 403 `approval_refused` (verified Sat 18:26).
 - **"Why not just give the agent an API key?"** An API key says *who*, not *what they may do*. The mandate plus policy says what, and the signed quote plus approval binding proves what was agreed.
 - **"What about prompt injection in supplier data?"** Two layers: regex (0 false positives on 34,159 real supplier texts) and a Gemini classifier, and the buyer harness redacts flagged text before the model sees it. Flagged orders need a human.
 - **"Is the order real?"** Valio Aimo has no order API in the mock, so we built a mock order backend behind the same interface a SAP adapter would implement.
 - **"Why Gemini?"** Finnish/Swedish product data, embeddings in the same API, thinking levels so reasoning is only spent on the substitution decision, structured output everywhere.
 
-## Robustness montage (optional 30 s, if time allows or for the video)
+## Robustness montage (`uv run aimo demo --montage`)
 
-Pick one, rehearsed in advance:
-1. **School allergen:** select **school-tampere**, request "We need 120 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies." Milk-containing and unknown-allergen products are rejected with the reason; any substitution needs the kitchen manager. Terminal equivalent: `uv run aimo demo --scenario school-allergen`.
-2. **Prompt injection:** `uv run aimo demo --scenario injection`. Supplier text with hidden instructions is flagged and the order needs approval.
-3. **Outage:** `uv run aimo demo --scenario stockout` (fault `partial:*:400`) or send header `X-Aimo-Faults: error_rate:1` to `/v1/offers` to show the 503 with `Retry-After`.
+`uv run aimo demo --montage` runs the six live scenarios in sequence with the Gemini agent over MCP against the live mock API and approves as each policy's named approver (drift is left held for confirmation by design). It prints one verdict per scenario plus Gemini calls and tokens, and writes a results table.
 
-Run each scenario once during rehearsal and note how long it takes (happy path measured at 38 s; the buyer report has stockout at 36 s). **TODO: timings for the others.** Live tamper demo without the mock: `curl -X POST localhost:8000/v1/demo/tamper/3`, click **Verify chain** (red, "event #3 was modified after it was recorded"), then `curl -X POST localhost:8000/v1/demo/untamper/3` (verified Sat 15:00).
+Measured result to quote ([demo-montage.md](demo-montage.md), Sat 14 Nov 18:21): **6/6 PASS**, 22–37 s per scenario, 176 s wall clock in total, 50 Gemini calls, **$0.0339 per placed order** (was $0.0822 before the token trim, −59%), escalation to gemini-4-hydrogen HIGH on 6/6 runs but only on the quote-decision turn (19% of agent steps).
+
+| Scenario | What the audience sees in the verdict line |
+|---|---|
+| happy | placed, EUR 1,010.00, approved by anna@hotel-aurora.example |
+| stockout | placed, split into 4 lines, EUR 2,544.80, shortfall 0 |
+| school-allergen | placed, Oatly Oat Drink Semi 1L, 2 candidates rejected, approved by liisa@school-tampere.example |
+| injection | placed, 4 supplier texts flagged and redacted, policy cites injection, largest line 300 units |
+| drift | needs_confirmation, EUR 4,040.00 quote prepared, place_order held by the agent |
+| event | placed, 2 lines (lactose-free cream and butter), EUR 251.20 |
+
+How to run it for the pitch (it takes about 3 minutes, so start it before going on stage):
+1. Run it against a **second gateway with its own state**, so its five placed orders do not count towards the hotel's weekly budget in the hero demo:
+   ```bash
+   AIMO_DATA_DIR=~/aimo-montage-data uv run aimo serve --port 8031      # data dir prepared like step 1 of the checklist
+   uv run aimo demo --montage --base-url http://localhost:8031 --montage-out /tmp/montage.md
+   ```
+   `--montage-out` keeps the committed `docs/demo-montage.md` unchanged.
+2. Start it about 4 minutes before the slot, in terminal tab (c) with a large font, and leave the verdicts on screen.
+3. If it fails or the Wi-Fi is down, show `docs/demo-montage.md` (the measured run) and say it is the recorded result.
+
+Single scenarios for rehearsal or Q&A: `uv run aimo demo --scenario stockout|school-allergen|injection|drift|event --auto-approve-as <approver>`.
+
+Live tamper demo without the mock: `curl -X POST localhost:8000/v1/demo/tamper/3`, click **Verify chain** (red, "event #3 was modified after it was recorded"), then `curl -X POST localhost:8000/v1/demo/untamper/3` (verified Sat 15:00).
 
 ## Fallback plan
 
@@ -56,7 +78,7 @@ Run each scenario once during rehearsal and note how long it takes (happy path m
 | Gemini slow or failing | The agent falls back to the deterministic need parser; keep talking over the timeline. If the run stalls for > 20 s, switch to tab (b) mock mode. | 5 s |
 | Mock API down or slow (`/healthz` ok but offers 503) | Switch to tab (b): `http://localhost:8000/ui/?mock=1` plays the identical story with no backend. The header shows **MOCK DATA · no backend**: say so honestly. Mock mode also has **Simulate tampering** to show the chain turning red. | 5 s |
 | Gateway won't start / laptop problem | Mock UI without the gateway: `cd web && python -m http.server 8765`, open `http://127.0.0.1:8765/index.html?mock=1`. | 30 s |
-| Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (Gemini agent, about 40 s), or without Gemini `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
+| Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (Gemini agent, about 30–40 s), or without Gemini `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
 | Everything down | Play the pre-recorded video (Chintufp records it at the Sun 06:00 freeze; file path **TODO**). | 0 s |
 
 ## Recording the video (2–3 minutes)
