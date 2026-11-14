@@ -99,3 +99,10 @@ The tools take the same args as HTTP and return the same JSON. Identity comes fr
 - Link audit events with `data.related_ids` (run ↔ quote ↔ order). Use helpers `log_request`, `log_quote`, `log_decision`, `log_order` for consistent wording; the weekly budget rule reads `order.placed`.
 - Extra API: `get_mandate`, `list_customers`, `check_approval(quote, decision, approver, approver_role, quote_hash, *, decision_kind, note, order_id) -> {ok, reason}`, `explain(decision)`, `verify_quote_detailed`, `evidence_pack(subject_id)`, `tamper_for_demo/untamper_for_demo` (disabled when AIMO_ENV=production).
 - Decision (CEO): out-of-scope category for hotel stays needs_approval (category grouping is inferred from codes).
+
+## Catalog conventions (landed Sat ~15:45, from team/catalog; see docs/reports/catalog.md)
+- Candidate/PlanLine flags: `cutoff_passed`, `sales_block`, `unavailable` → always tier `rejected` (match trust line flags). Others: `outside_preference`, `partial_stock`, `allergen_unknown`, `allergen_inferred_hint`, `content_from_price`, `no_live_offer`, `recipe_check_failed`.
+- `Product.allergen_source` values: `structured`, `structured:claim`, `inferred:gemini`, `none`. Inferred can only block, never clear.
+- Tiers without a usual product: best = all query concepts in name, better = ≥ half, good = rest that passes hard filters.
+- `plan_need(need, offers_fn=None)`; `UpstreamError` from `get_offers` propagates (gateway → 503).
+- CLI: `python -m aimo.catalog build|search <q>|demo`. Built artifacts in data/ (gitignored): catalog.sqlite, embeddings.npy + embeddings_ids.json, cache/gemini_allergens.json. `aimo serve` must build if missing.
