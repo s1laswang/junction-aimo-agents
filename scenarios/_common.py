@@ -11,13 +11,14 @@ KEYS = {
     "school-hervanta": os.environ.get("KEY_SCHOOL", "demo-school-hervanta"),
 }
 ADMIN = {"X-Admin-Key": os.environ.get("AIMO_ADMIN_KEY", "demo-admin")}
-DATA = os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json")
+DATA = os.path.join(os.environ.get("AIMO_DATA_DIR") or "data", "valio_aimo_junction26_product_data.json")
+_cached_data_dir = None
 
 
-def parse_base():
+def parse_base(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=os.environ.get("AIMO_URL", "http://127.0.0.1:8080"))
-    return ap.parse_args().base.rstrip("/")
+    return ap.parse_args(argv).base.rstrip("/")
 
 
 class Run:
@@ -129,14 +130,39 @@ def best_picks_covering(item, need_units=None):
     return out
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=4)
+def _load_product_db(abs_path, mtime_ns, size):
+    with open(abs_path, encoding="utf-8") as f:
+        return {str(p["id"]): p for p in json.load(f) if isinstance(p, dict) and "id" in p}
+
+
 def _product_db(path):
-    with open(path, encoding="utf-8") as f:
-        return {p["id"]: p for p in json.load(f)}
+    abs_path = os.path.abspath(path)
+    st = os.stat(abs_path)
+    return _load_product_db(abs_path, st.st_mtime_ns, st.st_size)
+
+
+def _clear_product_db_cache():
+    global _cached_data_dir
+    _cached_data_dir = None
+    _load_product_db.cache_clear()
+
+
+_product_db.cache_clear = _clear_product_db_cache
+_product_db.cache_info = _load_product_db.cache_info
 
 
 def product_db():
-    return _product_db(os.path.join(os.environ.get("AIMO_DATA_DIR", "data"), "valio_aimo_junction26_product_data.json"))
+    global _cached_data_dir
+    cur_dir = os.path.abspath(os.environ.get("AIMO_DATA_DIR") or "data")
+    if _cached_data_dir is not None and _cached_data_dir != cur_dir:
+        _load_product_db.cache_clear()
+    _cached_data_dir = cur_dir
+    return _product_db(os.path.join(cur_dir, "valio_aimo_junction26_product_data.json"))
+
+
+product_db.cache_clear = _clear_product_db_cache
+product_db.cache_info = _load_product_db.cache_info
 
 
 def allergens_of(pid):
@@ -148,9 +174,13 @@ def allergens_of(pid):
     if not p:
         return None
     out = set()
-    for c in p.get("synkkaData", {}).get("classifications") or []:
-        if c.get("name") == "allergen":
-            out |= {v["id"] for v in c.get("values") or [] if v.get("unit") in ("CONTAINS", "MAY_CONTAIN")}
+    for c in (p.get("synkkaData") or {}).get("classifications") or []:
+        if isinstance(c, dict) and c.get("name") == "allergen":
+            out |= {
+                v["id"]
+                for v in (c.get("values") or [])
+                if isinstance(v, dict) and v.get("id") and v.get("unit") in ("CONTAINS", "MAY_CONTAIN")
+            }
     return out
 
 
@@ -163,7 +193,7 @@ def decode_jws(jws):
 def verify_jws(base, jws):
     from joserfc import jws as J
     from joserfc.jwk import KeySet
-    keys = httpx.get(base + "/.well-known/jwks.json", timeout=30).json()
+    keys = httpx.get(base.rstrip("/") + "/.well-known/jwks.json", timeout=30).json()
     return J.deserialize_compact(jws, KeySet.import_key_set(keys), algorithms=["EdDSA"])
 
 
@@ -187,7 +217,9 @@ def excluded_codes(names):
     from aimo.catalog import ALLERGEN_ALIASES, ALLERGEN_NAMES
     out = set()
     for a in names:
-        a = a.strip().lower()
+        a = str(a).strip().lower()
+        if not a:
+            continue
         out |= set(ALLERGEN_ALIASES.get(a) or [k for k, v in ALLERGEN_NAMES.items() if v == a] or [a.upper()])
     return out
 
