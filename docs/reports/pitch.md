@@ -1,5 +1,7 @@
 # Pitch, QA and docs report
 
+> **From Sat 14 Nov 23:25 the submit session (S4) owns these docs now.** Current status, gate runs and requests: [submit.md](submit.md). The sections below are the earlier rounds, kept for history; their TODO notes are closed there.
+
 Branch `team/pitch`. Last updated Sat 14 Nov 2026, 18:35 Helsinki. Round 2: merged origin/main at 18:20 (trust r2, gateway r3, catalog r3, buyer r2–r3; 138 tests).
 
 ## Status

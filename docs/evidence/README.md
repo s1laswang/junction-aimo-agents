@@ -21,4 +21,4 @@ Expected output: before trim 55 calls, 99,373 input tokens per run, 46% cached, 
 - Removed: `host` (machine name) and `pid`. Nothing else was changed.
 - Added: `scenario`, assigned by run order (the montage always runs `happy, stockout, school-allergen, injection, drift, event`, `aimo/buyer/run_demo.py` `MONTAGE`). For the after-trim run this matches the run ids printed in demo-montage.md.
 
-Source: the buyer engineer's worktree ledger (`.claude/worktrees/agent-a600a0aaf0279d5cb/data/gemini/ledger/Silass-MacBook-Pro-{33508,61669}.jsonl`), extracted Sun 15 Nov by the submit session.
+Source: the buyer engineer's worktree ledger (`.claude/worktrees/agent-a600a0aaf0279d5cb/data/gemini/ledger/Silass-MacBook-Pro-{33508,61669}.jsonl`), extracted Sat 14 Nov 23:00 by the submit session.
