@@ -5,11 +5,20 @@ import os
 import sys
 import tempfile
 import time
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+def _ignore_rfc9864():
+    warnings.filterwarnings("ignore", message=".*RFC 9864.*")
+    warnings.filterwarnings("ignore", message="EdDSA is deprecated")
+
+
+_ignore_rfc9864()
 
 import httpx
 from aimo import audit
@@ -105,6 +114,19 @@ def check_ui(client):
     return ", ".join(UI_PATHS) + " -> 200"
 
 
+def check_mandate_auth(client):
+    r_unauth = client.get("/v1/mandate")
+    if r_unauth.status_code != 401:
+        raise AssertionError(f"unauthenticated GET /v1/mandate HTTP {r_unauth.status_code}, expected 401")
+    r_auth = client.get("/v1/mandate", headers={"X-Agent-Key": AGENT_KEY})
+    if r_auth.status_code != 200:
+        raise AssertionError(f"authenticated GET /v1/mandate HTTP {r_auth.status_code}, expected 200")
+    body = r_auth.json()
+    if body.get("customer") != CUSTOMER or "per_order_eur" not in body:
+        raise AssertionError(f"unexpected mandate body: {body!r}")
+    return f"401 without key, 200 with {AGENT_KEY} (customer={CUSTOMER}, per_order_eur={body['per_order_eur']})"
+
+
 def check_mcp(client):
     init_res, sid = _mcp_rpc(
         client,
@@ -187,23 +209,26 @@ CHECKS = [
     ("1. /health", check_health),
     ("2. Discovery", check_discovery),
     ("3. UI views", check_ui),
-    ("4. MCP /mcp", check_mcp),
-    ("5. Parse + Audit + Checkpoint", check_parse_audit_checkpoint),
+    ("4. Mandate auth /v1/mandate", check_mandate_auth),
+    ("5. MCP /mcp", check_mcp),
+    ("6. Parse + Audit + Checkpoint", check_parse_audit_checkpoint),
 ]
 
 
 def run_checks(client, target):
     t0 = time.perf_counter()
     results = []
-    for label, fn in CHECKS:
-        try:
-            detail = fn(client)
-            results.append((label, True, detail))
-            print(f"[PASS] {label}: {detail}")
-        except Exception as exc:
-            detail = f"{type(exc).__name__}: {exc}"
-            results.append((label, False, detail))
-            print(f"[FAIL] {label}: {detail}")
+    with warnings.catch_warnings():
+        _ignore_rfc9864()
+        for label, fn in CHECKS:
+            try:
+                detail = fn(client)
+                results.append((label, True, detail))
+                print(f"[PASS] {label}: {detail}")
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                results.append((label, False, detail))
+                print(f"[FAIL] {label}: {detail}")
     passed = sum(1 for _, ok, _ in results if ok)
     total = len(results)
     elapsed = time.perf_counter() - t0
@@ -255,7 +280,9 @@ def main(argv=None):
     group.add_argument("--inprocess", action="store_true", help="Run against FastAPI TestClient with temporary DB and keys")
     group.add_argument("--url", default=None, help="Run over HTTP against a live gateway URL (e.g. http://localhost:8080)")
     args = parser.parse_args(argv)
-    results = _run_url(args.url) if args.url else _run_inprocess()
+    with warnings.catch_warnings():
+        _ignore_rfc9864()
+        results = _run_url(args.url) if args.url else _run_inprocess()
     return 0 if all(ok for _, ok, _ in results) else 1
 
 

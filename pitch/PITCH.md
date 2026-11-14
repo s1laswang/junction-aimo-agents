@@ -1,6 +1,6 @@
 # Pitch, 3 minutes
 
-Spoken by Momin. About 430 words, 150 wpm. Numbers in [brackets] are not measured yet, see NUMBERS.md. Do not say a bracket number until it is filled.
+Spoken by Momin. 437 spoken words (146 wpm). Every number below comes from `pitch/measure_data.py` and the live `aimo.app:app` milk flow, see [NUMBERS.md](NUMBERS.md).
 
 ## Time map to judging weights
 
@@ -19,46 +19,46 @@ Spoken by Momin. About 430 words, 150 wpm. Numbers in [brackets] are not measure
 
 A hotel's buying agent sends one line. "I need 1,000 litres of lactose-free milk by Monday."
 
-Sounds easy. It isn't. Valio has 17,546 products in the data. 4,178 say lactose-free. The agent has to pick the right ones, check stock, check the price, and not spend the hotel's money on its own without anyone knowing.
+Sounds easy. It isn't. Valio has 17,546 products in the catalog. 4,178 declare lactose-free. The agent has to pick the right product, check stock and price, and never spend the hotel's money outside its rules.
 
-We built the thing in the middle. A gateway any agent can talk to.
+We built the thing in the middle: a trusted trade gateway any agent can talk to.
 
-**Demo (0:20)** [see DEMO.md, say this over the clicks]
+**Demo (0:20)** (live in `/console.html`, see [DEMO.md](DEMO.md))
 
-Here is the agent. I paste the line. It turns it into a real need: milk, 1,000 litres, lactose-free, Monday.
+Here is the buyer agent for `hotel-aurora`. I paste the line. It parses a structured need: milk, 1,000 litres, lactose-free, Monday.
 
-Now it asks us for offers. These are real products from the Valio data, with real price and real stock. Not all milk is lactose-free, so we filter on what the product data actually declares. Each offer shows why it ranked where it did. Price, availability on Monday, delivery reliability, CO2.
+Now it asks for offers. Real Valio products, real price and stock, filtered on declared claims. Each offer shows why it ranked: price, Monday availability, delivery reliability, CO2.
 
-It found one product it can buy for Monday, 1.40 euro a litre. Four other lactose-free milks it skipped, and it tells you why: their order cutoff already passed. [splitting across products only if the offers screen shows it]
+It matches product 464119, Valio rasvaton maito 1 l laktoositon UHT: 100 cases of 10 litres at 13.32 EUR net per case, 1.33 EUR per litre, plus 3 ranked good, better, and best alternatives with explicit trade-offs on price and pack size.
 
-We sign the quote. Price and stock locked, valid until the order cutoff. Nobody can change a number after that.
+We issue a single-use Ed25519-signed quote: 1,332 EUR net, 1,512 EUR with VAT, locked until the day-before-delivery cutoff. Nobody can alter a number after that.
 
-Now it places the order. 1,400 euros. That is inside the hotel's limit, so it goes through on its own, with the reason written down. Same request from the school is over the school's limit. That one stops and lands in the approval inbox.
+Now it places the order. Hotel Aurora has a 2,500 EUR per-order limit, so 1,332 EUR is auto-confirmed (`WITHIN_MANDATE`) with the reason recorded. The exact same ask from `school-hervanta` exceeds its 600 EUR per-order limit and stops in `pending_approval` in `/inbox.html`.
 
-**Controls (1:40)**
+**Controls (1:40)** (live in `/inbox.html` and `/audit.html`)
 
-This is the part we care about most. Every agent has a mandate. Spend per order, spend per week, banned allergens, allowed categories, whether it may swap products.
+This is the part we care about most. Every agent has a mandate: spend per order, spend per week, banned allergens, allowed categories, and whether it may swap products.
 
-Inside the mandate, it buys by itself. Outside, a human gets a plain sentence: what, how much, and why it stopped. I click approve. It is placed.
+Inside the mandate, it buys on its own. Outside, a human gets one plain sentence: what, how much, and why it stopped. I click approve. The order is confirmed.
 
-And every step is in an audit trail, written in normal words, hash-chained so you can see if anyone edited it. A hospital kitchen with a strict allergen rule gets blocked instead of asked. Same engine, different mandate.
+Every step lands in a hash-chained audit ledger, written in normal words, with a signed checkpoint so anyone can verify nothing was edited. Hospital Tays blocks banned allergens outright instead of asking. Same engine, different mandate.
 
-**Exceptions (2:15)**
+**Exceptions (2:15)** (stock-out simulation in `/console.html?demo=1`)
 
-Now the bad day. Supplier stock drops mid-week. The agent does not fail. It finds a substitute that still fits the rules, or it tells the human it cannot, with the reason. For the hospital, a substitute that adds an allergen is never offered. [scenario pass count: only say it after the final run, today it is 1 of 8]
+Now the bad day. Supplier stock drops mid-week. The agent does not fail. It proposes a compliant substitute or split and moves the order to `pending_approval` with the reason. For Hospital Tays, a substitute that adds a banned allergen is never offered.
 
-**Open (2:40)**
+**Open (2:40)** (`/.well-known/agent-card.json`, `/.well-known/jwks.json`, `/openapi.json`, `/mcp`)
 
-It is not a closed demo. REST with OpenAPI, and MCP, so any agent can plug in. Discovery file, public keys to verify quotes. The Valio mock has no order endpoint, so orders are ours and the signed quote is the contract. In production you swap the mock for the real order system and keep the same interface.
+It is not a closed demo. REST with OpenAPI parity across 12 MCP tools, so any agent plugs in. Agent discovery card and Ed25519 public keys let anyone verify quotes and audit checkpoints. The Valio mock has no order endpoint, so orders are ours and the signed quote is the contract. In production you swap the mock for the real order system and keep the same interface.
 
 That is it. Agents can buy. Humans stay in charge.
 
 ## Cut list if we run over
 
-1. Drop the hospital sentence in Controls.
-2. Drop the CO2 mention in the demo.
-3. Keep the hook, the approve click and the audit trail. Never cut those.
+1. Drop the Hospital Tays sentence in Controls.
+2. Drop the CO2 mention in the Demo.
+3. Keep the hook, the approve click, and the audit ledger. Never cut those.
 
 ## Say nothing about
 
-Anything we did not measure. No "saves X percent", no "X seconds", until NUMBERS.md says so.
+Anything we did not measure. No "saves X percent", no "X seconds", unless [NUMBERS.md](NUMBERS.md) has the command that measured it.
