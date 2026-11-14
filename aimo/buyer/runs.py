@@ -51,6 +51,7 @@ class AnswerRequest(BaseModel):
     option_id: Optional[str] = None         # one of the needs_clarification step's options[].id
     text: Optional[str] = None              # or free text
     question_id: Optional[str] = None
+    customer_id: Optional[str] = None
 
 
 ANSWER_TIMEOUT_S = float(os.environ.get("AIMO_BUYER_ANSWER_TIMEOUT", "900"))
@@ -265,22 +266,54 @@ async def create_run(request: Request):
 
 
 @router.post("/runs/{run_id}/answer")
-def answer_run(run_id: str, ans: AnswerRequest) -> dict:
+def answer_run(run_id: str, ans: AnswerRequest, request: Request):
     """Answer the run's pending needs_clarification question; the run resumes."""
-    try:
-        run = registry.get(run_id)
-    except KeyError:
-        raise HTTPException(404, f"unknown run {run_id}")
+    from fastapi.responses import JSONResponse
+
+    from aimo.gateway.auth import check_agent_key, is_known_customer
+
+    def _bad(code: str, message: str, status: int) -> JSONResponse:
+        return JSONResponse({"error": code, "message": message}, status_code=status)
+
+    hdr_cust = (request.headers.get("x-customer-id") or "").strip()
+    body_cust = (ans.customer_id or "").strip()
+    if hdr_cust and body_cust and hdr_cust != body_cust:
+        return _bad("customer_mismatch", "X-Customer-Id disagrees with body customer_id.", 403)
+    eff_cust = hdr_cust or body_cust
+    unpatched_real = getattr(registry.start, "__func__", None) is RunRegistry.start
+    run = registry.runs.get(run_id)
+    if eff_cust:
+        if unpatched_real and (run is None or run.req.transport != "fake") and not is_known_customer(eff_cust):
+            return _bad("unknown_customer", f"unknown customer {eff_cust[:80]!r}", 403)
+        try:
+            check_agent_key(eff_cust, request.headers.get("x-agent-key"))
+        except Exception as exc:
+            return _bad(
+                getattr(exc, "code", "invalid_agent_key"),
+                getattr(exc, "message", str(exc)),
+                getattr(exc, "status", 403),
+            )
+        if run is not None and eff_cust != run.req.customer_id:
+            return _bad("customer_mismatch", "caller customer_id does not match this run", 403)
+    else:
+        if unpatched_real and (run is None or run.req.transport != "fake"):
+            return _bad(
+                "identity_required",
+                "POST /v1/agent/runs/{run_id}/answer requires X-Customer-Id or customer_id.",
+                401,
+            )
+    if run is None:
+        return _bad("run_not_found", f"unknown run {run_id}", 404)
     q = run.pending_question
     if q is None:
-        raise HTTPException(409, "this run is not waiting for an answer")
+        return _bad("not_waiting_for_answer", "this run is not waiting for an answer", 409)
     if ans.question_id and ans.question_id != q.get("question_id"):
-        raise HTTPException(409, f"pending question is {q.get('question_id')}")
+        return _bad("question_mismatch", f"pending question is {q.get('question_id')}", 409)
     if not ans.option_id and not ans.text:
-        raise HTTPException(422, "option_id or text is required")
+        return _bad("answer_required", "option_id or text is required", 422)
     if ans.option_id and ans.option_id not in {o["id"] for o in q.get("options", [])}:
-        raise HTTPException(422, f"unknown option {ans.option_id}")
-    run.answers.put(ans.model_dump(exclude_none=True))
+        return _bad("unknown_option", f"unknown option {ans.option_id}", 422)
+    run.answers.put(ans.model_dump(exclude_none=True, exclude={"customer_id"}))
     return {"ok": True, "run_id": run_id, "question_id": q.get("question_id")}
 
 

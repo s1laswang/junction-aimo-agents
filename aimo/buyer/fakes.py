@@ -194,7 +194,25 @@ class FakeGateway:
                     tier = "rejected"
             if tier not in ("preferred", "rejected"):
                 flags.append("outside_preference")
-            cands.append({"product": self._summary(pid), "offer": offer, "tier": tier, "reasons": reasons or ["meets hard constraints"], "flags": flags})
+            from aimo.catalog.screening_bridge import screen_product_row, screen_reason
+            mkt = INJECTION if (self.scenario == "injection" and pid == "469363") else p.get("marketing_text")
+            sc = screen_product_row(pid, {"marketing_text": mkt})
+            inj_screen = {
+                "suspicious": sc["suspicious"],
+                "reasons": sc["reasons"],
+                "layers": sc["layers"],
+                **({"injected": True} if sc.get("injected") else {}),
+            }
+            cand_reasons = list(reasons) if reasons else ["meets hard constraints"]
+            if sc["suspicious"]:
+                flags.append("supplier_text_injection_suspected")
+                if sc.get("injected"):
+                    flags.append("injected:inject_text")
+                sr = screen_reason(sc)
+                if sr:
+                    cand_reasons.append(sr)
+            cands.append({"product": self._summary(pid), "offer": offer, "tier": tier, "reasons": cand_reasons,
+                          "flags": flags, "injection_screen": inj_screen})
         order = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
         remaining = qty
         for c in sorted(cands, key=lambda c: (order[c["tier"]], c["offer"]["unit_price"])):
@@ -210,21 +228,41 @@ class FakeGateway:
             lines.append({"product_id": c["product"]["id"], "product_name": c["product"]["name"], "tier": c["tier"],
                           "qty_sales_units": units, "sales_unit": c["product"]["sales_unit"],
                           "covered_amount": round(units * ca, 4), "unit_price": c["offer"]["unit_price"],
-                          "line_total": round(units * c["offer"]["unit_price"], 2), "reasons": c["reasons"], "flags": c["flags"]})
+                          "line_total": round(units * c["offer"]["unit_price"], 2), "reasons": list(c["reasons"]),
+                          "flags": list(c["flags"]), "injection_screen": c["injection_screen"]})
             remaining = round(remaining - units * ca, 6)
         covered = round(sum(l["covered_amount"] for l in lines), 4)
+        flagged = list(dict.fromkeys(
+            f"{l['product_name']} ({l['product_id']})"
+            for l in lines
+            if (l.get("injection_screen") or {}).get("suspicious")
+        ))
+        explanation = (
+            f"Prompt-injection screen: untrusted supplier text on {', '.join(flagged)} was flagged "
+            f"and requires human approval."
+            if flagged else ""
+        )
         return {"need": need, "lines": lines, "candidates": cands, "covered_amount": covered,
                 "shortfall": round(max(0.0, qty - covered), 4), "total_net": round(sum(l["line_total"] for l in lines), 2),
-                "explanation": "", "_fake": True}
+                "explanation": explanation, "_fake": True}
 
     def create_quote(self, delivery_date: str, lines: list[dict], need: dict | None = None) -> dict:
+        from aimo.catalog.screening_bridge import screen_product_row
         qlines = []
         for l in lines:
             pid = l["product_id"]
             o = self._offer(pid, delivery_date)
+            mkt = self.get_product(pid).get("marketing_text") or PRODUCTS[pid].get("marketing_text")
+            sc = screen_product_row(pid, {"marketing_text": mkt})
+            in_flags = list(l.get("flags") or [])
+            qflags = []
+            if "supplier_text_injection_suspected" in in_flags or sc["suspicious"]:
+                qflags.append("supplier_text_injection_suspected")
+            if "injected:inject_text" in in_flags or sc.get("injected"):
+                qflags.append("injected:inject_text")
             qlines.append({"product_id": pid, "product_name": PRODUCTS[pid]["name"], "qty_sales_units": l["qty_sales_units"],
                            "sales_unit": PRODUCTS[pid]["sales_unit"], "unit_price": o["unit_price"],
-                           "line_total": round(l["qty_sales_units"] * o["unit_price"], 2), "tier": l.get("tier", "preferred"), "flags": []})
+                           "line_total": round(l["qty_sales_units"] * o["unit_price"], 2), "tier": l.get("tier", "preferred"), "flags": qflags})
         qid = "Q-" + uuid.uuid4().hex[:8]
         q = {"quote_id": qid, "customer_id": self.customer_id, "agent_id": self.agent_id, "delivery_date": delivery_date,
              "lines": qlines, "total_net": round(sum(l["line_total"] for l in qlines), 2), "currency": "EUR",
@@ -253,7 +291,8 @@ class FakeGateway:
         if any(l["tier"] in ("better", "good") for l in q["lines"]) and outcome == "auto_approve":
             outcome = "needs_approval"
             hits.append({"rule_id": "substitution.tier", "outcome": "needs_approval", "message": "A substitute outside tier 'best' needs approval."})
-        if ((q.get("need") or {}).get("preferences") or {}).get("injection_flags"):
+        if (((q.get("need") or {}).get("preferences") or {}).get("injection_flags")
+                or any("supplier_text_injection_suspected" in (l.get("flags") or []) for l in q.get("lines", []))):
             hits.append({"rule_id": "security.prompt_injection", "outcome": "needs_approval",
                          "message": "Suspicious supplier text flagged; human approval required."})
             if outcome != "reject":

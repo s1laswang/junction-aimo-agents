@@ -417,15 +417,22 @@ def build_router() -> APIRouter:
     @r.post("/v1/demo/tamper/{seq}", tags=["demo"], summary="DEMO ONLY: tamper with one audit event", responses=ERR)
     def demo_tamper(seq: int, summary: Optional[str] = Query(None, description="New summary text (default: flips "
                                                                                  "'approved' to 'rejected')"),
+                    x_agent_id: Optional[str] = Header(None),
                     cred: HumanCred = Depends(human_cred)):
         """Rewrites audit event `seq` in place, bypassing the append-only guard, so `GET /v1/audit/verify` shows the
         broken chain. Restore with `POST /v1/demo/untamper/{seq}`. Needs a signed-in approver; 404 when
         AIMO_ENV=production."""
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(f"audit:{seq}", f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, f"audit:{seq}", "human:demo-tamper")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
-    def demo_untamper(seq: int, cred: HumanCred = Depends(human_cred)):
+    def demo_untamper(seq: int, x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(f"audit:{seq}", f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, f"audit:{seq}", "human:demo-untamper")
         return service.demo_untamper(seq)
 
