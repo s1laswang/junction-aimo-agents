@@ -547,8 +547,23 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
     covered_total = round(sum(l.covered_amount for l in lines), 4)
     total_net = round(sum(l.line_total for l in lines), 2)
     shortfall = round(max(0.0, need.quantity - covered_total), 4)
+    text = explain(need, lines, cands, covered_total, shortfall, total_net)
+    req_hits = _request_injection(need)
+    if req_hits:
+        text = (f"Warning: the request contains instructions aimed at AI agents ({', '.join(req_hits)}). They were "
+                f"ignored, and the customer's policy will ask a human to confirm. " + text)
     return Plan(need=need, lines=lines, candidates=cands, covered_amount=covered_total, shortfall=shortfall,
-                total_net=total_net, explanation=explain(need, lines, cands, covered_total, shortfall, total_net))
+                total_net=total_net, explanation=text)
+
+
+def _request_injection(need: Need) -> list[str]:
+    """Regex screen of buyer-side text (request + product query); never followed, only reported."""
+    try:
+        from aimo.trust.screening import screen_text
+        s = screen_text(" \n".join(t for t in (need.raw_text, need.product_query) if t), use_gemini=False)
+        return list(dict.fromkeys(s.get("strong_reasons") or []))[:3] if s.get("suspicious") else []
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def explain(need: Need, lines: list[PlanLine], cands: list[Candidate], covered: float, shortfall: float,

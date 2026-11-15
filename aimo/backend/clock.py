@@ -39,6 +39,18 @@ def parse(value: str | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def request_overrides_allowed(has_agent_identity: bool) -> bool:
+    """May this request override the clock (X-Aimo-Now) or inject faults (X-Aimo-Faults)?
+    Never in production. Never for a request carrying agent identity (an agent must not backdate "now" past a
+    cut-off or fake stock), unless the operator explicitly enables demo faults with AIMO_DEMO_FAULTS=1
+    (test harnesses, the robustness montage)."""
+    if not demo_enabled():
+        return False
+    if not has_agent_identity:
+        return True
+    return os.environ.get("AIMO_DEMO_FAULTS", "0").strip() == "1"
+
+
 def set_request_now(value: str | None) -> contextvars.Token:
     """Per-request fixed now (header X-Aimo-Now). Ignored outside demo mode or when unparsable."""
     dt = parse(value) if (value and demo_enabled()) else None

@@ -63,8 +63,9 @@ def _headers(ctx: Context | None) -> dict[str, str]:
 
 def _call(ctx: Context | None, fn, *args, **kwargs):
     h = _headers(ctx)
-    token = set_request_faults(h.get("x-aimo-faults"))
-    ntoken = clock.set_request_now(h.get("x-aimo-now"))
+    ok = clock.request_overrides_allowed(bool((h.get("x-agent-id") or "").strip()))  # agents can't backdate/fake stock
+    token = set_request_faults(h.get("x-aimo-faults") if ok else None)
+    ntoken = clock.set_request_now(h.get("x-aimo-now") if ok else None)
     try:
         return fn(*args, **kwargs)
     except service.ServiceError as e:

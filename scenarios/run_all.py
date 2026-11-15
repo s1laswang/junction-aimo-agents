@@ -53,7 +53,9 @@ def scratch_data_dir(src: str) -> str:
 
 
 def boot(port: int, data_dir: str):
-    env = {**os.environ, "AIMO_DATA_DIR": data_dir, "AIMO_RECIPE_CHECK": os.environ.get("AIMO_RECIPE_CHECK", "0")}
+    # scenarios inject stock-outs and clocks as agents on purpose: the operator enables demo faults explicitly
+    env = {**os.environ, "AIMO_DATA_DIR": data_dir, "AIMO_RECIPE_CHECK": os.environ.get("AIMO_RECIPE_CHECK", "0"),
+           "AIMO_DEMO_FAULTS": "1"}
     log = open(os.path.join(data_dir, "server.log"), "w+")
     srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "scenarios.app_with_extras:app", "--host", "127.0.0.1",
                             "--port", str(port)], env=env, stdout=log, stderr=log, cwd=ROOT)

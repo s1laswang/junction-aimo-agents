@@ -144,11 +144,16 @@ class FaultsMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         spec = now_hdr = None
+        agent = False
         for k, v in scope.get("headers", []):
             if k == b"x-aimo-faults":
                 spec = v.decode("latin-1")
             elif k == b"x-aimo-now":
                 now_hdr = v.decode("latin-1")
+            elif k == b"x-agent-id" and v.strip():
+                agent = True
+        if not clock.request_overrides_allowed(agent):  # agents cannot backdate the clock or fake stock
+            spec = now_hdr = None
         token = set_request_faults(spec)
         ntoken = clock.set_request_now(now_hdr)
         try:
