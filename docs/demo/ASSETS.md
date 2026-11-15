@@ -2,7 +2,7 @@
 
 This document records the provenance, license verification, and sprite inventory for the playable **"VALIO: TRY TO SCAM THE AGENT"** wholesale warehouse arena (`docs/arena/`).
 
-In accordance with the two-step asset provenance gate, this ledger is committed **before** vendoring any PNG files into `docs/arena/assets/`.
+In accordance with the two-step asset provenance gate, this ledger was committed first (`00194a6`) before vendoring the selective PNG set and [manifest.json](../arena/assets/manifest.json) into `docs/arena/assets/`.
 
 ## Provenance & Clean-Room Attestation
 
@@ -19,9 +19,9 @@ In accordance with the two-step asset provenance gate, this ledger is committed 
 | `emotes-pack` | `Emotes Pack` | https://kenney.nl/assets/emotes-pack | Kenney Vleugels (Kenney.nl) | `CC0 1.0 Universal` (`CC0-1.0`, https://creativecommons.org/publicdomain/zero/1.0/) | `Emotes` / `by Kenney Vleugels (Kenney.nl)` / `License (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/` | 380,191 B |
 | `pixel-platformer` | `Pixel Platformer (1.2)` | https://kenney.nl/assets/pixel-platformer | Kenney Vleugels (Kenney.nl) | `CC0 1.0 Universal` (`CC0-1.0`, https://creativecommons.org/publicdomain/zero/1.0/) | `Pixel Platformer (1.2)` / `Created/distributed by Kenney (www.kenney.nl)` / `License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/` | 260,312 B |
 
-## Selective Sprite Inventory (Step 1 Plan: 24 PNGs)
+## Vendored Sprite Inventory (24 PNGs + `manifest.json`)
 
-Only the 24 specific top-down warehouse tiles, character sprites, and status emotes needed by the arena are selected for vendoring (well below the 1.5 MB target and 15 MB repository cap).
+Only the 24 specific top-down warehouse tiles, character sprites, and status emotes needed by the arena are vendored into `docs/arena/assets/` (well below the 1.5 MB target and 15 MB repository cap).
 
 | Semantic Key | Target Path | Dimensions | Bytes | Source Pack & Archive Member | SHA-256 (first 16) | Arena Role |
 |---|---|---|---:|---|---|---|
@@ -50,8 +50,9 @@ Only the 24 specific top-down warehouse tiles, character sprites, and status emo
 | `icons.coin` | `docs/arena/assets/coin.png` | 16x16 | 162 | `Tiny Town (1.1)` (`Tiles/tile_0093.png`) | `d432578df64a8e4c` | Gold unit-price coin |
 | `icons.cash` | `docs/arena/assets/cash.png` | 16x16 | 171 | `Emotes Pack` (`PNG/Pixel/Style 1/emote_cash.png`) | `6cb39c38d9bda3cb` | Budget / price-drift $ emote |
 
-## Footprint Summary (Step 1 Pre-Vendoring)
+## Footprint Summary (Vendored on Disk)
 
-- **Planned PNG sprite count:** 24 files (`4,382 bytes` total across PNGs)
-- **Vendored PNGs in repository at Step 1:** 0 files (`0 bytes`; vendored in Step 2 together with `docs/arena/assets/manifest.json`)
-- **Hard budget check:** `< 1.5 MB` target and `< 15 MB` repository ceiling (`4,382 bytes` PNG payload is `0.03%` of the 15 MB cap)
+- **Vendored PNG sprite count:** 24 files (`4,382 bytes` / `4.28 KiB` total across PNGs)
+- **Manifest metadata file:** `docs/arena/assets/manifest.json` (`12,151 bytes` / `11.87 KiB`)
+- **Total `docs/arena/assets/` directory size:** 25 files, `16,533 bytes` (`16.15 KiB` / `0.016 MB`)
+- **Hard budget check:** `16,533 bytes` < `1,500,000 bytes` (`1.5 MB` target) and < `15,000,000 bytes` (`15 MB` repository ceiling; `0.11%` of cap)
