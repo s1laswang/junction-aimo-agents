@@ -5,6 +5,8 @@ import {
   claimLabel, roleLabel, flagInfo, flagEl, TIER_LABEL, TIER_HINT, VERDICT, actorKind, pretty, download, verifyJws,
 } from "./util.js";
 import { createLiveApi } from "./api.js";
+import { renderOps, loadOps, blockedEvents } from "./ops.js";
+import { renderRecipes, loadRecipes } from "./recipes.js";
 
 const params = new URLSearchParams(location.search);
 const MOCK = params.get("mock") === "1";
@@ -41,7 +43,20 @@ const S = {
   sigs: new Map(),             // quote_hash -> {state, detail} | "pending"
   jwks: null,
   audit: { state: "idle", events: [], error: null, scope: "flow", verify: null, verifying: false },
+  image: null,                 // {mime, data_b64, name, preview} photo intake
+  optimize: "agent",           // agent | cheapest | greenest | reliable
+  answers: {},                 // step seq -> answer label (needs_clarification)
+  learned: {},                 // customer_id -> {state, items[]}
+  remember: false, rememberScope: "product",
+  requote: null,               // {order_id, old, fresh, detail} after 409 requote_needed
+  ledger: { events: [], at: 0 }, // whole-ledger cache for the blocked-attacks feed
 };
+const OPTIMIZE = [
+  { id: "agent", label: "Agent's ranking" },
+  { id: "cheapest", label: "Cheapest" },
+  { id: "greenest", label: "Greenest" },
+  { id: "reliable", label: "Most reliable" },
+];
 let closeStream = null;
 
 // ================================================================== boot
@@ -57,6 +72,11 @@ async function boot() {
   pill.className = `mode-pill ${MOCK ? "mock" : "live"}`;
   for (const k of ["docs", "otap", "jwks", "mcp"]) $(`lnk-${k}`).href = api.links[k];
   $("btn-connect").addEventListener("click", openConnect);
+  $("blocked-pill").addEventListener("click", () => setTab("ops"));
+  const rc = $("request-card");
+  rc.addEventListener("dragover", (e) => { if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) { e.preventDefault(); rc.classList.add("drop"); } });
+  rc.addEventListener("dragleave", () => rc.classList.remove("drop"));
+  rc.addEventListener("drop", (e) => { e.preventDefault(); rc.classList.remove("drop"); const f = e.dataTransfer?.files?.[0]; if (f) readPhoto(f); });
   document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
   setTab("plan");
   renderRequest();
@@ -69,6 +89,9 @@ async function boot() {
   api.demoAvailable?.().then((ok) => { S.demoTamper = !!ok; renderAudit(); }).catch(() => {});
   if (params.get("customer") && S.customers.find((c) => c.id === params.get("customer"))) selectCustomer(params.get("customer"));
   refreshApprovals();
+  loadLearned(S.customerId);
+  refreshLedger();
+  setInterval(() => refreshLedger(), MOCK ? 4000 : 8000);
   // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
   if (params.get("autorun") === "1") startRun();
   else if (params.get("tab")) setTab(params.get("tab"));
@@ -122,6 +145,7 @@ function normCustomer(c) {
     segment: c.segment ? c.segment.charAt(0).toUpperCase() + c.segment.slice(1) : c.type || "",
     agent_id: c.agent_id || m.agent_id || c.agents?.[0]?.agent_id || c.mandates?.[0]?.agent_id || `${id}/buyer-1`,
     approvers: c.approvers || [],
+    excluded_allergens: c.excluded_allergens || [],
     policy_id: c.policy_id || m.policy_id || id,
     scopes: m.scopes || c.scopes || null,
     summary: toLines(c.summary || c.policy_summary || c.rules || c.policy),
@@ -135,17 +159,97 @@ function selectCustomer(id) {
   if (!S.textEdited && c) S.text = c.default_request || DEFAULT_REQ[id] || S.text;
   S.approver = "";
   renderRequest();
+  loadLearned(id);
+}
+
+// Learned swaps ("always allow this swap"). PROPOSED endpoint GET /v1/customers/{id}/learned; 404 hides the panel.
+async function loadLearned(id, force) {
+  if (!api.learned || (!force && S.learned[id]?.state === "ok")) return;
+  try {
+    let items = await api.learned(id);
+    if (items && !Array.isArray(items)) items = items.items || items.learned || items.swaps || [];
+    S.learned[id] = { state: "ok", items: items || [] };
+  } catch (e) {
+    S.learned[id] = { state: e.status === 404 ? "absent" : "error", items: [] };
+  }
+  renderRequest();
+}
+
+function learnedPanel(id) {
+  const L = S.learned[id];
+  if (!L || L.state !== "ok") return null;
+  if (!L.items.length && S.run && !S.editing) return null;
+  return h("details", { class: "learned", open: !S.run && L.items.length <= 2 },
+    h("summary", { class: "section-label" }, `Learned swaps · ${L.items.length}`, L.items.length ? h("span", { class: "more" }, "show ›") : null),
+    L.items.length ? h("ul", null, L.items.map((x) => h("li", null,
+      h("b", null, x.product_name || x.product_id || x.product_type || "swap"),
+      x.replaces_name || x.replaces_product_id ? [" for ", h("span", null, x.replaces_name || x.replaces_product_id)] : null,
+      h("span", { class: "faint" }, ` · ${x.scope === "product_type" ? "any product of this type" : "this product"}`,
+        x.approved_by ? ` · ${x.approved_by}` : "", x.approved_at || x.created_at ? ` · ${dayTime(x.approved_at || x.created_at)}` : "")))) :
+      h("div", { class: "faint small" }, "None yet. Tick “Always allow this swap” when approving, and the agent stops asking for it."));
+}
+
+// Photo intake: downscale in the browser (max 1600 px JPEG) and send with the run.
+function readPhoto(file) {
+  if (!file || !/^image\//.test(file.type)) return;
+  const fr = new FileReader();
+  fr.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL("image/jpeg", 0.85);
+      S.image = { mime: "image/jpeg", data_b64: url.split(",")[1], name: file.name || "photo.jpg", preview: url };
+      renderRequest();
+    };
+    img.src = fr.result;
+  };
+  fr.readAsDataURL(file);
 }
 
 // ================================================================== tabs
+const VIEWS = ["plan", "approvals", "audit", "recipes", "ops"];
 function setTab(tab) {
+  if (!VIEWS.includes(tab)) tab = "plan";
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
   const changed = S.tab !== tab;
-  for (const v of ["plan", "approvals", "audit"]) $(`view-${v}`).hidden = v !== tab;
+  for (const v of VIEWS) $(`view-${v}`).hidden = v !== tab;
   if (changed) document.querySelector(".tab-body").scrollTop = 0;
   S.tab = tab;
   if (tab === "audit") loadAudit();
   if (tab === "approvals") refreshApprovals(true);
+  if (tab === "ops") { renderOps(opsCtx); loadOps(opsCtx); refreshLedger(); }
+  if (tab === "recipes") { renderRecipes(recipesCtx); loadRecipes(recipesCtx); }
+}
+
+// Context objects for the ops and recipes modules.
+function openOrder(orderId) { S.selected = orderId; S.requote = null; setTab("approvals"); }
+const opsCtx = { get api() { return api; }, S, rerender: () => renderOps(opsCtx), openOrder };
+const recipesCtx = {
+  get api() { return api; }, S, rerender: () => renderRecipes(recipesCtx), openOrder,
+  afterOrder: (o) => { if (o?.status === "pending_approval") S.selected = o.order_id; refreshApprovals(true); refreshLedger(); },
+};
+
+// Whole-ledger cache: drives the "Blocked attacks" header pill and the ops feed.
+let ledgerBusy = false;
+async function refreshLedger() {
+  if (ledgerBusy) return;
+  ledgerBusy = true;
+  try {
+    const evs = await api.audit();
+    S.ledger = { events: Array.isArray(evs) ? evs : [], at: Date.now() };
+  } catch { /* keep last */ }
+  ledgerBusy = false;
+  const n = blockedEvents(S.ledger.events).length;
+  const pill = $("blocked-pill");
+  pill.hidden = false;
+  pill.className = `blocked-pill ${n ? "on" : ""}`;
+  pill.textContent = `${n} attack${n === 1 ? "" : "s"} blocked`;
+  $("cnt-ops").textContent = n ? String(n) : "";
+  $("cnt-ops").className = `tab-count ${n ? "bad" : ""}`;
+  if (S.tab === "ops") renderOps(opsCtx);
 }
 
 function updateCounts() {
@@ -176,15 +280,16 @@ function renderRequest() {
       h("div", { class: "req-compact" },
         h("div", { style: { minWidth: 0, display: "flex", flexDirection: "column", gap: "4px" } },
           h("span", { class: "section-label" }, c ? `${c.name}${c.segment ? " · " + c.segment : ""}` : S.customerId),
-          h("div", { class: "q" }, "“", S.text, "”"),
-          h("span", { class: "faint small mono" }, `${S.model} · thinking ${S.thinking}`)),
+          h("div", { class: "q" }, S.run.image ? h("img", { class: "q-thumb", src: S.run.image, alt: "Attached photo" }) : null, "“", S.text, "”"),
+          h("span", { class: "faint small mono" }, `${S.model} · thinking ${S.thinking}${S.optimize !== "agent" ? ` · optimize ${S.optimize}` : ""}`)),
         h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" } },
           running ? h("span", { class: "status neutral" }, h("span", { class: "spinner", style: { width: "10px", height: "10px" } }), "Running")
             : S.run.status === "waiting" ? h("span", { class: "status pending" }, "Awaiting approval")
+            : S.run.status === "input" ? h("span", { class: "status pending" }, "Needs your answer")
             : S.run.status === "error" ? h("span", { class: "status bad" }, "Failed")
             : h("span", { class: "status ok" }, "Finished"),
           h("button", { class: "btn btn-sm", disabled: running, onclick: () => { S.editing = true; renderRequest(); } }, "New request"))),
-      mandate);
+      mandate, learnedPanel(S.customerId));
     return;
   }
   const ta = h("textarea", { class: "input", id: "req-text", rows: 2, disabled: running, oninput: (e) => { S.text = e.target.value; S.textEdited = true; } });
@@ -194,7 +299,17 @@ function renderRequest() {
   mount($("request-card"),
     h("div", { class: "field" }, h("label", { for: "customer" }, "Customer"), sel),
     mandate,
+    learnedPanel(S.customerId),
     h("div", { class: "field" }, h("label", { for: "req-text" }, "Request to the buyer agent"), ta),
+    h("div", { class: "req-extras" },
+      S.image
+        ? h("span", { class: "photo-chip" }, h("img", { src: S.image.preview, alt: "" }), h("span", { class: "ellipsis" }, S.image.name),
+            h("button", { class: "btn btn-quiet btn-sm", disabled: running, onclick: () => { S.image = null; renderRequest(); } }, "Remove"))
+        : h("label", { class: "btn btn-sm", for: "photo-in", title: "Photo of an order note, a delivery slip or a shelf" }, "Add or take photo"),
+      h("input", { type: "file", id: "photo-in", accept: "image/*", capture: "environment", hidden: true, onchange: (e) => readPhoto(e.target.files[0]) }),
+      !S.image ? h("span", { class: "faint small grow" }, "or drop it here") : h("span", { class: "grow" }),
+      h("select", { class: "input input-sm", id: "optimize", "aria-label": "Optimize the plan for", title: "Optimize the plan for", disabled: running, onchange: (e) => { S.optimize = e.target.value; renderPlan(); } },
+        OPTIMIZE.map((o) => h("option", { value: o.id, selected: o.id === S.optimize }, o.id === "agent" ? "Optimize: agent's ranking" : `Optimize: ${o.label.toLowerCase()}`)))),
     h("div", { class: "req-controls" },
       h("div", { class: "field" }, h("label", { for: "model" }, "Model"),
         h("select", { class: "input", id: "model", disabled: running, onchange: (e) => (S.model = e.target.value) },
@@ -209,12 +324,14 @@ function renderRequest() {
 async function startRun() {
   if (closeStream) closeStream();
   S.editing = false;
-  S.run = { id: null, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null };
+  S.run = { id: null, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null, image: S.image?.preview || null };
+  S.requote = null;
   S.audit.verify = null;
   renderRequest(); renderTimeline(); renderPlan(); updateCounts();
   setTab("plan");
   try {
-    const { run_id } = await api.startRun({ text: S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking });
+    const image = S.image ? { mime: S.image.mime, data_b64: S.image.data_b64, name: S.image.name } : null;
+    const { run_id } = await api.startRun({ text: S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking, image, optimize: S.optimize });
     S.run.id = run_id;
     $("run-meta").textContent = run_id;
     closeStream = api.streamRun(run_id, onStep, (info) => {
@@ -235,6 +352,7 @@ let auditTimer = null;
 function onStep(step) {
   const r = S.run;
   if (!r || (r.id && step.run_id && step.run_id !== r.id)) return;
+  const statusBefore = r.status;
   r.steps.push(step);
   const d = step.data || {};
   if (d.need) r.need = d.need;
@@ -244,6 +362,8 @@ function onStep(step) {
   if (d.decision) r.decision = d.decision;
   if (d.order) r.order = d.order;
   if (step.kind === "approval_wait") r.status = "waiting";
+  if (step.kind === "needs_clarification" || (d.question && Array.isArray(d.options))) { r.status = "input"; r.clarSeq = step.seq; }
+  if (step.kind !== "needs_clarification" && r.status === "input" && step.seq > (r.clarSeq || 0) && ["tool_call", "thought", "plan"].includes(step.kind)) r.status = "running";
   if (step.kind === "decision" && !d.order && d.order_id) r.order = { ...(r.order || {}), order_id: d.order_id, status: d.status, quote_id: r.quote?.quote_id, decision: d.decision };
   if (step.kind === "final") {
     r.status = d.status === "error" ? "error" : "done";
@@ -253,19 +373,21 @@ function onStep(step) {
 
   appendStep(step);
   if (d.need || ["plan", "decision", "error", "final"].includes(step.kind)) renderPlan();
-  if (step.kind === "plan") setTab("plan");
+  // Follow the agent between its own tabs only; never yank the user out of Recipes or Ops.
+  const agentTab = ["plan", "approvals", "audit"].includes(S.tab);
+  if (step.kind === "plan" && agentTab) setTab("plan");
   if (step.kind === "decision" || step.kind === "approval_wait" || step.kind === "order") {
     const oid = d.order_id || d.order?.order_id;
     if (oid) S.selected = oid;
     if (d.order && d.order.status !== "pending_approval") S.decided.set(d.order.order_id, { order: d.order, quote: r.quote, decision: d.order.decision || r.decision });
     refreshApprovals(true);
-    if (step.kind === "approval_wait") setTimeout(() => setTab("approvals"), 900);
+    if (step.kind === "approval_wait" && agentTab) setTimeout(() => { if (["plan", "approvals", "audit"].includes(S.tab)) setTab("approvals"); }, 900);
     if (step.kind === "approval_wait" && params.get("autoapprove") === "1") setTimeout(() => {
       const it = selectedItem();
       if (it && it.quote) decide(it.order, it.quote, "approve").then(() => { if (params.get("tab")) setTab(params.get("tab")); });
     }, 2500);
   }
-  if (["final", "error", "approval_wait"].includes(step.kind)) renderRequest();
+  if (r.status !== statusBefore || step.kind === "final") renderRequest();
   clearTimeout(auditTimer);
   auditTimer = setTimeout(() => loadAudit(true), 400);
   updateCounts();
@@ -410,8 +532,10 @@ function needChips(need) {
 function stepItem(step) {
   const d = step.data || {};
   const k = step.kind;
-  const cls = { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-warnstep", final: d.status === "error" ? "k-error" : "k-final" }[k] || "";
-  const icon = { thought: "·", plan: "P", quote: "Q", decision: "§", approval_wait: "…", order: "✓", error: "!", final: "■" }[k] || "·";
+  const isClar = k === "needs_clarification" || (d.question && Array.isArray(d.options));
+  const lines = d.extracted_lines || d.lines_from_photo || (k === "extracted_lines" ? d.lines : null);
+  const cls = isClar ? "k-clar" : lines ? "k-photo" : { thought: "k-thought", plan: "k-plan", quote: "k-quote", decision: "k-decision", approval_wait: "k-wait", order: "k-plan", error: "k-warnstep", final: d.status === "error" ? "k-error" : "k-final" }[k] || "";
+  const icon = isClar ? "?" : lines ? "▣" : { thought: "·", plan: "P", quote: "Q", decision: "§", approval_wait: "…", order: "✓", error: "!", final: "■" }[k] || "·";
   const body = [];
   const ttl = String(step.title || "").replace(/…$/, "");
   if (d.text && !(d.text.startsWith(ttl) && d.text.length < ttl.length + 20)) body.push(h("div", { class: "tl-text" }, d.text));
@@ -420,6 +544,8 @@ function stepItem(step) {
   if (d.excerpt || /(flagged|suspected) (suspected )?prompt injection/i.test(step.title)) body.push(h("div", { class: "exc bad" }, h("b", null, "✕"), h("div", null, h("b", null, "Prompt injection flagged and redacted. "),
     h("span", { class: "exc-body" }, d.excerpt ? `“${d.excerpt}”` : "", (d.reasons || []).length ? ` (${d.reasons.join("; ")})` : ""))));
   if (d.need) body.push(needChips(d.need));
+  if (lines) body.push(extractedTable(lines, d));
+  if (isClar) body.push(clarCard(step));
   if (k === "plan") {
     const p = d.plan || d;
     body.push(h("div", { class: "tl-text" }, `${p.lines?.length || 0} line(s), covers ${num(p.covered_amount)} ${p.need?.unit || ""}, total ${eur(p.total_net)} net.`),
@@ -456,6 +582,61 @@ function stepItem(step) {
       ["thought", "plan", "quote", "decision"].includes(k) && Object.keys(extra).length ? jsonDetails("Data", d) : null));
 }
 
+// Photo intake result: what Gemini read off the photo, line by line.
+function extractedTable(lines, d) {
+  return h("div", { class: "photo-lines" },
+    S.run?.image ? h("img", { src: S.run.image, alt: "Photo sent with the request" }) : null,
+    h("table", { class: "t" },
+      h("thead", null, h("tr", null, h("th", null, "On the photo"), h("th", null, "Read as"), h("th", { class: "n" }, "Qty"))),
+      h("tbody", null, lines.map((l) => {
+        const unclear = l.unclear || (l.confidence != null && l.confidence < 0.6);
+        return h("tr", { class: unclear ? "unclear" : "" },
+          h("td", { class: "mono" }, l.text || l.raw || "–"),
+          h("td", null, l.product_query || l.item || l.name || "–", unclear ? h("span", { class: "flag warn", style: { marginLeft: "6px" } }, "Unclear") : null),
+          h("td", { class: "n" }, l.quantity != null ? `${num(l.quantity)} ${l.unit || ""}` : "–"));
+      }))),
+    d.model ? h("div", { class: "faint small" }, `Read by ${d.model}`) : null);
+}
+
+// needs_clarification: the agent asks one question with options; the answer goes to POST /v1/agent/runs/{id}/answer.
+function clarCard(step) {
+  const d = step.data || {};
+  const answered = S.answers[step.seq];
+  const opts = (d.options || []).map((o, i) => (typeof o === "string" ? { id: String(i), label: o } : { id: o.id ?? String(i), label: o.label || o.text || String(o.id) }));
+  const send = async (answer, option_id) => {
+    S.answers[step.seq] = { label: answer, pending: true };
+    rerenderStep(step);
+    try {
+      await api.answer(S.run.id, { answer, option_id, step_seq: step.seq });
+      S.answers[step.seq] = { label: answer };
+      if (S.run.status === "input") S.run.status = "running";
+      renderRequest();
+    } catch (e) {
+      S.answers[step.seq] = { label: answer, error: e.message };
+    }
+    rerenderStep(step);
+  };
+  const box = h("div", { class: "clar" },
+    h("div", { class: "clar-q" }, d.question || step.title),
+    d.why ? h("div", { class: "faint small" }, d.why) : null);
+  if (answered && !answered.error) {
+    box.appendChild(h("div", { class: "clar-a" }, answered.pending ? h("span", { class: "spinner" }) : "✓", ` You answered: ${answered.label}`));
+    return box;
+  }
+  box.appendChild(h("div", { class: "row wrap" }, opts.map((o, i) => h("button", { class: `btn btn-sm ${i === 0 ? "btn-primary" : ""}`, onclick: () => send(o.label, o.id) }, o.label))));
+  if (d.free_text !== false) {
+    const inp = h("input", { class: "input input-sm", placeholder: "Or type an answer", onkeydown: (e) => { if (e.key === "Enter" && inp.value.trim()) send(inp.value.trim(), null); } });
+    box.appendChild(h("div", { class: "row" }, inp, h("button", { class: "btn btn-sm", onclick: () => inp.value.trim() && send(inp.value.trim(), null) }, "Send")));
+  }
+  if (answered?.error) box.appendChild(h("div", { class: "inline-error small" }, answered.error));
+  return box;
+}
+
+function rerenderStep(step) {
+  const li = $("timeline").querySelector(`[data-seq="${step.seq}"]`);
+  if (li) { const n = stepItem(step); n.dataset.seq = step.seq; n.style.animation = "none"; li.replaceWith(n); }
+}
+
 // ================================================================== plan view
 function renderPlan() {
   const v = $("view-plan");
@@ -476,6 +657,7 @@ function renderPlan() {
       h("div", { class: "muted sm" }, "“", (r.need && r.need.raw_text) || S.text, "”")),
     p ? h("div", { class: "kpis" },
       h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(p.covered_amount)} / ${num(p.need?.quantity)} ${p.need?.unit || ""}`), h("span", { class: "l" }, p.shortfall ? `Shortfall ${num(p.shortfall)} ${p.need?.unit}` : "Covered")),
+      planCo2(p) != null ? h("div", { class: "kpi" }, h("span", { class: "v" }, `${num(planCo2(p), 0)} kg`), h("span", { class: "l" }, "CO₂e, category average")) : null,
       h("div", { class: "kpi" }, h("span", { class: "v big" }, eur(p.total_net)), h("span", { class: "l" }, "Total, net of VAT"))) : null));
 
   if (r.decision) parts.push(verdictBanner(r.decision));
@@ -493,12 +675,26 @@ function renderPlan() {
 
   const cands = p.candidates || [];
   const inPlan = new Set((p.lines || []).map((l) => l.product_id));
-  for (const t of TIER_ORDER) {
-    const list = cands.filter((c) => c.tier === t);
-    if (!list.length) continue;
+  const usable = cands.filter((c) => c.tier !== "rejected");
+  const wins = winners(usable);
+  parts.push(h("div", { class: "rank-bar" },
+    h("span", { class: "section-label" }, `Candidates · ${usable.length}`), h("span", { class: "grow" }),
+    h("span", { class: "muted small" }, "Rank by"),
+    h("div", { class: "seg" }, OPTIMIZE.map((o) => h("button", { class: o.id === S.optimize ? "on" : "", onclick: () => { S.optimize = o.id; renderPlan(); renderRequest(); } }, o.label)))));
+  if (S.optimize === "agent") {
+    for (const t of TIER_ORDER) {
+      const list = cands.filter((c) => c.tier === t);
+      if (!list.length) continue;
+      parts.push(h("div", { class: "tier-group" },
+        h("div", { class: "tier-head" }, h("span", { class: `tier-tag ${t}` }, TIER_LABEL[t]), h("span", { class: "muted sm" }, TIER_HINT[t])),
+        list.map((c) => candCard(c, p, inPlan, wins))));
+    }
+  } else {
+    const key = { cheapest: (c) => perL(c).v ?? Infinity, greenest: (c) => c.product?.co2_kg_per_kg ?? Infinity, reliable: (c) => -(c.product?.delivery_reliability ?? -1) }[S.optimize];
+    const sorted = [...usable].sort((a, b) => key(a) - key(b) || (perL(a).v ?? Infinity) - (perL(b).v ?? Infinity));
     parts.push(h("div", { class: "tier-group" },
-      h("div", { class: "tier-head" }, h("span", { class: `tier-tag ${t}` }, TIER_LABEL[t]), h("span", { class: "muted sm" }, TIER_HINT[t])),
-      list.map((c) => candCard(c, p, inPlan))));
+      h("div", { class: "muted small" }, `Re-ranked in the browser for “${OPTIMIZE.find((o) => o.id === S.optimize).label}”. The policy still evaluates whatever the agent quotes.`),
+      sorted.map((c, i) => candCard(c, p, inPlan, wins, i + 1))));
   }
   const rej = cands.filter((c) => c.tier === "rejected");
   if (rej.length) {
@@ -525,18 +721,59 @@ function planLines(p) {
   return h("div", { class: "card" },
     h("div", { class: "card-head" }, h("h3", null, "Order lines the agent proposes"), h("span", { class: "muted sm" }, `Delivery by ${day(p.need?.delivery_by)}`)),
     h("table", { class: "t" },
-      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Covers"), h("th", { class: "n" }, "Line total"))),
+      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Covers"), h("th", { class: "n" }, "CO₂e"), h("th", { class: "n" }, "Line total"))),
       h("tbody", null, (p.lines || []).map((l) => h("tr", null,
         h("td", null, h("div", { style: { fontWeight: 500 } }, l.product_name), h("div", { class: "faint small mono" }, l.product_id), (l.flags || []).length ? h("div", { class: "row wrap", style: { marginTop: "4px" } }, l.flags.map(flagEl)) : null),
         h("td", null, h("span", { class: `tier-tag ${l.tier}` }, TIER_LABEL[l.tier] || l.tier)),
         h("td", { class: "n" }, `${num(l.qty_sales_units)} ${l.sales_unit}`),
         h("td", { class: "n" }, eur(l.unit_price)),
         h("td", { class: "n" }, `${num(l.covered_amount)} ${p.need?.unit || ""}`),
+        h("td", { class: "n" }, lineCo2(p, l) != null ? `${num(lineCo2(p, l), 0)} kg` : "–"),
         h("td", { class: "n" }, eur(l.line_total))))),
-      h("tfoot", null, h("tr", null, h("td", { colspan: 5 }, "Total net"), h("td", { class: "n" }, eur(p.total_net))))));
+      h("tfoot", null, h("tr", null, h("td", { colspan: 5 }, "Total net"), h("td", { class: "n" }, planCo2(p) != null ? `${num(planCo2(p), 0)} kg` : "–"), h("td", { class: "n" }, eur(p.total_net))))),
+    h("div", { class: "card-body faint small" }, "CO₂e uses the category-average kg CO₂e per kg from the Valio Aimo dataset (1 L counted as 1 kg); it is an estimate, not a product footprint."));
 }
 
-function candCard(c, p, inPlan) {
+// ---- sustainability and reliability helpers
+const LABELS = {
+  GOODS_FROM_FINLAND_BLUE_SWAN: "Hyvää Suomesta", FINNISH_HEART_SYMBOL: "Heart symbol", EU_ORGANIC_FARMING: "EU organic",
+  OFFICIAL_ECO_LABEL_SUN: "Luomu (sun)", RAINFOREST_ALLIANCE: "Rainforest Alliance", MADE_IN_FINLAND_FLAG_WITH_KEY: "Avainlippu",
+  FAIR_TRADE_MARK: "Fairtrade", ORGANIC: "Organic",
+};
+const labelName = (l) => LABELS[l] || (String(l).startsWith("injected:") ? null : titleCaseLabel(l));
+const titleCaseLabel = (l) => String(l).toLowerCase().replace(/_/g, " ").replace(/^./, (m) => m.toUpperCase());
+
+function productOf(p, pid) { return (p.candidates || []).find((c) => c.product?.id === pid)?.product; }
+function lineCo2(p, l) {
+  const prod = productOf(p, l.product_id);
+  if (!prod || prod.co2_kg_per_kg == null || !prod.content_amount || prod.content_unit === "PCS") return null;
+  return l.qty_sales_units * prod.content_amount * prod.co2_kg_per_kg;
+}
+function planCo2(p) {
+  const xs = (p.lines || []).map((l) => lineCo2(p, l));
+  return xs.length && xs.every((x) => x != null) ? xs.reduce((a, b) => a + b, 0) : null;
+}
+function relBadge(r) {
+  if (r == null) return h("span", { class: "rel none", title: "No delivery reliability data for this product" }, "Reliability: no data");
+  const cls = r >= 0.98 ? "ok" : r >= 0.93 ? "warn" : "bad";
+  return h("span", { class: `rel ${cls}`, title: "Share of past deliveries that arrived complete and on time (Valio Aimo dataset)" }, `Reliability ${pct(r)}`);
+}
+// Winners among usable candidates; a badge only shows when the metric actually separates candidates.
+function winners(list) {
+  const pick = (f, better) => {
+    const vals = list.map(f).filter((v) => v != null && isFinite(v));
+    if (new Set(vals).size < 2) return null;
+    const best = vals.reduce((a, b) => (better(b, a) ? b : a));
+    return list.find((c) => f(c) === best)?.product?.id;
+  };
+  return {
+    cheapest: pick((c) => perL(c).v, (a, b) => a < b),
+    greenest: pick((c) => c.product?.co2_kg_per_kg, (a, b) => a < b),
+    reliable: pick((c) => c.product?.delivery_reliability, (a, b) => a > b),
+  };
+}
+
+function candCard(c, p, inPlan, wins = {}, rankNo = null) {
   const prod = c.product || {};
   const o = c.offer || {};
   const pl = perL(c);
@@ -560,9 +797,15 @@ function candCard(c, p, inPlan) {
     h("div", { class: "cand-body" },
       h("div", { class: "cand-top" },
         h("div", { class: "grow" },
-          h("div", { class: "row wrap" }, h("span", { class: "cand-name" }, prod.name), inPlan.has(prod.id) ? h("span", { class: "plan-badge" }, "✓ In plan") : null),
+          h("div", { class: "row wrap" },
+            rankNo ? h("span", { class: "rank-no" }, `#${rankNo}`) : null,
+            rankNo ? h("span", { class: `tier-tag ${c.tier}` }, TIER_LABEL[c.tier] || c.tier) : null,
+            h("span", { class: "cand-name" }, prod.name), inPlan.has(prod.id) ? h("span", { class: "plan-badge" }, "✓ In plan") : null,
+            wins.cheapest === prod.id ? h("span", { class: "win" }, "Cheapest") : null,
+            wins.greenest === prod.id ? h("span", { class: "win green" }, "Greenest") : null,
+            wins.reliable === prod.id ? h("span", { class: "win" }, "Most reliable") : null),
           h("div", { class: "cand-sub" }, [prod.id, prod.brand, prod.vendor, o.logistic_model, o.closing_time ? `cut-off ${dayTime(o.closing_time)}` : null].filter(Boolean).join(" · "))),
-        h("div", { class: "cand-price" }, h("div", { class: "v" }, pl.v != null ? eur(pl.v) : "–"), h("div", { class: "l" }, `per ${pl.u}`))),
+        h("div", { class: "cand-price" }, h("div", { class: "v" }, pl.v != null ? eur(pl.v) : "–"), h("div", { class: "l" }, `per ${pl.u}`), relBadge(prod.delivery_reliability))),
       h("div", { class: "facts" },
         fact("Pack", prod.content_amount ? `${num(prod.content_amount)} ${prod.content_unit || ""} / ${prod.sales_unit}` : prod.sales_unit || "–"),
         fact("Unit price", eur(o.unit_price)),
@@ -572,7 +815,8 @@ function candCard(c, p, inPlan) {
         fact("Reliability", prod.delivery_reliability != null ? pct(prod.delivery_reliability) : "no data"),
         fact("CO₂e / kg", prod.co2_kg_per_kg != null ? `${num(prod.co2_kg_per_kg)} kg` : "no data")),
       (c.reasons || []).length ? h("ul", { class: "reasons" }, c.reasons.map((x) => h("li", null, x))) : null,
-      (c.flags || []).length || (prod.claims || []).length ? h("div", { class: "row wrap" },
+      (c.flags || []).length || (prod.claims || []).length || (prod.labels || []).length ? h("div", { class: "row wrap" },
+        (prod.labels || []).map(labelName).filter(Boolean).map((x) => h("span", { class: "flag label" }, x)),
         (prod.claims || []).map((x) => h("span", { class: "flag ok" }, claimLabel(x))), (c.flags || []).map(flagEl)) : null));
 }
 
@@ -585,10 +829,13 @@ function verdictBanner(dec) {
       h("span", { class: "verdict-icon" }, v.icon),
       h("div", { class: "grow" }, h("div", { class: "verdict-title" }, title),
         h("div", { class: "muted small" }, `Policy ${dec.policy_id} · version ${dec.policy_version} · ${hits.filter((x) => x.outcome !== "allow").length} of ${hits.length} rules need attention`))),
-    hits.length ? h("ul", { class: "hits" }, hits.map((x) => h("li", { class: "hit" },
-      h("span", { class: `outcome ${x.outcome}` }, x.outcome === "needs_approval" ? "Needs approval" : x.outcome === "allow" ? "Pass" : "Reject"),
-      h("span", null, x.message),
-      h("span", { class: "rid" }, x.rule_id)))) : null);
+    hits.length ? h("ul", { class: "hits" }, hits.map((x) => {
+      const learned = x.learned || /learned|remembered/i.test(x.rule_id || "") || /^Allowed: you approved/i.test(x.message || "");
+      return h("li", { class: `hit ${learned ? "learned" : ""}` },
+        h("span", { class: `outcome ${x.outcome}` }, learned ? "Learned" : x.outcome === "needs_approval" ? "Needs approval" : x.outcome === "allow" ? "Pass" : "Reject"),
+        h("span", null, x.message),
+        h("span", { class: "rid" }, x.rule_id));
+    })) : null);
 }
 const rank = (o) => ({ reject: 2, needs_approval: 1, allow: 0 }[o] ?? 0);
 
@@ -665,7 +912,8 @@ function renderApprovals() {
   const it = selectedItem();
   if (it) parts.push(approvalDetail(it));
   // The decision bar sticks to the bottom of the pane so Approve is always reachable on a 720p projector.
-  if (it && it.order.status === "pending_approval" && it.quote) parts.push(decisionForm(it.order, it.quote));
+  if (it && S.requote && S.requote.order_id === it.order.order_id) parts.push(requoteCard(it));
+  else if (it && it.order.status === "pending_approval" && it.quote) parts.push(decisionForm(it.order, it.quote));
   mount(v, parts);
   tick();
 }
@@ -746,11 +994,21 @@ function decisionForm(o, q) {
   const note = h("input", { class: "input", id: "note", placeholder: "Optional, stored in the audit trail", oninput: (e) => (S.note = e.target.value), disabled: busy });
   note.value = S.note;
   const expired = new Date(q.expires_at) < new Date();
+  const isSwap = (q.lines || []).some((l) => (l.tier && l.tier !== "preferred") || (l.flags || []).some((f) => /preference|substitution/.test(f)))
+    || (o.decision?.hits || []).some((x) => /substitution/.test(x.rule_id || "") && x.outcome !== "allow");
+  const remember = isSwap ? h("div", { class: "remember" },
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: S.remember, disabled: busy, onchange: (e) => { S.remember = e.target.checked; renderApprovals(); } }),
+      " Always allow this swap"),
+    h("select", { class: "input input-sm", disabled: busy || !S.remember, onchange: (e) => (S.rememberScope = e.target.value) },
+      h("option", { value: "product", selected: S.rememberScope === "product" }, "for this product"),
+      h("option", { value: "product_type", selected: S.rememberScope === "product_type" }, "for any product of this type")),
+    h("span", { class: "faint small" }, "Next time the policy shows “Allowed: you approved this swap” and the agent does not ask.")) : null;
   return h("div", { class: "card decide-sticky" },
     h("div", { class: "card-body decide" },
       h("h3", { style: { gridColumn: "1 / -1" } }, `Decision as ${role}`),
       h("div", { class: "field" }, h("label", { for: "approver" }, "Approver"), approver),
       h("div", { class: "field" }, h("label", { for: "note" }, "Note"), note),
+      remember,
       S.decideError ? h("div", { class: "inline-error", style: { gridColumn: "1 / -1" } }, S.decideError) : null,
       h("div", { class: "decide-actions" },
         h("span", { class: "binding-note" }, "Your decision is bound to quote hash ", h("span", { class: "mono" }, shortHash(q.quote_hash)), ". If the price or lines change, it no longer applies."),
@@ -765,7 +1023,10 @@ async function decide(o, q, decision) {
   renderApprovals();
   try {
     const dirEntry = (S.customers.find((c) => c.id === o.customer_id)?.approvers || []).find((a) => a.id === S.approver);
-    const order = await api.decide(o.order_id, { decision, approver: S.approver.trim(), approver_role: dirEntry?.role || undefined, note: S.note.trim(), quote_hash: q.quote_hash });
+    const remember = decision === "approve" && S.remember ? { remember: true, remember_scope: S.rememberScope } : {};
+    const order = await api.decide(o.order_id, { decision, approver: S.approver.trim(), approver_role: dirEntry?.role || undefined, note: S.note.trim(), quote_hash: q.quote_hash, ...remember });
+    if (remember.remember) { S.remember = false; loadLearned(o.customer_id, true); }
+    if (S.requote?.order_id === o.order_id) S.requote = null;
     const dec = order.decision || o.decision;
     S.decided.set(order.order_id, { order, quote: q, decision: dec });
     if (S.run && S.run.order && S.run.order.order_id === order.order_id) { S.run.order = order; }
@@ -777,9 +1038,49 @@ async function decide(o, q, decision) {
     loadAudit(true);
   } catch (e) {
     S.deciding = null;
+    const det = (e.body && typeof e.body.detail === "object" ? e.body.detail : null) || e.body || {};
+    const fresh = det.new_quote || det.fresh_quote || det.quote;
+    if (e.code === "requote_needed" || fresh) {
+      // Prices moved since the quote was signed: show old vs new and let the approver approve the fresh quote in one click.
+      S.requote = { order_id: o.order_id, old: q, fresh: fresh || null, new_order_id: det.new_order_id || det.order_id || o.order_id, reason: e.body?.message || e.message };
+      if (!fresh && (det.new_quote_id || det.quote_id)) { try { S.requote.fresh = await api.getQuote(det.new_quote_id || det.quote_id); } catch { /* shown as missing */ } }
+      renderApprovals();
+      return;
+    }
     S.decideError = e.status === 409 ? `The gateway refused: ${e.message}. The quote may have changed; ask the agent for a new quote.` : e.message;
     renderApprovals();
   }
+}
+
+function requoteCard(it) {
+  const R = S.requote;
+  const old = R.old || it.quote;
+  const fresh = R.fresh;
+  const busy = !!S.deciding;
+  const byId = new Map((fresh?.lines || []).map((l) => [l.product_id, l]));
+  const ids = [...new Set([...(old.lines || []).map((l) => l.product_id), ...byId.keys()])];
+  const oldBy = new Map((old.lines || []).map((l) => [l.product_id, l]));
+  const delta = fresh ? fresh.total_net - old.total_net : null;
+  const diffCell = (a, b, fmt) => a === b || b == null ? h("span", null, a == null ? "–" : fmt(a)) : h("span", null, h("s", { class: "faint" }, a == null ? "–" : fmt(a)), " ", h("b", { class: b > a ? "up" : "down" }, fmt(b)));
+  return h("div", { class: "card requote decide-sticky" },
+    h("div", { class: "card-head" }, h("h3", { class: "grow" }, "Prices changed: re-quote needed"),
+      delta != null ? h("span", { class: `delta ${delta > 0 ? "up" : "down"}` }, `${delta > 0 ? "+" : ""}${eur(delta)} (${num((delta / old.total_net) * 100, 1)}%)`) : null),
+    h("div", { class: "card-body sm muted" }, R.reason, " Your approval was bound to the old quote hash, so it did not apply. Nothing was ordered."),
+    h("table", { class: "t" },
+      h("thead", null, h("tr", null, h("th", null, "Product"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Line total"))),
+      h("tbody", null, ids.map((id) => {
+        const a = oldBy.get(id), b = byId.get(id);
+        return h("tr", null, h("td", null, (a || b).product_name, h("div", { class: "faint small mono" }, id, !b ? " · removed" : !a ? " · new" : "")),
+          h("td", { class: "n" }, diffCell(a?.qty_sales_units, b?.qty_sales_units, (x) => num(x))),
+          h("td", { class: "n" }, diffCell(a?.unit_price, b?.unit_price, eur)),
+          h("td", { class: "n" }, diffCell(a?.line_total, b?.line_total, eur)));
+      })),
+      h("tfoot", null, h("tr", null, h("td", { colspan: 3 }, "Total net"), h("td", { class: "n" }, diffCell(old.total_net, fresh?.total_net, eur))))),
+    h("div", { class: "card-body row" },
+      h("span", { class: "binding-note grow" }, fresh ? ["New signed quote ", h("span", { class: "mono" }, fresh.quote_id), " · hash ", h("span", { class: "mono" }, shortHash(fresh.quote_hash)), ` · locked until ${hm(fresh.expires_at)}`] : "The gateway did not return the fresh quote; ask the agent to re-quote."),
+      h("button", { class: "btn btn-sm", disabled: busy, onclick: () => { S.requote = null; renderApprovals(); } }, "Back"),
+      fresh ? h("button", { class: "btn btn-ok btn-lg", disabled: busy, onclick: () => decide({ ...it.order, order_id: R.new_order_id, quote_id: fresh.quote_id, quote_hash: fresh.quote_hash }, fresh, "approve") },
+        busy ? [h("span", { class: "spinner" }), "Placing order"] : `Approve new quote ${eur(fresh.total_net)}`) : null));
 }
 
 function approverName(customerId, raw, roleField) {
