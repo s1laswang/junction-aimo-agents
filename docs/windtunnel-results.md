@@ -4,14 +4,16 @@ Generated 2026-11-14T18:24 by `windtunnel/report.py` (owner: windtunnel). Pipeli
 
 ## Gemini-written scenarios (wt640)
 
-640 scenarios, 16 families, 3 policy archetypes, snapshot `2f2fef829c50`, host Silass-MacBook-Pro.local, git dfecb2a.
+640 scenarios, 16 families, 3 policy archetypes, snapshot `2f2fef829c50`. Headline row re-scored Sun 15 Nov 05:50 on the final policy (`main` `7225d06`, `docs/windtunnel-results.json` key `main`, run file `wt640_gem__pipeline__team__final.jsonl.gz`; earlier `a99692f` run at 68.2% precision also committed), reproducible offline with no Gemini key from committed inputs in [evidence/windtunnel/README.md](evidence/windtunnel/README.md). Earlier Sat 14 Nov 18:24 baseline (`git dfecb2a`, before S3 policy and request-injection fixes) is preserved under `main_before_s3`.
 
 | System | N | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Injection block | Screen false-pos | Plan coverage | Line acceptability | EUR over optimum (median) | Latency p50 / p95 ms |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| trusted gateway (team, main) | 640 | 54.0% | 98.8% | 55.0% | **1** | **0** | 56.2% | 13.8% | 92.4% | 90.7% | 0.0% | 46.4 / 135.3 |
-| naive agent (no gateway) | 640 | 90.8% | 17.8% | 54.8% | **372** | **193** | 0.0% | 0.0% | 98.2% | 62.8% | 0.0% | 5.3 / 16.9 |
+| trusted gateway (final policy, main 7225d06, JSON main) | 640 | **69.5%** | **99.7%** | **74.8%** | **0** | **0** | **100.0%** (80 of 80) | **0.2%** (1 of 560) | 91.4% | 89.0% | 0.0% | 237.6 / 1021.3 |
+| trusted gateway (main a99692f) | 640 | 68.2% | 99.7% | 73.4% | **0** | **0** | 100.0% (80 of 80) | 0.2% (1 of 560) | 91.4% | 89.0% | 0.0% | 188.6 / 795.2 |
+| trusted gateway (pre-S3, git dfecb2a, main_before_s3) | 640 | 54.0% | 98.8% | 55.0% | **1** | **0** | 56.2% (45 of 80) | 13.8% (77 of 560) | 92.4% | 90.7% | 0.0% | 46.4 / 135.3 |
+| naive agent (no gateway) | 640 | 90.8% | 17.8% | 54.8% | **372** | **193** | 0.0% (0 of 80) | 0.0% (0 of 560) | 98.2% | 62.8% | 0.0% | 5.3 / 16.9 |
 
-Policy-backed escalation recall (labels from the written policy only): 99.7%. Violation types: auto_over_spend_limit x1, auto_when_must_escalate x1.
+On the final policy (`main` `7225d06`, and on `a99692f`), policy-backed escalation recall is **100.0%**, policy violations are **0** across all 16 families, allergen violations are **0** across all 16 families, and **80 of 80 (100.0%)** scenario injection payloads (40/40 supplier, 40/40 request) are flagged by the shipped regex screen with **1 false positive in 560** clean requests (`9` pipeline errors in `api_errors` are counted as errors, not passes; see the 36-payload evaluation set below for the regex screen's honest 44.4% standalone recall). On the final policy, escalation precision is **69.5%** (331 needed, 145 unnecessary escalations; **68.2%**, 331 needed / 154 unnecessary on `a99692f`). Pre-S3 (`git dfecb2a`, per-family breakdown below) had policy-backed recall 99.7% and violation types `auto_over_spend_limit x1, auto_when_must_escalate x1` in `split_order` (`0` on `a99692f` and `7225d06`, where `split_order` escalates 40/40 with 0 violations).
 
 | Family | N | Correct | Must escalate | Escalated | Violations | Allergen viol. | Errors |
 |---|---|---|---|---|---|---|---|
@@ -70,6 +72,8 @@ Policy-backed escalation recall (labels from the written policy only): 99.1%. Vi
 |---|---|---|---|---|
 | regex | 44.4% | 5.0% | 6/60 | 0/60 |
 | gemini | 94.4% | 35.0% | 42/60 | 0/60 |
+
+While the regex screen flags 80 of 80 scenario injections in `wt640` pipeline mode above (and 0 of 34,159 catalog supplier marketing texts), on this harder 36-payload evaluation set its standalone recall is **44.4%**. Enabling the opt-in Gemini layer (`AIMO_SCREEN_GEMINI=1`, regex + Gemini) raises recall to **94.4%** on the 36 payloads, with 42/60 false positives on normal buyer requests and 0/60 on supplier texts. Because of that buyer-request false-positive rate, the shipped gateway runs the regex layer by default and keeps `AIMO_SCREEN_GEMINI=1` opt-in; either way, a flag only escalates the order to a human approver.
 
 ## Thinking level vs accuracy and latency (buyer tasks)
 
@@ -130,14 +134,16 @@ Total 1207676 tokens, about $2.3352 at playbook list prices.
 - "Now" is frozen at the snapshot time (Sat 14 Nov 14:20 Helsinki). Gemini is off inside pipeline mode.
 
 
-## S3 `need`: escalation precision before and after (wt640, pipeline, offline, Sun 15 Nov ~00:30)
+## S3 `need` and final-policy re-score: escalation precision and injection block (wt640, pipeline, offline)
 Same 640 Gemini-written scenarios and snapshot as above; `AIMO_SEMANTIC=0`. Details and remaining causes:
-`docs/reports/need.md`.
+`docs/reports/need.md` and [evidence/windtunnel/README.md](evidence/windtunnel/README.md).
 
-| System | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Plan coverage |
-|---|---|---|---|---|---|---|
-| before (main fac34f0) | 54.0% | 98.8% | 55.0% | 1 | 0 | 92.4% |
-| after v1 (main e337c7b) | 67.5% | 94.3% | 72.0% | 21 | 3 | 91.4% |
-| after v2 (S3 fixes, main 89bc3db) | **68.2%** | **99.7%** | **73.4%** | **0** | **0** | 91.4% |
+| System | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Injection block | Plan coverage |
+|---|---|---|---|---|---|---|---|
+| before (main fac34f0 / dfecb2a, main_before_s3) | 54.0% | 98.8% | 55.0% | 1 | 0 | 56.2% (45/80) | 92.4% |
+| after v1 (main e337c7b) | 67.5% | 94.3% | 72.0% | 21 | 3 | 56.2% | 91.4% |
+| after v2 (S3 fixes, main 89bc3db) | 68.2% | 99.7% | 73.4% | 0 | 0 | 56.2% | 91.4% |
+| final code (main a99692f) | 68.2% | 99.7% | 73.4% | 0 | 0 | 100.0% (80/80, 1 FP / 560) | 91.4% |
+| final policy (main 7225d06, `main` in JSON) | **69.5%** | **99.7%** | **74.8%** | **0** | **0** | **100.0%** (80/80, 1 FP / 560) | 91.4% |
 
-Target ≥ 90% precision at ≥ 99% recall: recall met, **precision not met** (68.2%).
+Target ≥ 90% precision at ≥ 99% recall: recall met, **precision not met** (69.5% on final policy: 331 needed, 145 unnecessary escalations; 68.2% on `a99692f`).
