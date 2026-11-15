@@ -232,13 +232,17 @@ def _has_forced_replay() -> bool:
     if replay.mode() != "forced":
         return False
     rdir = replay.replay_dir()
-    if rdir is None:
+    if rdir is None or not (rdir / "meta.json").exists():
         return False
     if config.PRODUCT_JSON.exists():
         return True
     if os.environ.get("AIMO_CATALOG_FIXTURE", "").strip() == "0":
         return False
-    return (rdir / "catalog" / "valio_aimo_junction26_product_data.json.gz").exists()
+    from aimo.catalog import FIXTURE_CATALOG_DIR
+    return (
+        (rdir / "catalog" / (config.PRODUCT_JSON.name + ".gz")).exists()
+        or (FIXTURE_CATALOG_DIR / (config.PRODUCT_JSON.name + ".gz")).exists()
+    )
 
 
 def _ensure_replay_ready() -> None:

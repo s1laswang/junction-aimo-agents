@@ -158,6 +158,36 @@ def test_auto_transport_selects_inproc_on_forced_replay_and_fake_otherwise(
     finally:
         t_bundled.close()
 
+    monkeypatch.setenv("AIMO_REPLAY", "tests/fixtures/snapshot")
+    t_parent_snap = connect(
+        "auto",
+        agent_id="hotel-aurora/buyer-1",
+        customer_id="hotel-aurora",
+        mcp_url=DEAD_MCP,
+        mandate=mandate,
+    )
+    try:
+        assert isinstance(t_parent_snap, InProcessTransport)
+        assert t_parent_snap.kind == "inproc"
+    finally:
+        t_parent_snap.close()
+
+    monkeypatch.setenv("AIMO_REPLAY", REPLAY_REL)
+    monkeypatch.setenv("AIMO_CATALOG_FIXTURE", "0")
+    t_fixture_disabled = connect(
+        "auto",
+        agent_id="hotel-aurora/buyer-1",
+        customer_id="hotel-aurora",
+        mcp_url=DEAD_MCP,
+        mandate=mandate,
+    )
+    try:
+        assert isinstance(t_fixture_disabled, FakeTransport)
+        assert t_fixture_disabled.kind == "fake"
+    finally:
+        t_fixture_disabled.close()
+    monkeypatch.delenv("AIMO_CATALOG_FIXTURE", raising=False)
+
     empty_snap = isolated_keyless_env / "empty_snap"
     empty_snap.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("AIMO_REPLAY", str(empty_snap))
