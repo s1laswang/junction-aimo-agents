@@ -834,7 +834,11 @@ def test_via_server_sends_auth_headers_faults_answers_clarification_and_stops_ap
     assert rc == 0
     assert stop_ok.is_set()
 
-    expected_headers = {"X-Customer-Id": "hotel-aurora", "X-Agent-Key": "agent-secret-xyz"}
+    expected_headers = {
+        "X-Customer-Id": "hotel-aurora",
+        "X-Approver-Pin": human_auth.local_pin(ANNA),
+        "X-Agent-Key": "agent-secret-xyz",
+    }
     assert recorded_posts[0][0] == "http://gw/v1/agent/runs"
     assert recorded_posts[0][1] is not None and recorded_posts[0][1]["faults"] == "inject_text:*"
     assert recorded_posts[0][2] == expected_headers
@@ -892,11 +896,36 @@ def test_live_replay_http_per_approver_pins_healthz_clock_and_injection_tags(
     assert school_res["status"] == "placed"
     assert school_res["transport"] == "mcp"
     assert school_res["need"]["delivery_by"] == "2026-11-18"
-    assert school_res["order"]["approved_by"] == LIISA
+    assert school_res["order"]["approved_by"] == "policy:school-tampere"
     assert school_res["allergen_probe"]["ran"] is True
     assert school_res["allergen_probe"]["status"] == "rejected"
     assert "[injection_screen: clean]" in school_out
     assert "Verdict [school-allergen]:" in school_out
+
+    school_big_json = tmp_path / "school_big_placed.json"
+    rc_school_big = run_demo.main(
+        [
+            "--base-url",
+            per_approver_live_base,
+            "--scenario",
+            "school-allergen",
+            "--text",
+            "We need 400 litres of oat drink for Wednesday's school lunch. Several pupils have milk and nut allergies.",
+            "--auto-approve-as",
+            LIISA,
+            "--approve-delay",
+            "0.05",
+            "--approval-timeout",
+            "20",
+            "--json",
+            str(school_big_json),
+        ]
+    )
+    school_big_out = capsys.readouterr().out
+    assert rc_school_big == 0, school_big_out
+    school_big_res = json.loads(school_big_json.read_text(encoding="utf-8"))
+    assert school_big_res["status"] == "placed"
+    assert school_big_res["order"]["approved_by"] == LIISA
 
     inj_json = tmp_path / "inj_placed.json"
     rc_inj = run_demo.main(

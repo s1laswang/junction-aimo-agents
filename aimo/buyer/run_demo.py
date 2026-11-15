@@ -308,6 +308,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--baseline-orders", type=int, default=5, help="orders placed in that baseline montage")
     ap.add_argument("--baseline-label", help="name of the baseline row in the cost table (default: its ledger pid)")
     a = ap.parse_args(argv)
+    if a.faults or a.montage or SCENARIOS.get(a.scenario, {}).get("faults"):
+        os.environ.setdefault("AIMO_DEMO_FAULTS", "1")
     if a.montage:
         return run_montage(a)
     stop = threading.Event()
@@ -711,8 +713,9 @@ def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -
 
 def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, decision: str) -> int:
     import httpx
+    from aimo.gateway.human_auth import local_pin
     approver = None if getattr(a, "no_auto_approve", False) else (a.auto_approve_as or _env_approver(customer))
-    headers = {"X-Customer-Id": customer}
+    headers = {"X-Customer-Id": customer, "X-Approver-Pin": local_pin(approver)}
     agent_key = (os.environ.get("AIMO_AGENT_KEY") or "").strip()
     if agent_key:
         headers["X-Agent-Key"] = agent_key
