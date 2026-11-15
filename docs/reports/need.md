@@ -71,10 +71,10 @@ triggered). `AIMO_SEMANTIC=0` keeps it offline. Runtime 171–185 s under load ~
 |---|---|---|---|---|---|---|
 | before (main fac34f0) | 54.0% | 98.8% | 55.0% | 1 | 0 | 92.4% |
 | after v1 (main e337c7b, first S3 merge) | 67.5% | 94.3% | 72.0% | **21** | **3** | 91.4% |
-| after v2 (this merge) | **68.2%** | **99.7%** | **73.4%** | **0** | **0** | 91.4% |
+| after v2 (this merge, `a99692f`) | **68.2%** | **99.7%** | **73.4%** | **0** | **0** | 91.4% |
+| after final policy (`main` `7225d06` / `f3c5996`) | **69.5%** | **99.7%** | **74.8%** | **0** | **0** | 91.4% |
 
-**Target ≥ 90% precision at ≥ 99% recall: NOT met.** Recall target met (99.7%); precision 68.2% (331 true, 154
-false escalations, against 54.0% before).
+**Target ≥ 90% precision at ≥ 99% recall: NOT met.** Recall target met (99.7%); precision 68.2% at S3 v2 (331 true, 154 false escalations, against 54.0% before), rising to **69.5%** (**331 needed, 145 unnecessary escalations**) and **74.8% outcome accuracy** after the final policy update (`7225d06` / `f3c5996`, see below).
 
 v1 was a regression on main: removing the blanket "unverified substitution" escalation exposed four holes it had
 been masking. v2 fixes them, each by escalating more, never less:
@@ -130,3 +130,8 @@ Rebased on main dfe58ef, Sun 00:00 Helsinki:
 - **windtunnel/run.py (owner windtunnel):** the pipeline's MemoryAudit stores `order.placed` with totals only; adding
   `"lines"` (product_id, product_name, qty_sales_units, unit_price, line_total) would let `split_order`/`price_jump`
   use product detail there as they do with the real audit log.
+
+## Final-policy alignment (`a99692f`/`d4b0b41`, `7225d06`/`f3c5996`)
+- **Judge panel fixes A-D (`a99692f` / `d4b0b41`):** added `need.product_query` prompt-injection screening alongside `need.raw_text` and `PlanLine.injection_screen`, and committed the offline-reproducible wind-tunnel scenarios, recorded snapshot, and run files in [docs/evidence/windtunnel/](../evidence/windtunnel/README.md) (`80` of `80` scenario injections blocked by the regex screen, `1` false positive in `560` clean requests).
+- **Final policy re-score (`7225d06` / `f3c5996`):** customer-listed pack swaps (`approved_alternatives`, or verified `best` where the policy allows `best`) no longer escalate as `outside_preference` under the spend limit (Hotel Aurora's hero quote on `464306` now has 2 needs-approval reasons, `spend` and `quantity_drift`, with `substitution:464306` allowed; another brand still escalates), and `quantity_drift`'s 7-day rolling window counts only orders placed without a human (so a small top-up after an approved bulk order is not flagged as drift, while auto `split_order` runs still add up). Re-scored offline (`docs/evidence/windtunnel/wt640_gem__pipeline__team__final.jsonl.gz`, `docs/windtunnel-results.json` key `main`): **0 policy violations**, **0 allergen violations**, **99.7% escalation recall**, **69.5% escalation precision** (`331` needed, `145` unnecessary escalations, up from `68.2%` / `154` on `a99692f` and `54.0%` pre-S3; see [docs/pitch/QA.md](../pitch/QA.md) Q15/Q21), and **74.8% outcome accuracy** (up from `73.4%`).
+- **Closed requests:** `docs/TRUST.md` (`470889` row and new rules) and `web/` (`PlanLine.injection_screen` plus `allergen_safe_alternative` and `supplier_text_injection_suspected` badges) were closed in S4/S5 and `fr8/valio/*`.

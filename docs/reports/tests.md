@@ -17,6 +17,11 @@ Without the catalog, every one of these hit `FileNotFoundError` (a 500 from the 
 | keyed `uv run --extra dev pytest -q` (`0f51cf0`) | 344 passed, 0 failed | 344 passed, 7 skipped, 0 failed |
 | keyless (`git archive`, no `.env`, `0f51cf0`) | 245 passed, **8 failed**, 98 skipped | 245 passed, **0 failed**, 106 skipped |
 | keyless `make accept` (`0f51cf0` / `9742758`) | pytest SKIP | `PASS pytest (keyless)` (`261 passed, 0 failed` by `9742758`), 8/8 scenarios, PASS=17 FAIL=0 SKIP=3, RESULT: PASS |
-| keyless offline `AIMO_OFFLINE=1 pytest -q` (`fr8/valio/docs` `c98e72e`) | 0 failed | `1,168 passed, 105 skipped, 1 xfailed, 1 xpassed` across `1,275` collected tests (**0 failed**) |
+| standalone `origin/main` (`02575d8` / `62e8384`) | `371 passed` keyed / `270 passed` keyless (`2fe8975`) | **`375 passed, 7 skipped, 1 xfailed, 1 xpassed`** keyed / **`274 passed, 0 failed`** keyless (`tests/test_live_run_evidence.py`, `tests/test_gemini_fallback.py`, `tests/test_run_api_guard.py`) |
+| keyless offline `AIMO_OFFLINE=1 pytest` (`fr8/valio/docs` `c98e72e` -> `1d0b238`) | 0 failed | `1,168 passed, 105 skipped, 1 xfailed, 1 xpassed` across `1,275` collected on `c98e72e`; **`2,448` collected tests** on `1d0b238` (**0 failed**), `scenarios.run_all` **8/8** across **92 checks** |
+
+## Final-freeze alignment (`02575d8` / `62e8384`, `fr8/valio/docs` `1d0b238`)
+- **Per-run `judge_accept.sh` temp directory (`02575d8`):** `scripts/judge_accept.sh` on `origin/main` moved log outputs from shared `/tmp/aimo-accept-*.txt` files into a per-run temp directory (`mktemp -d "${TMPDIR:-/tmp}/aimo-accept.XXXXXX"`, `ACCEPT_TMP`; configurable `AIMO_ACCEPT_LOG_PREFIX` + `TMP_ACCEPT` on `fr8/valio`), so parallel `make accept` runs never overwrite each other's pytest or scenario logs.
+- **Offline live-run cryptographic verification (`02575d8` / `62e8384`):** `tests/test_live_run_evidence.py` verifies the committed live Gemini hero run in [docs/evidence/live-run/](../evidence/live-run/README.md) (`quote.json` and 6-event `audit-events.json` against `jwks.json` via `scripts/verify_quote.py`) on every keyed and keyless test run (`375 passed` keyed / `274 passed, 0 failed` keyless on `main`).
 
 Human-only approvals were not touched.
