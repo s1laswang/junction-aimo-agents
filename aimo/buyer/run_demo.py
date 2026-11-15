@@ -73,8 +73,27 @@ def print_step(step: Any) -> None:
     elif kind == "plan":
         plan = d.get("plan") or {}
         for l in plan.get("lines", []):
-            print(f"       {l.get('tier', '?'):9s} {l.get('product_id')}  {l.get('qty_sales_units'):>7g} x "
-                  f"{l.get('sales_unit', ''):3s} @ {l.get('unit_price')} = EUR {l.get('line_total')}  {l.get('product_name')}")
+            inj = l.get("injection_screen")
+            flags = l.get("flags") or []
+            tag = ""
+            if isinstance(inj, dict) and "suspicious" in inj:
+                if inj.get("suspicious"):
+                    rs = ", ".join(str(r) for r in (inj.get("reasons") or []) if r)
+                    label = f"[injection_screen: FLAGGED ({rs})]" if rs else "[injection_screen: FLAGGED]"
+                    tag = "  " + c(label, "red")
+                else:
+                    tag = "  " + c("[injection_screen: clean]", "dim")
+            elif "supplier_text_injection_suspected" in flags:
+                tag = "  " + c("[injection_screen: FLAGGED]", "red")
+            qty = l.get("qty_sales_units")
+            qty_s = (
+                f"{qty:>7g}"
+                if isinstance(qty, (int, float)) and not isinstance(qty, bool)
+                else f"{str(qty if qty is not None else '?'):>7s}"
+            )
+            print(f"       {l.get('tier', '?'):9s} {l.get('product_id')}  {qty_s} x "
+                  f"{l.get('sales_unit', ''):3s} @ {l.get('unit_price')} = EUR {l.get('line_total')}  "
+                  f"{l.get('product_name')}{tag}")
         rej = [cd for cd in plan.get("candidates", []) if cd.get("tier") == "rejected"]
         for cd in rej[:4]:
             print(c(f"       rejected  {cd.get('product', {}).get('id')}  {'; '.join(cd.get('reasons') or [])[:90]}", "dim"))
@@ -107,31 +126,43 @@ def print_step(step: Any) -> None:
 
 # ---------------------------------------------------------------- simulated human approver
 def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: threading.Event,
-                       delay: float = 3.0, decision: str = "approve") -> None:
+                       delay: float = 3.0, decision: str = "approve", poll_s: float | None = None) -> None:
     import httpx
     from aimo.gateway.human_auth import local_pin
-    human = {"X-Approver-Pin": local_pin()}  # the operator's approver credential (env AIMO_APPROVER_PIN or data/keys)
+    interval = poll_s if poll_s is not None else min(1.0, max(0.1, float(delay)))
     seen: set[str] = set()
     while not stop.is_set():
         try:
-            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, headers=human, timeout=5)
+            poll_headers = {"X-Approver-Pin": local_pin(approver)}
+            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, headers=poll_headers, timeout=5)
             items = r.json() if r.status_code == 200 else []
             for it in items if isinstance(items, list) else []:
-                order = it.get("order", it)
-                quote = it.get("quote") or {}
+                order = it.get("order", it) if isinstance(it, dict) else {}
+                quote = (it.get("quote") or {}) if isinstance(it, dict) else {}
                 oid = order.get("order_id")
                 if not oid or oid in seen or order.get("customer_id") not in (None, customer_id):
                     continue
-                seen.add(oid)
-                time.sleep(delay)
+                if isinstance(it, dict) and it.get("expired") and decision == "approve":
+                    seen.add(oid)
+                    continue
+                if stop.wait(delay):
+                    return
                 body = {"decision": decision, "approver": approver,
                         "note": "Approved from the terminal demo" if decision == "approve" else "Rejected from the terminal demo",
                         "quote_hash": order.get("quote_hash") or quote.get("quote_hash")}
-                resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body, headers=human, timeout=10)
+                decision_headers = {"X-Approver-Pin": local_pin(approver)}
+                try:
+                    resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body,
+                                      headers=decision_headers, timeout=10)
+                except Exception as e:
+                    print(c(f"       [human] approval of {oid} failed: {type(e).__name__}", "red"), flush=True)
+                    continue
+                if resp.status_code < 500:
+                    seen.add(oid)
                 print(c(f"       [human] {approver} {decision}d {oid} via HTTP -> {resp.status_code}", "green"), flush=True)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(c(f"       [human] approval poll failed: {type(e).__name__}", "red"), flush=True)
-        stop.wait(1.0)
+        stop.wait(interval)
 
 
 def fake_auto_approver(gw, approver: str, stop: threading.Event, delay: float = 3.0, decision: str = "approve") -> None:
@@ -183,6 +214,37 @@ def _env_approver(customer: str) -> str | None:
     if raw.lower() in ("1", "true", "yes", "on"):
         return APPROVERS.get(customer, "anna@hotel-aurora.example")
     return raw
+
+
+def _gateway_now(base_url: str | None, kind: str):
+    from aimo.buyer.need import HELSINKI
+    v = (os.environ.get("AIMO_NOW") or "").strip()
+    if v:
+        from aimo.backend.client import parse_dt
+        d = parse_dt(v)
+        if d is not None:
+            return d.astimezone(HELSINKI) if d.tzinfo else d.replace(tzinfo=HELSINKI)
+    if kind == "mcp" and base_url:
+        try:
+            import httpx
+            from aimo.backend.clock import parse
+            r = httpx.get(f"{base_url.rstrip('/')}/healthz", timeout=2)
+            if getattr(r, "status_code", 200) < 400:
+                body = r.json()
+                if isinstance(body, dict) and isinstance(body.get("clock"), dict):
+                    d = parse(body["clock"].get("now"))
+                    if d is not None:
+                        return d.astimezone(HELSINKI)
+        except Exception:
+            return None
+    if kind == "inproc":
+        try:
+            from aimo.backend import clock
+            if clock.simulated():
+                return clock.now().astimezone(HELSINKI)
+        except Exception:
+            return None
+    return None
 
 
 # ---------------------------------------------------------------- main
@@ -301,7 +363,8 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
     agent = BuyerAgent(transport, customer, model=a.model, thinking=a.thinking, escalate=not a.no_escalate,
                        max_steps=a.max_steps, emit=print_step, audit_base_url=base if kind != "fake" else "",
                        poll_s=0.5 if kind in ("fake", "inproc") else 2.0, approval_timeout_s=a.approval_timeout,
-                       image=image, answer_fn=_answer_fn(getattr(a, "answer", "auto")))
+                       image=image, answer_fn=_answer_fn(getattr(a, "answer", "auto")),
+                       now=_gateway_now(base, kind))
     try:
         result = agent.run(text)
     finally:
@@ -507,25 +570,49 @@ def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -
 def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, decision: str) -> int:
     import httpx
     approver = None if getattr(a, "no_auto_approve", False) else (a.auto_approve_as or _env_approver(customer))
-    if approver:
-        threading.Thread(target=http_auto_approver, args=(base, approver, customer, stop,
-                                                          a.approve_delay, decision), daemon=True).start()
-    body = {"text": text, "customer_id": customer, "thinking": a.thinking, "escalate": not a.no_escalate}
+    headers = {"X-Customer-Id": customer}
+    agent_key = (os.environ.get("AIMO_AGENT_KEY") or "").strip()
+    if agent_key:
+        headers["X-Agent-Key"] = agent_key
+    body: dict[str, Any] = {"text": text, "customer_id": customer, "thinking": a.thinking, "escalate": not a.no_escalate}
     if a.model:
         body["model"] = a.model
     if a.transport != "auto":
         body["transport"] = a.transport
-    r = httpx.post(f"{base}/v1/agent/runs", json=body, timeout=10)
-    r.raise_for_status()
-    run_id = r.json()["run_id"]
-    print(c(f"  run {run_id}: streaming {base}/v1/agent/runs/{run_id}/events\n", "dim"))
+    faults = getattr(a, "faults", None)
+    if faults is None:
+        faults = SCENARIOS.get(getattr(a, "scenario", ""), {}).get("faults")
+    if faults:
+        body["faults"] = faults
+    if approver:
+        threading.Thread(target=http_auto_approver, args=(base, approver, customer, stop,
+                                                          a.approve_delay, decision), daemon=True).start()
     status = "error"
     try:
-        with httpx.stream("GET", f"{base}/v1/agent/runs/{run_id}/events", timeout=None) as resp:
+        r = httpx.post(f"{base}/v1/agent/runs", json=body, headers=headers, timeout=10)
+        r.raise_for_status()
+        run_id = r.json()["run_id"]
+        print(c(f"  run {run_id}: streaming {base}/v1/agent/runs/{run_id}/events\n", "dim"))
+        with httpx.stream("GET", f"{base}/v1/agent/runs/{run_id}/events", headers=headers, timeout=None) as resp:
+            if hasattr(resp, "raise_for_status"):
+                resp.raise_for_status()
             for line in resp.iter_lines():
                 if line.startswith("data:"):
                     step = json.loads(line[5:].strip())
                     print_step(step)
+                    if step["kind"] == "needs_clarification" and getattr(a, "answer", "auto") == "auto":
+                        sdata = step.get("data") or {}
+                        if sdata.get("options"):
+                            ans = _answer_fn("auto")(sdata)
+                            if ans:
+                                ans_body = {**ans, "customer_id": customer}
+                                if sdata.get("question_id"):
+                                    ans_body["question_id"] = sdata["question_id"]
+                                try:
+                                    httpx.post(f"{base}/v1/agent/runs/{run_id}/answer",
+                                               json=ans_body, headers=headers, timeout=10)
+                                except Exception:
+                                    pass
                     if step["kind"] == "final":
                         status = (step.get("data") or {}).get("status", "finished")
                         break

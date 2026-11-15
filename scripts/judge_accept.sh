@@ -120,6 +120,7 @@ main() {
     export UV_PROJECT_ENVIRONMENT
   fi
   TMP_ACCEPT="$(mktemp -d)"
+  LOG_PREFIX="${AIMO_ACCEPT_LOG_PREFIX:-/tmp/aimo-accept-}"
   trap cleanup EXIT INT TERM
 
   say "== Aimo judge accept (junction-aimo-agents) =="
@@ -136,9 +137,10 @@ main() {
     record FAIL "python3 on PATH" "Python 3.11+ required"
   fi
 
-  if [ ! -f .env ]; then
+  local env_file="${AIMO_ENV_FILE:-.env}"
+  if [ ! -f "$env_file" ]; then
     if [ -f .env.example ]; then
-      cp .env.example .env
+      cp .env.example "$env_file"
       record PASS "cp .env.example .env" "created (fill keys locally; not committed)"
     else
       record FAIL "cp .env.example .env" ".env.example missing"
@@ -167,15 +169,15 @@ main() {
   else
     say "-- pytest --"
     set +e
-    uv run --extra dev pytest -q > /tmp/aimo-accept-pytest.txt 2>&1
+    uv run --extra dev pytest -q > "${LOG_PREFIX}pytest.txt" 2>&1
     pec=$?
     set -e
-    summary=$(grep -E "[0-9]+ failed|[0-9]+ passed" /tmp/aimo-accept-pytest.txt | tail -1 || true)
+    summary=$(grep -E "[0-9]+ failed|[0-9]+ passed" "${LOG_PREFIX}pytest.txt" | tail -1 || true)
     summary=${summary:-"(no summary)"}
     if [ "$pec" -eq 0 ]; then
       record PASS "pytest" "$summary"
-    elif ! has_aimo_key && grep -q "valio_aimo_junction26_product_data.json" /tmp/aimo-accept-pytest.txt; then
-      record SKIP "pytest (full suite)" "catalog data missing without AIMO_API_KEY; see /tmp/aimo-accept-pytest.txt - $summary"
+    elif ! has_aimo_key && grep -q "valio_aimo_junction26_product_data.json" "${LOG_PREFIX}pytest.txt"; then
+      record SKIP "pytest (full suite)" "catalog data missing without AIMO_API_KEY; see ${LOG_PREFIX}pytest.txt - $summary"
     else
       record FAIL "pytest" "exit $pec - $summary"
     fi
@@ -202,14 +204,14 @@ main() {
     if { has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
       say "-- scenarios s0..s7 ($mode_label) --"
       set +e
-      uv run python -m scenarios.run_all > /tmp/aimo-accept-scenarios.txt 2>&1
+      uv run python -m scenarios.run_all > "${LOG_PREFIX}scenarios.txt" 2>&1
       sec=$?
       set -e
-      ssum=$(grep -E "^[0-9]+/[0-9]+ passed" /tmp/aimo-accept-scenarios.txt | tail -1 || true)
+      ssum=$(grep -E "^[0-9]+/[0-9]+ passed" "${LOG_PREFIX}scenarios.txt" | tail -1 || true)
       if [ "$sec" -eq 0 ] && [ -n "$ssum" ]; then
         record PASS "scenarios.run_all" "$ssum ($mode_label)"
       else
-        record FAIL "scenarios.run_all" "exit $sec - ${ssum:-no table} ($mode_label; see /tmp/aimo-accept-scenarios.txt)"
+        record FAIL "scenarios.run_all" "exit $sec - ${ssum:-no table} ($mode_label; see ${LOG_PREFIX}scenarios.txt)"
       fi
     else
       record SKIP "scenarios.run_all" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
@@ -224,7 +226,7 @@ s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()
 PY
 )
     set +e
-    uv run aimo serve --no-build --host 127.0.0.1 --port "$PORT" > /tmp/aimo-accept-serve.txt 2>&1 &
+    uv run aimo serve --no-build --host 127.0.0.1 --port "$PORT" > "${LOG_PREFIX}serve.txt" 2>&1 &
     spid=$!
     set -e
     up=0
@@ -236,7 +238,7 @@ PY
     if [ "$up" -eq 1 ]; then
       record PASS "aimo serve starts" "http://127.0.0.1:${PORT} pid=$spid"
       for path in /.well-known/otap.json /.well-known/jwks.json /healthz /docs /ui; do
-        code=$(curl -s -o /tmp/aimo-accept-curl.out -w "%{http_code}" --max-time 5 "http://127.0.0.1:${PORT}${path}" || echo 000)
+        code=$(curl -s -o "${LOG_PREFIX}curl.out" -w "%{http_code}" --max-time 5 "http://127.0.0.1:${PORT}${path}" || echo 000)
         case "$code" in
           2*|3*) record PASS "GET $path" "HTTP $code" ;;
           *) record FAIL "GET $path" "HTTP $code" ;;
@@ -258,19 +260,19 @@ PY
 
       if { has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
         set +e
-        uv run python -m conformance --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-conf.txt 2>&1
+        uv run python -m conformance --base "http://127.0.0.1:${PORT}" --json "$TMP_ACCEPT/conformance.json" > "${LOG_PREFIX}conf.txt" 2>&1
         cec=$?
         set -e
         if [ "$cec" -eq 0 ]; then
-          record PASS "conformance suite" "$(tail -3 /tmp/aimo-accept-conf.txt | tr '\n' ' ')"
+          record PASS "conformance suite" "$(tail -3 "${LOG_PREFIX}conf.txt" | tr '\n' ' ')"
         else
-          record FAIL "conformance suite" "exit $cec (see /tmp/aimo-accept-conf.txt)"
+          record FAIL "conformance suite" "exit $cec (see ${LOG_PREFIX}conf.txt)"
         fi
         set +e
-        uv run python docs/pitch/qa_milk_flow.py --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-milk.txt 2>&1
+        uv run python docs/pitch/qa_milk_flow.py --base "http://127.0.0.1:${PORT}" > "${LOG_PREFIX}milk.txt" 2>&1
         mec=$?
         set -e
-        order_line=$(grep -E "^ORDER " /tmp/aimo-accept-milk.txt | tail -1 || true)
+        order_line=$(grep -E "^ORDER " "${LOG_PREFIX}milk.txt" | tail -1 || true)
         if [ "$mec" -eq 0 ]; then
           record PASS "qa_milk_flow.py" "MILK FLOW OK ($mode_label)"
           if [ -n "$order_line" ]; then
@@ -283,21 +285,21 @@ PY
             say "  $order_line"
           fi
         else
-          record FAIL "qa_milk_flow.py" "exit $mec (see /tmp/aimo-accept-milk.txt)"
+          record FAIL "qa_milk_flow.py" "exit $mec (see ${LOG_PREFIX}milk.txt)"
         fi
         if [ -f docs/pitch/requote_beat.py ]; then
           set +e
-          uv run python docs/pitch/requote_beat.py --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-requote.txt 2>&1
+          uv run python docs/pitch/requote_beat.py --base "http://127.0.0.1:${PORT}" > "${LOG_PREFIX}requote.txt" 2>&1
           rqec=$?
           set -e
-          requote_line=$(grep -E "^REQUOTE " /tmp/aimo-accept-requote.txt | grep -v "^REQUOTE BEAT OK" | tail -1 || true)
-          if [ "$rqec" -eq 0 ] && grep -q "REQUOTE BEAT OK" /tmp/aimo-accept-requote.txt; then
+          requote_line=$(grep -E "^REQUOTE " "${LOG_PREFIX}requote.txt" | grep -v "^REQUOTE BEAT OK" | tail -1 || true)
+          if [ "$rqec" -eq 0 ] && grep -q "REQUOTE BEAT OK" "${LOG_PREFIX}requote.txt"; then
             record PASS "requote_beat.py" "409 requote_needed -> fresh quote -> AP + audit verify ($mode_label)"
             if [ -n "$requote_line" ]; then
               say "  $requote_line"
             fi
           else
-            record FAIL "requote_beat.py" "exit $rqec (see /tmp/aimo-accept-requote.txt)"
+            record FAIL "requote_beat.py" "exit $rqec (see ${LOG_PREFIX}requote.txt)"
           fi
         fi
       else
@@ -314,32 +316,32 @@ PY
         set +e
         if { has_aimo_key && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
           demo_mode="http ($mode_label)"
-          uv run aimo demo --base-url "http://127.0.0.1:${PORT}" --auto-approve-as anna@hotel-aurora.example --approve-delay 0.5 --approval-timeout 30 > /tmp/aimo-accept-demo.txt 2>&1
+          uv run aimo demo --base-url "http://127.0.0.1:${PORT}" --auto-approve-as anna@hotel-aurora.example --approve-delay 0.5 --approval-timeout 30 > "${LOG_PREFIX}demo.txt" 2>&1
           dec=$?
         else
           demo_mode="fake"
-          uv run aimo demo --transport fake --auto-approve-as anna@hotel-aurora.example --approve-delay 0.2 --approval-timeout 20 > /tmp/aimo-accept-demo.txt 2>&1
+          uv run aimo demo --transport fake --auto-approve-as anna@hotel-aurora.example --approve-delay 0.2 --approval-timeout 20 > "${LOG_PREFIX}demo.txt" 2>&1
           dec=$?
         fi
         set -e
         demo_ok=0
         if [ "$dec" -eq 0 ]; then
-          if ! grep -q "status=" /tmp/aimo-accept-demo.txt || grep -q "status=placed" /tmp/aimo-accept-demo.txt; then
+          if ! grep -q "status=" "${LOG_PREFIX}demo.txt" || grep -q "status=placed" "${LOG_PREFIX}demo.txt"; then
             demo_ok=1
           fi
         fi
         if [ "$demo_ok" -eq 1 ]; then
-          record PASS "aimo demo (scripted buyer)" "completed end-to-end via $demo_mode (see /tmp/aimo-accept-demo.txt)"
+          record PASS "aimo demo (scripted buyer)" "completed end-to-end via $demo_mode (see ${LOG_PREFIX}demo.txt)"
         else
-          dstatus=$(grep -oE "status=[a-z_]+" /tmp/aimo-accept-demo.txt | tail -1 || true)
-          record FAIL "aimo demo (scripted buyer)" "exit $dec ${dstatus:+$dstatus }via $demo_mode (see /tmp/aimo-accept-demo.txt)"
+          dstatus=$(grep -oE "status=[a-z_]+" "${LOG_PREFIX}demo.txt" | tail -1 || true)
+          record FAIL "aimo demo (scripted buyer)" "exit $dec ${dstatus:+$dstatus }via $demo_mode (see ${LOG_PREFIX}demo.txt)"
         fi
       fi
       kill "$spid" 2>/dev/null || true
       wait "$spid" 2>/dev/null || true
       spid=""
     else
-      record FAIL "aimo serve starts" "did not bind; last log: $(tail -3 /tmp/aimo-accept-serve.txt | tr '\n' ' ')"
+      record FAIL "aimo serve starts" "did not bind; last log: $(tail -3 "${LOG_PREFIX}serve.txt" | tr '\n' ' ')"
       kill "$spid" 2>/dev/null || true
       spid=""
     fi

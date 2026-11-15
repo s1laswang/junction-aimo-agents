@@ -93,6 +93,7 @@ class InProcessTransport:
                 if t["name"] not in self.missing]
 
     def call(self, name: str, args: dict) -> Any:
+        _ensure_replay_ready()
         fn = getattr(self.service, name, None)
         if fn is None:
             raise ToolError(f"tool {name} not available in-process")
@@ -225,6 +226,53 @@ def gateway_agent_id(agent_id: str, customer_id: str) -> str:
     return agent_id[len(prefix):] if agent_id.startswith(prefix) else agent_id
 
 
+def _has_forced_replay() -> bool:
+    from aimo import config
+    from aimo.backend import replay
+    if replay.mode() != "forced":
+        return False
+    rdir = replay.replay_dir()
+    if rdir is None or not (rdir / "meta.json").exists():
+        return False
+    if config.PRODUCT_JSON.exists():
+        return True
+    if os.environ.get("AIMO_CATALOG_FIXTURE", "").strip() == "0":
+        return False
+    from aimo.catalog import FIXTURE_CATALOG_DIR
+    return (
+        (rdir / "catalog" / (config.PRODUCT_JSON.name + ".gz")).exists()
+        or (FIXTURE_CATALOG_DIR / (config.PRODUCT_JSON.name + ".gz")).exists()
+    )
+
+
+def _ensure_replay_ready() -> None:
+    from aimo import config
+    from aimo.backend import client as backend_client, replay
+    if replay.mode() != "forced":
+        return
+    rdir = replay.replay_dir()
+    if rdir is None:
+        return
+    if isinstance(backend_client._client, backend_client.ValioClient) or (
+        isinstance(backend_client._client, replay.ReplayClient) and backend_client._client.dir != rdir
+    ):
+        backend_client.set_client(replay.ReplayClient(rdir))
+    if not config.PRODUCT_JSON.exists():
+        import aimo.catalog as cat
+        if cat._use_fixture_catalog() == "fixture-subset":
+            cat._SOURCE = "fixture-subset"
+    if config.PRODUCT_JSON.exists():
+        import aimo.backend.catalog_store as cs
+        if cs.PRODUCT_JSON != config.PRODUCT_JSON or cs.CATALOG_DB != config.CATALOG_DB:
+            cs.PRODUCT_JSON = config.PRODUCT_JSON
+            cs.RELIABILITY_CSV = config.RELIABILITY_CSV
+            cs.CO2_CSV = config.CO2_CSV
+            cs.CATALOG_DB = config.CATALOG_DB
+            from aimo.catalog import textsearch
+            textsearch._con.cache_clear()
+            textsearch._nonfood_categories.cache_clear()
+
+
 def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http://localhost:8000/mcp",
             gateway=None, mandate=None, faults: str | None = None) -> ToolTransport:
     """kind: mcp | inproc | fake | auto (mcp, then inproc, then fake).
@@ -247,7 +295,7 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
                     import aimo.backend.client as backend_client
                     from aimo import config
                     has_key = bool((config.AIMO_API_KEY or os.environ.get("VALIO_API_KEY") or "").strip() or config.OFFLINE)
-                    if not (backend_client._client is not None or (config.PRODUCT_JSON.exists() and has_key)):
+                    if not (backend_client._client is not None or (config.PRODUCT_JSON.exists() and has_key) or _has_forced_replay()):
                         raise ToolError("in-process gateway needs challenge catalog data and AIMO_API_KEY")
                 return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":
