@@ -72,7 +72,7 @@ uv run aimo demo --scenario stockout|school-allergen|injection|drift|event
 uv run aimo demo --montage                                        # all 6 in sequence: 6/6 PASS, $0.035 per order (docs/demo-montage.md)
 # the montage injects faults as the agent on purpose: start that gateway with AIMO_DEMO_FAULTS=1 (see docs/DEMO.md)
 ```
-Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, best 464306) → escalation to gemini-4-hydrogen HIGH → signed quote → needs approval (3 reasons) → approved → placed, 38 s.
+Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, best 464306) → escalation to gemini-4-hydrogen HIGH → signed quote → needs approval (3 reasons at the time; 2 with the final policy, which allows the hotel's listed pack swap) → approved → placed, 38 s.
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 

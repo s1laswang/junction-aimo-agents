@@ -31,7 +31,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | Plan: 464306 × 1,000 = €1,010, shortfall 0 | README, DEMO, SUBMISSION, deck | `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (**live** or **replay**, gateway running on the same machine, which supplies the approver PIN) | €1,010.00 | R pitch, Sat 18:26; quote €1,010 R submit (replay), Sat 23:10 |
-| Needs approval: over €500; 3.3× usual weekly milk (1,000 vs 300 L); outside standing preference | DEMO, deck, SUBMISSION | same script (prints each rule) | 3 needs-approval rows | R pitch, Sat 18:26; R submit (replay, audit report lists spend, substitution, quantity drift), Sat 23:10 |
+| Needs approval: over €500; 3.3× usual weekly milk (1,000 vs 300 L); the listed 1 L pack swap is allowed | README, DEMO, deck, SUBMISSION | same script (prints each rule) | 2 needs-approval rows, `substitution:464306: allow` (3 before the final policy) | R submit (replay, main 7225d06), Sun 05:35: spend and quantity_drift need approval, substitution allowed, MILK FLOW OK |
 | Wrong hash → 409; approve → placed AP; audit verify ok | DEMO, ARCHITECTURE | same script | as stated | R pitch, Sat 18:26 |
 | 15-minute price lock | README, TRUST, SUBMISSION | same script prints `expires_at` (created_at + 15 min) | 15 min | R pitch |
 
@@ -90,7 +90,7 @@ All wind-tunnel commands are in [docs/reports/windtunnel.md](reports/windtunnel.
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | 640 Gemini-written scenarios, 16 families × 40, 3 policy archetypes | GEMINI, SUBMISSION, deck | `uv run python -m windtunnel.generate --n 640 --gemini --out data/windtunnel/scenarios/wt640_gem.jsonl` (**live**) | 640 | S windtunnel, Sat 18:24 (git dfecb2a) |
-| Gateway on final code (main a99692f): 0 policy / 0 allergen violations, recall 99.7%, precision 68.2%, injection 100% (before S3: 1 / 0, 98.8%, 54.0%) | SUBMISSION, DEMO, deck, QA, DECISIONS, README | offline, committed inputs: see `docs/evidence/windtunnel/README.md` (about 3 min, no keys) | as stated | CEO, Sun 15 Nov 05:20 (git a99692f) |
+| Gateway on the final policy: 0 policy / 0 allergen violations, recall 99.7%, precision 69.5% (331 needed, 145 unnecessary), outcome accuracy 74.8%, injection 80 of 80 by the regex screen (before S3: 1 / 0, 98.8%, 54.0%) | SUBMISSION, DEMO, deck, QA, DECISIONS, README | offline, committed inputs: see `docs/evidence/windtunnel/README.md` (about 3 min, no keys) | as stated | CEO, Sun 15 Nov 05:50 (final policy, run file `wt640_gem__pipeline__team__final.jsonl.gz`) |
 | Naive agent on the same run: policy violations 372, allergen 193, recall 17.8%, precision 90.8%, injection blocked 0 of 80 (gateway 80 of 80, 1 false positive in 560 clean requests; 56.2% before the final-code changes) | SUBMISSION, DEMO, deck, README | committed inputs, offline: `docs/evidence/windtunnel/README.md` (`--sut baseline` line) | as stated | CEO, Sun 15 Nov 05:20 (git a99692f); `docs/windtunnel-results.json` key `main` |
 | 2,560 template scenarios: 11 vs 1,452 policy violations, 0 vs 728 allergen | SUBMISSION | same, `--scale wt2560` | as stated | S windtunnel, Sat 18:24 |
 | Injection screen: regex 44.4% recall, regex + Gemini 94.4%; Gemini false positives 42/60 buyer requests, 0/60 supplier texts | SUBMISSION, GEMINI | `uv run python -m windtunnel.screen_eval --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --neg 120` (**live**) | as stated | S windtunnel |
@@ -108,4 +108,4 @@ All wind-tunnel commands are in [docs/reports/windtunnel.md](reports/windtunnel.
 |---|---|---|
 | Gold set: zero-correction rate on fi/sv/en requests | Only a 20-request set exists (`tests/fixtures/gold/gold-buyer-20.jsonl`) and no committed run | `uv run python -m aimo.buyer.eval_gold tests/fixtures/gold/gold-buyer-20.jsonl` (**live**) |
 | Photo intake accuracy | 4 development calls only (`buyer.vision` in the ledger) | a labelled photo set; none exists |
-| Escalation precision ≥90% at recall ≥99% | Target not met: 68.2% at 99.7% recall (above). Remaining causes in docs/reports/need.md | as above |
+| Escalation precision ≥90% at recall ≥99% | Target not met: 69.5% at 99.7% recall (above). Causes: docs/evidence/windtunnel/README.md "Why the gateway still asks" | as above |

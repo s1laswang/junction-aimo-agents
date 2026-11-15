@@ -4,12 +4,13 @@
 
 Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" challenge and the Google DeepMind "Best Use of Gemini API" prize ([docs/GEMINI.md](docs/GEMINI.md)).
 
-> A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L box missed its order cut-off (live challenge mock-API data; all challenge data is synthetic), so the gateway plans a same-brand substitute (Valio Eila 1 L, €1,010), signs a fixed-price quote, and the hotel's own policy says **needs approval** (over €500, a swap, 3.3× the usual weekly volume). The agent cannot approve; Anna, the procurement manager, signs in and approves that exact quote hash. The order gets a Peppol-style `AP`, and every step is in a signed, hash-chained audit log anyone can verify.
+> A hotel's agent asks for *"1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."* The usual 10 L box missed its order cut-off (live challenge mock-API data; all challenge data is synthetic), so the gateway plans a same-brand substitute (Valio Eila 1 L, €1,010), signs a fixed-price quote, and the hotel's own policy says **needs approval** for two reasons: over €500 and 3.3× the usual weekly volume (the 1 L pack is the hotel's listed alternative, so the swap itself is allowed). The agent cannot approve; Anna, the procurement manager, signs in and approves that exact quote hash. The order gets a Peppol-style `AP`, and every step is in a signed, hash-chained audit log anyone can verify.
 
 ![Approval UI: the agent paused, Anna Virtanen signed in as the human approver, three rules need her approval, the decision is bound to the quote hash](docs/reports/frontend/s5-approval-signed-in.png)
 <!-- Live run on main, Sat 14 Nov 23:17 (S5 ui session). More screenshots: docs/reports/frontend/. -->
+<sub>Screens in this repo captured before Sun 15 Nov 05:50 show a third reason (the pack swap), which the final policy allows because the 1 L pack is the hotel's listed alternative.</sub>
 
-▶ **Video (111 s):** [narrated walkthrough built from screens of the running system](docs/pitch/demo-walkthrough.mp4) (rebuild: `bash docs/pitch/build_walkthrough.sh`).
+▶ **Video (110 s):** [narrated walkthrough built from screens of the running system](docs/pitch/demo-walkthrough.mp4) (rebuild: `bash docs/pitch/build_walkthrough.sh`).
 
 ## Try it (no keys needed)
 
