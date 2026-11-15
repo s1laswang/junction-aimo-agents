@@ -199,6 +199,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--baseline-orders", type=int, default=5, help="orders placed in that baseline montage")
     ap.add_argument("--baseline-label", help="name of the baseline row in the cost table (default: its ledger pid)")
     a = ap.parse_args(argv)
+    if a.faults or a.montage or SCENARIOS.get(a.scenario, {}).get("faults"):
+        # The operator asked for a fault scenario from their own terminal: enable demo faults for THIS process
+        # (in-process transport). A separate gateway only honours them if it was started with AIMO_DEMO_FAULTS=1.
+        os.environ.setdefault("AIMO_DEMO_FAULTS", "1")
     if a.montage:
         return run_montage(a)
     stop = threading.Event()
@@ -593,7 +597,9 @@ def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, d
         body["model"] = a.model
     if a.transport != "auto":
         body["transport"] = a.transport
-    r = httpx.post(f"{base}/v1/agent/runs", json=body, timeout=10)
+    from aimo.gateway.human_auth import local_pin
+    r = httpx.post(f"{base}/v1/agent/runs", json=body, timeout=10,
+                   headers={"X-Approver-Pin": local_pin()})  # the operator instructs the hosted agent
     r.raise_for_status()
     run_id = r.json()["run_id"]
     print(c(f"  run {run_id}: streaming {base}/v1/agent/runs/{run_id}/events\n", "dim"))

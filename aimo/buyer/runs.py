@@ -81,6 +81,31 @@ class RunRequest(BaseModel):
         return v.lower()
 
 
+def _human_error(request: Request):
+    """Only a signed-in human may instruct or answer the hosted buyer agent: an approver session
+    (X-Approver-Session) or the approver credential (X-Approver-Pin). Returns a JSON error response, or None."""
+    from fastapi.responses import JSONResponse
+    from aimo.gateway import human_auth
+    h = request.headers
+    src = request.client.host if request.client else "?"
+    if human_auth.check_session(h.get("x-approver-session")):
+        return None
+    if human_auth.locked_for(src) > 0:
+        return JSONResponse({"error": "approver_locked", "message": "Too many wrong credentials from this client; "
+                             "try again in a few minutes."}, status_code=429)
+    if human_auth.check_pin(h.get("x-approver-pin"), src):
+        return None
+    return JSONResponse({"error": "approver_auth_required", "message": "Starting or answering an agent run needs a "
+                         "signed-in human (X-Approver-Session from POST /v1/auth/approver-session, or "
+                         "X-Approver-Pin)."}, status_code=401)
+
+
+def demo_faults_enabled() -> bool:
+    """Fault injection and test transports are operator-only: AIMO_DEMO_FAULTS=1 on the gateway, never in production."""
+    from aimo.backend import clock
+    return clock.request_overrides_allowed(True)
+
+
 def mcp_url_for(request: Request | None = None) -> str | None:
     """The gateway's own MCP endpoint: explicit AIMO_MCP_URL, else what `aimo serve --port` exported
     (AIMO_SERVE_URL), else the local socket the request arrived on (scope["server"], not the Host header)."""
@@ -327,6 +352,9 @@ async def create_run(request: Request) -> dict:
     def bad(code: str, message: str, status: int = 422) -> JSONResponse:
         return JSONResponse({"error": code, "message": message}, status_code=status)
 
+    denied = _human_error(request)
+    if denied is not None:
+        return denied
     image = None
     try:
         if request.headers.get("content-type", "").startswith("multipart/form-data"):
@@ -360,14 +388,31 @@ async def create_run(request: Request) -> dict:
         return bad("text_required", "text or image is required")
     if image is not None and len(image[0]) > MAX_IMAGE_BYTES:
         return bad("image_too_large", "image too large (max 15 MB)", 413)
+    ignored: list[str] = []
+    if not demo_faults_enabled():
+        # a caller must not inject faults (forged prices, fake stock) or pick a test transport through the run API
+        if req.faults:
+            ignored.append("faults")
+        if req.transport in ("inproc", "fake"):
+            ignored.append("transport")
+        if ignored:
+            req = req.model_copy(update={"faults": None, "transport": None if "transport" in ignored else req.transport})
     run = registry.start(req.model_copy(update={"image_b64": None}), image=image, mcp_url=mcp_url_for(request))
-    return {"run_id": run.run_id, "events_url": f"/v1/agent/runs/{run.run_id}/events",
-            "answer_url": f"/v1/agent/runs/{run.run_id}/answer"}
+    out = {"run_id": run.run_id, "events_url": f"/v1/agent/runs/{run.run_id}/events",
+           "answer_url": f"/v1/agent/runs/{run.run_id}/answer"}
+    if ignored:
+        out["ignored"] = ignored
+        out["message"] = ("Ignored " + " and ".join(ignored) + ": fault injection and test transports are operator-only "
+                          "(start the gateway with AIMO_DEMO_FAULTS=1).")
+    return out
 
 
 @router.post("/runs/{run_id}/answer")
-def answer_run(run_id: str, ans: AnswerRequest) -> dict:
-    """Answer the run's pending needs_clarification question; the run resumes."""
+def answer_run(run_id: str, ans: AnswerRequest, request: Request):
+    """Answer the run's pending needs_clarification question; the run resumes. Needs a signed-in human."""
+    denied = _human_error(request)
+    if denied is not None:
+        return denied
     try:
         run = registry.get(run_id)
     except KeyError:
@@ -386,7 +431,11 @@ def answer_run(run_id: str, ans: AnswerRequest) -> dict:
 
 
 @router.get("/runs")
-def list_runs(limit: int = Query(20, ge=1, le=500)) -> list[dict]:
+def list_runs(request: Request, limit: int = Query(20, ge=1, le=500)):
+    """Recent runs across customers: operator view, needs a signed-in human."""
+    denied = _human_error(request)
+    if denied is not None:
+        return denied
     runs = sorted(registry.runs.values(), key=lambda r: r.created, reverse=True)[:limit]
     return [r.view(with_steps=False) for r in runs]
 

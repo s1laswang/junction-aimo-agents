@@ -110,8 +110,10 @@ class InProcessTransport:
         token = None
         if self.faults:
             try:
+                from aimo.backend import clock
                 from aimo.backend.client import set_request_faults
-                token = set_request_faults(self.faults)
+                if clock.request_overrides_allowed(True):  # operator-only: AIMO_DEMO_FAULTS=1, never in production
+                    token = set_request_faults(self.faults)
             except ImportError:
                 pass
         try:

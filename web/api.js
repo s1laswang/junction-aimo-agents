@@ -90,13 +90,25 @@ export function createLiveApi(base) {
     // approver ids are only returned to a signed-in approver: send the session if we have one (never asks)
     customers: () => req("GET", "/v1/customers", null, sessionHeader()),
     /** image {mime, data_b64, name} rides along as image_b64/image_mime (RunRequest). Optimize is a browser-side re-rank. */
-    startRun: ({ text, customer_id, model, thinking, image }) =>
-      req("POST", "/v1/agent/runs", {
+    // Only a signed-in human may instruct the hosted buying agent: the same session later covers the approval.
+    startRun: async ({ text, customer_id, model, thinking, image }) => {
+      const body = {
         text: text || "", customer_id, model, thinking: thinking ? String(thinking).toUpperCase() : undefined,
         image_b64: image?.data_b64 || undefined, image_mime: image?.mime || undefined,
-      }, { "X-Customer-Id": customer_id }),
+      };
+      const go = async (reason) => req("POST", "/v1/agent/runs", body,
+        { "X-Customer-Id": customer_id, "X-Approver-Session": await ensureSession(true, reason) });
+      try {
+        return await go("Sign in to instruct the buying agent. The same sign-in covers the approval later.");
+      } catch (e) {
+        if (e.status !== 401 || e.code === "signin_required" || e.code === "signin_cancelled") throw e;
+        signOut();
+        return go("Your session expired. Sign in again.");
+      }
+    },
     /** Answer a needs_clarification step: {option_id?, text?, question_id?}. */
-    answer: (runId, body) => req("POST", `/v1/agent/runs/${encodeURIComponent(runId)}/answer`, body),
+    answer: (runId, body) => humanReq("POST", `/v1/agent/runs/${encodeURIComponent(runId)}/answer`, body,
+                                      { reason: "Sign in to answer the agent's question." }),
 
     /** Subscribe to the SSE AgentStep stream. Returns a close() function. */
     streamRun(runId, onStep, onEnd) {

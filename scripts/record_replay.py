@@ -199,7 +199,8 @@ def agent_runs(base: str, pin: str) -> None:
         try:
             r = httpx.post(base + "/v1/agent/runs", json={"text": text, "customer_id": cust, "faults": faults,
                                                           "clarify": False},
-                           headers={"X-Customer-Id": cust}, timeout=60)
+                           headers={"X-Customer-Id": cust, "X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "")},
+                           timeout=60)  # the operator instructs the hosted agent (gateway needs AIMO_DEMO_FAULTS=1)
             rid = r.json().get("run_id")
             status = "?"
             for _ in range(240):
