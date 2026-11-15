@@ -238,18 +238,45 @@ def test_gemini_section5_ledger_and_montage_arithmetic():
         for ln in (evidence_dir / "montage-ledger-after-trim.jsonl").read_text(encoding="utf-8").splitlines()
         if ln.strip()
     ]
+    sun_rows = [
+        json.loads(ln)
+        for ln in (evidence_dir / "montage-ledger-sun.jsonl").read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
     assert len(before_rows) == 55
     assert len(after_rows) == 50
+    assert len(sun_rows) == 53
+
+    before_summary = summarize(before_rows)
+    assert round(before_summary["cost_usd"] / 5, 4) == 0.0822
+
     after_summary = summarize(after_rows)
     assert after_summary["cached"] == 57661
     assert after_summary["in"] == 183196
     assert round(after_summary["cached"] / after_summary["in"] * 100) == 31
+    assert round(after_summary["cost_usd"] / 5, 4) == 0.0339
+
+    sun_summary = summarize(sun_rows)
+    assert sun_summary["calls"] == 53
+    assert sun_summary["in"] == 225503
+    assert sun_summary["cached"] == 86792
+    assert round(sun_summary["cached"] / sun_summary["in"] * 100) == 38
+    assert round(sun_summary["cost_usd"] / 5, 4) == 0.0352
+    assert (sun_summary["escalated_runs"], sun_summary["runs"]) == (5, 6)
+    assert (sun_summary["escalated_steps"], sun_summary["agent_steps"]) == (5, 34)
+    assert round(sun_summary["escalated_steps"] / sun_summary["agent_steps"] * 100) == 15
 
     for doc_text in (gemini, numbers):
         assert "57,661" in doc_text
         assert "183,196" in doc_text
         assert "31%" in doc_text
         assert "4,255" in doc_text
+
+    montage_md = _read_text("docs/demo-montage.md")
+    evidence_readme = _read_text("docs/evidence/README.md")
+    for doc_text in (montage_md, evidence_readme, numbers):
+        for tok in ("$0.0352", "$0.0339", "225,503", "86,792", "38%", "15%", "53"):
+            assert tok in doc_text
 
 
 def test_openness_conformance_reports_valid_json():
@@ -283,7 +310,13 @@ def _pct1(val: float) -> str:
 
 
 def _by_sut(systems: list[dict]) -> dict[str, dict]:
-    return {s["meta"]["sut"]: s for s in systems}
+    out: dict[str, dict] = {}
+    for s in systems:
+        sut = (s.get("meta") or {}).get("sut")
+        if not sut:
+            sut = "baseline" if "naive" in (s.get("label") or "").lower() else "team"
+        out[sut] = s
+    return out
 
 
 def _load_policy(customer_id: str) -> dict:
@@ -313,11 +346,41 @@ def test_windtunnel_json_matches_documented_metrics():
 
     assert gw640["n"] == 640
     assert nv640["n"] == 640
+    assert gw640["policy_violations"] == 0
+    assert gw640["allergen_violations"] == 0
+    assert _pct1(gw640["escalation"]["recall"]) == "99.7%"
+    assert _pct1(gw640["escalation"]["precision"]) == "69.5%"
+    assert (gw640["escalation"]["tp"], gw640["escalation"]["fp"]) == (331, 145)
+    assert _pct1(gw640["outcome_accuracy"]) == "74.8%"
     assert nv640["policy_violations"] == 372
     assert nv640["allergen_violations"] == 193
     assert _pct1(nv640["escalation"]["recall"]) == "17.8%"
     assert _pct1(nv640["escalation"]["precision"]) == "90.8%"
-    assert _pct1(gw640["injection"]["block_rate"]) == "56.2%"
+    assert gw640["injection"]["payloads"] == 80
+    assert gw640["injection"]["blocked"] == 80
+    assert _pct1(gw640["injection"]["block_rate"]) == "100.0%"
+    assert (gw640["injection"]["false_positives"], gw640["injection"]["clean_requests"]) == (1, 560)
+
+    pre640 = _by_sut(wt["main_before_s3"]["systems"])["team"]
+    assert pre640["policy_violations"] == 1
+    assert pre640["allergen_violations"] == 0
+    assert _pct1(pre640["escalation"]["precision"]) == "54.0%"
+    assert _pct1(pre640["escalation"]["recall"]) == "98.8%"
+    assert _pct1(pre640["injection"]["block_rate"]) == "56.2%"
+
+    wt_ev_dir = ROOT / "docs" / "evidence" / "windtunnel"
+    for fname in (
+        "README.md",
+        "snapshot.tar.gz",
+        "wt640_gem.jsonl.gz",
+        "wt640_gem__pipeline__baseline.jsonl.gz",
+        "wt640_gem__pipeline__team__final.jsonl.gz",
+        "wt640_gem__pipeline__team__a99692f.jsonl.gz",
+    ):
+        fp = wt_ev_dir / fname
+        assert fp.is_file() and fp.stat().st_size > 0, f"Missing windtunnel evidence {fname}"
+    scen_lines = gzip.decompress((wt_ev_dir / "wt640_gem.jsonl.gz").read_bytes()).decode("utf-8").splitlines()
+    assert len([ln for ln in scen_lines if ln.strip()]) == 640
 
     wt2560 = wt["scale"]
     assert wt2560["name"] == "wt2560"
@@ -367,7 +430,23 @@ def test_windtunnel_json_matches_documented_metrics():
         ("docs/windtunnel-results.md", wt_md),
         ("docs/NUMBERS.md", numbers_md),
     ):
-        for tok in ("98.7%", "21.4%", "56.6%", "94.3%", "42/60", "0/60"):
+        for tok in (
+            "98.7%",
+            "21.4%",
+            "56.6%",
+            "94.3%",
+            "42/60",
+            "0/60",
+            "69.5%",
+            "74.8%",
+            "145",
+            "68.2%",
+            "73.4%",
+            "99.7%",
+            "100.0%",
+            "80 of 80",
+            "AIMO_SCREEN_GEMINI=1",
+        ):
             assert tok in doc_text, f"{doc_name} missing windtunnel scale/screen metric {tok!r}"
 
 
@@ -445,4 +524,50 @@ def test_injection_fp_repro_script_or_screening_zero_fp_documented():
     numbers_md = _read_text("docs/NUMBERS.md")
     assert "docs/pitch/repro_injection_fp.py" in numbers_md
     assert "0 of 34,159" in numbers_md and "0 / 34,159" in numbers_md
+
+
+def test_numbers_md_fallback_live_run_and_hygiene_contracts():
+    numbers_md = _read_text("docs/NUMBERS.md")
+    for tok in (
+        "GEMINI_FALLBACK_MODELS",
+        "gemini-3.5-flash",
+        "29 s",
+        "scripts/verify_quote.py",
+        "docs/evidence/live-run/quote.json",
+        "docs/evidence/live-run/audit-events.json",
+        "docs/evidence/live-run/jwks.json",
+        "docs/evidence/live-run/summarize.py",
+    ):
+        assert tok in numbers_md, f"docs/NUMBERS.md missing {tok!r}"
+
+    live_dir = ROOT / "docs" / "evidence" / "live-run"
+    live_quote = json.loads((live_dir / "quote.json").read_text(encoding="utf-8"))
+    live_order = json.loads((live_dir / "order.json").read_text(encoding="utf-8"))
+    live_run = json.loads((live_dir / "run.json").read_text(encoding="utf-8"))
+    assert live_quote["quote_id"] in numbers_md
+    assert live_order["order_id"] in numbers_md
+    assert live_run["run_id"] in numbers_md
+    assert str(live_run["latency_s"]) in numbers_md
+
+    for py_rel in (
+        "docs/evidence/montage_stats.py",
+        "docs/evidence/live-run/summarize.py",
+        "tests/test_numbers_reproducibility.py",
+        "tests/test_live_run_evidence.py",
+    ):
+        src = _read_text(py_rel)
+        assert "\x23" not in src, f"Comment marker found in {py_rel}"
+        assert "\u2014" not in src, f"Em dash found in {py_rel}"
+
+    for md_rel in (
+        "docs/NUMBERS.md",
+        "docs/demo-montage.md",
+        "docs/windtunnel-results.md",
+        "docs/evidence/README.md",
+        "docs/evidence/windtunnel/README.md",
+        "docs/evidence/live-run/README.md",
+        "docs/evidence/live-run/transcript.md",
+        "docs/evidence/live-run/audit-report.md",
+    ):
+        assert "\u2014" not in _read_text(md_rel), f"Em dash found in {md_rel}"
 
