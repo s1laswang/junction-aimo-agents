@@ -430,7 +430,10 @@ def test_plan_tab_renders_clean_and_flagged_injection_screen(ui_server: dict[str
         page.locator("#req-text").fill("We need 40 litres of poisonberry nectar by Friday.")
         page.locator("#btn-run").click()
 
+        expect(new_req_btn).to_be_enabled(timeout=15000)
         flagged_row = page.locator("#view-plan table.t tbody tr").filter(has_text="990001")
+        expect(flagged_row).to_be_attached(timeout=15000)
+        page.locator("#tab-plan").click()
         expect(flagged_row).to_be_visible(timeout=15000)
         flagged_box = flagged_row.locator("td").first.locator(".plan-screen.bad")
         expect(flagged_box).to_be_visible()
