@@ -549,6 +549,8 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
                     "yellow"))
 
     ready = threading.Event()
+    approver_thread: threading.Thread | None = None
+    inproc_client: Any = None
     if approver:
         if gw is not None:
             target, args = fake_auto_approver, (gw, approver, stop, delay, decision)
@@ -556,11 +558,13 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
             from fastapi.testclient import TestClient
 
             from aimo.gateway.app import create_app
+            inproc_client = TestClient(create_app(with_mcp=False))
             target, args = http_auto_approver, ("", approver, customer, stop, delay, decision,
-                                                TestClient(create_app(with_mcp=False)), ready)
+                                                inproc_client, ready)
         else:
             target, args = http_auto_approver, (base, approver, customer, stop, delay, decision, None, ready)
-        threading.Thread(target=target, args=args, daemon=True).start()
+        approver_thread = threading.Thread(target=target, args=args, daemon=True)
+        approver_thread.start()
         if gw is None:
             ready.wait(10)
 
@@ -582,6 +586,13 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
             result["allergen_probe"] = allergen_probe(transport, result)
     finally:
         stop.set()
+        if approver_thread is not None:
+            approver_thread.join(timeout=5.0)
+        if inproc_client is not None:
+            try:
+                inproc_client.close()
+            except Exception:
+                pass
         transport.close()
     result["transport"] = kind
     result["scenario"] = scenario
@@ -972,10 +983,13 @@ def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, d
         faults = SCENARIOS.get(getattr(a, "scenario", ""), {}).get("faults")
     if faults:
         body["faults"] = faults
+    approver_thread: threading.Thread | None = None
     if approver:
         ready = threading.Event()
-        threading.Thread(target=http_auto_approver, args=(base, approver, customer, stop,
-                                                          a.approve_delay, decision, None, ready), daemon=True).start()
+        approver_thread = threading.Thread(target=http_auto_approver,
+                                           args=(base, approver, customer, stop, a.approve_delay, decision, None, ready),
+                                           daemon=True)
+        approver_thread.start()
         ready.wait(5)
     status = "error"
     try:
@@ -1034,6 +1048,8 @@ def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, d
                     break
     finally:
         stop.set()
+        if approver_thread is not None:
+            approver_thread.join(timeout=5.0)
     return 0 if status != "error" else 1
 
 
