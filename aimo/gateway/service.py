@@ -575,8 +575,6 @@ def _upstream(e: UpstreamError) -> ServiceError:
 def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
                quantities: dict[str, float] | None = None) -> tuple[list[Offer], dict[str, Any]]:
     if customer_id is not None:
-        from aimo.gateway.auth import require_known_customer
-
         customer_id = require_known_customer(customer_id)
     if not isinstance(product_ids, (list, tuple)):
         raise ServiceError(422, "no_products", "product_ids must contain at least one id")
@@ -603,8 +601,6 @@ def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str 
 
 
 def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, **_: Any) -> Plan:
-    from aimo.gateway.auth import require_known_customer
-
     ident = resolve_identity(identity, None, customer_id)
     need = _as_need(need, ident)
     if need is None:
@@ -661,6 +657,28 @@ def _check_need_input(need: Need | None) -> None:
         raise ServiceError(422, "empty_need", "product_query is empty: say what product you need")
 
 
+_REQUEST_INJECTION_WARN_RE = re.compile(
+    r"Warning: the request contains instructions aimed at AI agents(?:\s*\([^)]*\))?\.\s*"
+    r"They were ignored,\s*and the customer's policy will ask a human to confirm\.\s*"
+)
+
+
+def _request_injection_hits(need: Need, planner_mod: Any) -> list[str]:
+    req_fn = getattr(planner_mod, "_request_injection", None)
+    if callable(req_fn):
+        try:
+            return list(req_fn(need) or [])
+        except Exception:
+            pass
+    try:
+        from aimo.trust.screening import screen_text
+
+        s = screen_text(" \n".join(t for t in (need.raw_text, need.product_query) if t), use_gemini=False)
+        return list(dict.fromkeys(s.get("strong_reasons") or []))[:3] if s.get("suspicious") else []
+    except Exception:
+        return []
+
+
 def _plan_deterministic(need: Need) -> Plan:
     """Planner without any Gemini call: FTS candidates (+ usual products, same category, supplier substitution
     rules) -> live offers -> catalog.substitution.rank_substitutes -> catalog.plan.fill. Same tiers and split
@@ -673,6 +691,7 @@ def _plan_deterministic(need: Need) -> Plan:
         normalize_allergens,
         policy_allergen_block,
     )
+    from aimo.catalog.screening_bridge import screen_product_row
     from aimo.catalog.substitution import missing_query_concepts, rank_substitutes, validate_need
     from aimo.catalog.textsearch import fts_search, get_rows
     from aimo.gateway import verify as V
@@ -683,6 +702,7 @@ def _plan_deterministic(need: Need) -> Plan:
     )
 
     validate_need(need)
+    req_hits = _request_injection_hits(need, P)
     pb = policy_allergen_block(need.customer_id)
     caller_excl = normalize_allergens(need.excluded_allergens)
     if V._policy is V._default_policy:
@@ -830,7 +850,46 @@ def _plan_deterministic(need: Need) -> Plan:
             for ln in plan.lines
         ]
         plan = plan.model_copy(update={"lines": flagged})
+
+    def _screen_for(pid: str) -> dict[str, Any]:
+        sc = screen_product_row(pid, rows.get(pid) or {})
+        out: dict[str, Any] = {
+            "suspicious": sc["suspicious"],
+            "reasons": sc["reasons"],
+            "layers": sc["layers"],
+        }
+        if sc.get("injected"):
+            out["injected"] = True
+        return out
+
+    if any(c.injection_screen is None for c in plan.candidates):
+        plan = plan.model_copy(
+            update={
+                "candidates": [
+                    c if c.injection_screen is not None else c.model_copy(update={"injection_screen": _screen_for(c.product.id)})
+                    for c in plan.candidates
+                ]
+            }
+        )
+    cand_screens = {c.product.id: c.injection_screen for c in plan.candidates if isinstance(c.injection_screen, dict)}
+    if any(ln.injection_screen is None for ln in plan.lines):
+        plan = plan.model_copy(
+            update={
+                "lines": [
+                    ln
+                    if ln.injection_screen is not None
+                    else ln.model_copy(update={"injection_screen": cand_screens.get(ln.product_id) or _screen_for(ln.product_id)})
+                    for ln in plan.lines
+                ]
+            }
+        )
+    plan_expl = _REQUEST_INJECTION_WARN_RE.sub("", plan.explanation or "").strip()
     notes: list[str] = []
+    if req_hits:
+        notes.append(
+            f"Warning: the request contains instructions aimed at AI agents ({', '.join(req_hits)}). "
+            f"They were ignored, and the customer's policy will ask a human to confirm."
+        )
     if policy_added:
         notes.append(f"Customer policy ({pb.policy_id or need.customer_id}) excludes {', '.join(policy_added)}"
                      + (f" ({pb.reason})" if pb.reason else "") + ".")
@@ -840,7 +899,7 @@ def _plan_deterministic(need: Need) -> Plan:
                         if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
                         " enforced as exclusions, not searched for)") + ".")
     note = "Planned with the deterministic planner (Gemini semantic recall and recipe check skipped: slow or unavailable)."
-    explanation = " ".join(x for x in [*notes, plan.explanation, note] if x).strip()
+    explanation = " ".join(x for x in [*notes, plan_expl, note] if x).strip()
     return plan.model_copy(update={"need": out_need, "explanation": explanation})
 
 
@@ -1150,8 +1209,6 @@ def submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
 
 
 def _submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
-    from aimo.gateway.auth import require_known_customer
-
     q_opt = store.get_quote(quote_id)
     if q_opt is not None and q_opt.customer_id != ident.customer_id:
         audit(ident.actor, "order.refused", quote_id,
@@ -1530,6 +1587,22 @@ def list_customers() -> list[dict[str, Any]]:
         except _MISSING:
             continue
     return FALLBACK_CUSTOMERS
+
+
+def known_customer_ids() -> set[str]:
+    from aimo.gateway import auth as _auth
+
+    return _auth.known_customer_ids()
+
+
+def require_known_customer(
+    customer_id: str | None,
+    *,
+    missing_message: str = "A known customer is required (send X-Customer-Id).",
+) -> str:
+    from aimo.gateway import auth as _auth
+
+    return _auth.require_known_customer(customer_id, missing_message=missing_message)
 
 
 def _policies() -> list[dict[str, Any]]:

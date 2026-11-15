@@ -1318,8 +1318,7 @@ def test_conformance_passes_against_both_valio_and_toywholesaler_gateways(
     assert rep_valio["name"] == "Valio Aimo Trusted Trade Gateway"
     assert rep_valio["summary"]["fail"] == 0
     assert rep_valio["summary"]["skip"] == 0
-    assert rep_valio["summary"]["pass"] == 44
-    assert rep_valio["summary"]["total"] == 44
+    assert rep_valio["summary"]["pass"] == rep_valio["summary"]["total"] >= 44
 
     rep_toy = run_conformance(live_toy_gateway, query="rye bread", quiet=True)
     toy_non_pass = [row for row in rep_toy["results"] if row["status"] != "PASS"]
@@ -1327,8 +1326,7 @@ def test_conformance_passes_against_both_valio_and_toywholesaler_gateways(
     assert rep_toy["name"] == "Nordic Bakery Supply Trusted Trade Gateway"
     assert rep_toy["summary"]["fail"] == 0
     assert rep_toy["summary"]["skip"] == 0
-    assert rep_toy["summary"]["pass"] == 44
-    assert rep_toy["summary"]["total"] == 44
+    assert rep_toy["summary"]["pass"] == rep_toy["summary"]["total"] >= 44
 
 
 def test_mcp_contextvar_fault_preservation_inproc(inproc_valio_env, monkeypatch):

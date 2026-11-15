@@ -59,14 +59,32 @@ def _utf8(value: str) -> bytes:
     return value.encode("utf-8", errors="surrogatepass")
 
 
-def _read_or_create(path: Path, make) -> str:
-    if path.exists():
-        return path.read_text(encoding="utf-8", errors="replace").strip()
+def _atomic_write_0600(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    val = make()
-    path.write_text(val, encoding="utf-8")
-    os.chmod(path, 0o600)
-    return val
+    tmp = path.parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _read_or_create(path: Path, make) -> str:
+    with _lock:
+        if path.exists():
+            existing = path.read_text(encoding="utf-8", errors="replace").strip()
+            if existing:
+                return existing
+        val = make()
+        _atomic_write_0600(path, val)
+        return val
 
 
 def _directory_approver_ids() -> list[str]:
@@ -170,14 +188,10 @@ def _ensure_pins_file() -> dict[str, str]:
                 existing_vals.add(cand)
                 changed = True
         if changed:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            os.chmod(path, 0o600)
+            _atomic_write_0600(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
         primary_val = data.get(primary_id)
         if primary_val and legacy_pin != primary_val:
-            pin_file.parent.mkdir(parents=True, exist_ok=True)
-            pin_file.write_text(primary_val, encoding="utf-8")
-            os.chmod(pin_file, 0o600)
+            _atomic_write_0600(pin_file, primary_val)
         return data
 
 
@@ -251,10 +265,13 @@ def _lock_key_id(approver_id: str | None) -> str:
 def locked_for(source: str = "?", approver_id: str | None = None) -> float:
     now = time.time()
     id_key = _lock_key_id(approver_id)
+    with _lock:
+        pair_until = _locked_until.get((id_key, source), 0.0)
+        ident_until = _identity_locked_until.get(id_key, 0.0)
     return max(
         0.0,
-        _locked_until.get((id_key, source), 0.0) - now,
-        _identity_locked_until.get(id_key, 0.0) - now,
+        pair_until - now,
+        ident_until - now,
     )
 
 
