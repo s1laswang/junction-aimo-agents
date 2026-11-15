@@ -1112,31 +1112,74 @@ def test_safe_school_partial_stock_at_placement_exports_peppol_ca_with_only_milk
         headers={"X-Approver-Session": sess_token},
         json={"decision": "approve", "quote_hash": q["quote_hash"]},
     )
-    assert r_approve.status_code == 200, r_approve.text
-    placed = r_approve.json()
+    assert r_approve.status_code == 409, r_approve.text
+    rq = r_approve.json()
+    assert rq["error"] == "requote_needed"
+    assert rq["detail"]["reason"] == "partial_stock"
+    new_q = rq["detail"]["new_quote"]
+    new_ord = rq["detail"]["new_order"]
+    _assert_quote_crypto(new_q, jwks, "school-tampere")
+    for ln in new_q["lines"]:
+        _assert_structured_free(ln["product_id"], ("milk", "nuts"))
+
+    r_approve2 = api.post(
+        f"/v1/approvals/{new_ord['order_id']}/decision",
+        headers={"X-Approver-Session": sess_token},
+        json={"decision": "approve", "quote_hash": new_q["quote_hash"]},
+    )
+    assert r_approve2.status_code == 200, r_approve2.text
+    placed_ap = r_approve2.json()
+    assert placed_ap["status"] == "placed"
+    assert placed_ap["response_code"] == "AP"
+
+    ap_xml_resp = api.get(f"/v1/orders/{new_ord['order_id']}/peppol-order-response.xml")
+    assert ap_xml_resp.status_code == 200
+    assert check_t116_rules(ap_xml_resp.text) == []
+    for li in _parse_xml(ap_xml_resp.text).findall("cac:OrderLine/cac:LineItem", NS):
+        pid = li.findtext("cac:Item/cac:SellersItemIdentification/cbc:ID", None, NS)
+        assert pid is not None
+        _assert_structured_free(pid, ("milk", "nuts"))
+
+    backend.stock["470889"] = 60.0
+    r_pref_q = api.post(
+        "/v1/quotes",
+        headers=H_SCHOOL,
+        json={
+            "delivery_date": DELIVERY.isoformat(),
+            "lines": [{"product_id": "470889", "qty_sales_units": 60.0}],
+        },
+    )
+    assert r_pref_q.status_code == 200, r_pref_q.text
+    pref_q = r_pref_q.json()
+    backend.stock["470889"] = 45.0
+    r_ca_order = api.post(
+        "/v1/orders",
+        headers=H_SCHOOL,
+        json={"quote_id": pref_q["quote_id"], "quote_hash": pref_q["quote_hash"]},
+    )
+    assert r_ca_order.status_code == 200, r_ca_order.text
+    placed = r_ca_order.json()
     assert placed["status"] == "placed"
     assert placed["response_code"] == "CA"
 
-    ca_xml_resp = api.get(f"/v1/orders/{pending['order_id']}/peppol-order-response.xml")
+    ca_xml_resp = api.get(f"/v1/orders/{placed['order_id']}/peppol-order-response.xml")
     assert ca_xml_resp.status_code == 200
     assert check_t116_rules(ca_xml_resp.text) == []
     ca_root = _parse_xml(ca_xml_resp.text)
     assert ca_root.findtext("cbc:OrderResponseCode", None, NS) == "CA"
     xml_lines = ca_root.findall("cac:OrderLine/cac:LineItem", NS)
-    assert len(xml_lines) == 2
-    assert [li.findtext("cbc:LineStatusCode", None, NS) for li in xml_lines] == ["5", "3"]
-    changed_qty = xml_lines[1].find("cbc:Quantity", NS)
-    assert changed_qty is not None and changed_qty.text == "25" and changed_qty.get("unitCode") == "H87"
+    assert len(xml_lines) == 1
+    assert [li.findtext("cbc:LineStatusCode", None, NS) for li in xml_lines] == ["3"]
+    changed_qty = xml_lines[0].find("cbc:Quantity", NS)
+    assert changed_qty is not None and changed_qty.text == "45" and changed_qty.get("unitCode") == "H87"
     xml_pids = [li.findtext("cac:Item/cac:SellersItemIdentification/cbc:ID", None, NS) for li in xml_lines]
-    assert xml_pids == ["470889", "470863"]
-    for pid in xml_pids:
-        assert pid is not None
-        _assert_structured_free(pid, ("milk", "nuts"))
+    assert xml_pids == ["470889"]
+    _assert_structured_free("470889", ("milk", "nuts"))
 
     direct_xml = order_response_xml(
         Order.model_validate(placed),
-        Quote.model_validate(q),
-        gtins={"470889": "07394376616228", "470863": "07394376616235"},
+        Quote.model_validate(pref_q),
+        gtins={"470889": "07394376616228"},
     )
     assert check_t116_rules(direct_xml) == []
     gtin_ids = [
@@ -1146,7 +1189,7 @@ def test_safe_school_partial_stock_at_placement_exports_peppol_ca_with_only_milk
             NS,
         )
     ]
-    assert gtin_ids == ["07394376616228", "07394376616235"]
+    assert gtin_ids == ["07394376616228"]
 
 
 def test_safe_hospital_substitute_plan_dietitian_session_approval_peppol_ap(env) -> None:
