@@ -271,6 +271,8 @@ def test_gemini_and_deck_screen_opt_in_fallback_models_and_walkthrough_video() -
         "94.4%",
         "69.5%",
         "`docs/pitch/demo-walkthrough.mp4`",
+        "docs/pitch/build_walkthrough.sh",
+        "111 s",
         "GEMINI_FALLBACK_MODELS",
     ):
         assert tok in deck, f"docs/pitch/deck.md missing {tok!r}"

@@ -2,7 +2,7 @@
 
 For Chintufp to build the visual deck and record the video. Every number has a source in brackets ([docs/NUMBERS.md](../NUMBERS.md)). Hard questions and answers: [QA.md](QA.md). Keep slides sparse: one idea, one visual, at most 15 words of text. The live demo ([docs/DEMO.md](../DEMO.md)) replaces slide 3 when presenting live; the video uses the screen recording there.
 
-Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots and video: `docs/reports/frontend/s5-approval-signed-in.png` (live S5 UI with sign-in and 3 approval rules), `docs/reports/frontend/s5-requote-diff.png` (409 requote diff card), `docs/pitch/img/approval-ui.png`, narrated walkthrough video `docs/pitch/demo-walkthrough.mp4` (108 s, 1280x720 H.264+AAC), and headless Playwright backup capture [docs/demo-backup.mp4](../demo-backup.mp4).
+Visual style suggestion: white background, Valio-ish deep blue (#1F4E9C) for the gateway, green for "pass", amber for "needs approval", red for "reject" (the same colours as the UI). Screenshots and video: `docs/reports/frontend/s5-approval-signed-in.png` (live S5 UI with sign-in and 3 approval rules), `docs/reports/frontend/s5-requote-diff.png` (409 requote diff card), `docs/pitch/img/approval-ui.png`, narrated walkthrough video `docs/pitch/demo-walkthrough.mp4` (111 s, 1280x720 H.264+AAC), and headless Playwright backup capture [docs/demo-backup.mp4](../demo-backup.mp4).
 
 ---
 
@@ -68,4 +68,4 @@ Footnote facts already measured: 0 false positives on 34,159 catalog supplier te
 Slide 1 (0:15) → Slide 2 (0:20) → live demo instead of slide 3 (1:30, docs/DEMO.md 0:20–2:35 condensed) → Slide 5 (0:20) → Slide 6 (0:15) → Slide 7 (0:10, or skip if over time and cover Gemini during the demo) → Slide 8 (0:10).
 
 ## Video (2–3 minutes)
-Slides 1–2 as title cards (20 s), screen recording of the demo (90–110 s, follow docs/DEMO.md; narrated walkthrough video `docs/pitch/demo-walkthrough.mp4`, 108 s 1280x720 H.264+AAC via `scripts/build_walkthrough_video.py`, plus headless Playwright backup capture at [docs/demo-backup.mp4](../demo-backup.mp4), reproducible via `uv run python scripts/record_demo_video.py`), slides 4–7 (40 s), slide 8 (10 s). Captions for the approval reasons and "Chain verified".
+Slides 1–2 as title cards (20 s), screen recording of the demo (90–110 s, follow docs/DEMO.md; narrated walkthrough video `docs/pitch/demo-walkthrough.mp4`, 111 s 1280x720 H.264+AAC via `docs/pitch/build_walkthrough.sh`, plus headless Playwright backup capture at [docs/demo-backup.mp4](../demo-backup.mp4), reproducible via `uv run python scripts/record_demo_video.py`), slides 4–7 (40 s), slide 8 (10 s). Captions for the approval reasons and "Chain verified".
