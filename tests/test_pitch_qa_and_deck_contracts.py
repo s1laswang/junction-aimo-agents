@@ -128,3 +128,193 @@ def test_qa_and_deck_requote_demo_faults_per_approver_conformance_and_montage() 
     assert "never a silently partial order" in qa
     assert "approver_locked" in qa
     assert "approver_mismatch" in qa
+
+
+def test_run_exception_matrix_has_all_11_rows_and_commands() -> None:
+    run_doc = _read_doc("docs/RUN.md")
+    h2 = chr(0x23) * 2 + " Exceptions: what happens, and how to see it"
+    h3 = chr(0x23) * 3 + " Approving as a human"
+    assert h2 in run_doc
+    assert h3 in run_doc
+
+    matrix_sec = run_doc.split(h2, 1)[1].split(h3, 1)[0]
+    table_rows: list[list[str]] = []
+    for line in matrix_sec.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if cells[0] == "Exception" or set(cells[0]) <= {"-"}:
+            continue
+        table_rows.append(cells)
+
+    expected_exceptions = [
+        "**Partial availability**",
+        "**Substitutions**",
+        "**Delivery constraints: cut-off**",
+        "**Delivery constraints: late delivery**",
+        "**Allergen safety**",
+        "**Price change**",
+        "**Stock changing during approval**",
+        "**Cut-off passing during approval**",
+        "**LLM quota exhausted**",
+        "**Prompt injection**",
+        "**Agent trying to move the clock or fake stock**",
+    ]
+    assert [r[0] for r in table_rows] == expected_exceptions
+    for row in table_rows:
+        assert len(row) == 4
+        assert all(cell for cell in row)
+        assert row[2].startswith("`uv run ") and row[2].endswith("`")
+
+    for required in (
+        "tests/test_overrides.py",
+        "POST /v1/agent/runs",
+        "4ccc1fb",
+        "GEMINI_FALLBACK_MODELS",
+        "AIMO_SCREEN_GEMINI=1",
+        "AIMO_DEMO_FAULTS=1",
+        "401",
+    ):
+        assert required in matrix_sec, f"RUN.md exception matrix missing {required!r}"
+
+
+def test_qa_has_23_numbered_questions_including_q21_q22_q23() -> None:
+    qa = _read_doc("docs/pitch/QA.md")
+    h1 = chr(0x23) + " Judge Q&A: 23 hard questions\n"
+    assert qa.startswith(h1)
+
+    matches = list(re.finditer(r"^\*\*(\d+)\.\s+(.+?)\*\*$", qa, flags=re.MULTILINE))
+    assert [int(m.group(1)) for m in matches] == list(range(1, 24))
+
+    sections: dict[int, str] = {}
+    for idx, match in enumerate(matches):
+        qnum = int(match.group(1))
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(qa)
+        sections[qnum] = qa[start:end]
+
+    q12 = sections[12]
+    for tok in (
+        "0 of 34,159",
+        "44.4%",
+        "36-payload",
+        "AIMO_SCREEN_GEMINI=1",
+        "94.4%",
+        "42 of 60",
+        "80 of 80",
+    ):
+        assert tok in q12, f"QA Q12 missing {tok!r}"
+
+    q21 = sections[21]
+    for tok in (
+        "68.2%",
+        "69.5%",
+        "stop when unsure",
+        "0 policy and 0 allergen violations",
+        "99.7%",
+        "145",
+        "price jump",
+        "aimo/trust/learned.py",
+    ):
+        assert tok in q21, f"QA Q21 missing {tok!r}"
+
+    q22 = sections[22]
+    for tok in (
+        "X-Aimo-Now",
+        "X-Aimo-Faults",
+        "AIMO_DEMO_FAULTS=1",
+        "POST /v1/agent/runs",
+        "4ccc1fb",
+        "X-Approver-Session",
+        "X-Approver-Pin",
+        "401",
+        "tests/test_overrides.py",
+    ):
+        assert tok in q22, f"QA Q22 missing {tok!r}"
+
+    q23 = sections[23]
+    for tok in (
+        "GEMINI_FALLBACK_MODELS",
+        "gemini-3.5-flash",
+        "gemini-4-hydrogen",
+        "30 minutes",
+        "meta.fallback_from",
+        "29 s",
+        "05:00",
+    ):
+        assert tok in q23, f"QA Q23 missing {tok!r}"
+
+
+def test_gemini_and_deck_screen_opt_in_fallback_models_and_walkthrough_video() -> None:
+    gemini = _read_doc("docs/GEMINI.md")
+    deck = _read_doc("docs/pitch/deck.md")
+
+    for tok in (
+        "AIMO_SCREEN_GEMINI=1",
+        "opt-in, off by default",
+        "44.4%",
+        "94.4%",
+        "42 of 60",
+        "- **Fallback models in the same API.**",
+        "GEMINI_FALLBACK_MODELS",
+        "gemini-3.5-flash",
+        "gemini-4-hydrogen",
+        "meta.fallback_from",
+        "29 s",
+    ):
+        assert tok in gemini, f"docs/GEMINI.md missing {tok!r}"
+
+    for tok in (
+        "AIMO_SCREEN_GEMINI=1",
+        "44.4%",
+        "94.4%",
+        "69.5%",
+        "`docs/pitch/demo-walkthrough.mp4`",
+        "docs/pitch/build_walkthrough.sh",
+        "111 s",
+        "GEMINI_FALLBACK_MODELS",
+    ):
+        assert tok in deck, f"docs/pitch/deck.md missing {tok!r}"
+
+    assert "](docs/pitch/demo-walkthrough.mp4)" not in deck
+    assert "](demo-walkthrough.mp4)" not in deck
+
+
+def test_sign_in_before_hosted_agent_runs_across_run_connect_and_qa() -> None:
+    run_doc = _read_doc("docs/RUN.md")
+    connect = _read_doc("docs/CONNECT.md")
+    qa = _read_doc("docs/pitch/QA.md")
+
+    h3 = chr(0x23) * 3 + " Approving as a human"
+    h2_repo = chr(0x23) * 2 + " Repo map"
+    human_sec = run_doc.split(h3, 1)[1].split(h2_repo, 1)[0]
+    for tok in (
+        "Run agent",
+        "sign-in panel",
+        "POST /v1/agent/runs",
+        "X-Approver-Session",
+        "X-Approver-Pin",
+        "401",
+        "inproc",
+        "fake",
+        "AIMO_DEMO_FAULTS=1",
+    ):
+        assert tok in human_sec, f"docs/RUN.md Approving as a human missing {tok!r}"
+
+    for tok in (
+        "/v1/agent/runs",
+        "X-Approver-Session",
+        "X-Approver-Pin",
+        "401",
+        "/mcp",
+        "/v1",
+        "X-Customer-Id",
+        "X-Agent-Id",
+    ):
+        assert tok in connect, f"docs/CONNECT.md missing {tok!r}"
+
+    json_blocks = re.findall(r"```json\s*\n(.*?)```", connect, flags=re.DOTALL)
+    assert len(json_blocks) == 3
+    assert "Run agent" in qa and "sign-in panel" in qa
+

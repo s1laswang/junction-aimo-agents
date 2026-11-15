@@ -6,6 +6,9 @@ sanitized ledgers in this directory. Offline, no keys, no network:
 Uses the same cost formula as `uv run aimo demo --montage` (aimo/buyer/costs.py: playbook prices, cached input
 at 10% of the input price, thinking billed as output). 5 of 6 montage scenarios place an order (drift is held for
 human confirmation by design), so cost per order = total cost / 5.
+
+Rows: before-trim (round 2), after-trim (Sat 14 Nov 18:21) and sun (Sun 15 Nov 02:54 re-record on current main,
+human-only approvals, scratch state dir; see ../demo-montage.md).
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from aimo.buyer.costs import row_cost, summarize  # noqa: E402
+from aimo.buyer.costs import row_cost, summarize
 
 HERE = Path(__file__).resolve().parent
 ORDERS_PLACED = 5
@@ -29,7 +32,7 @@ def main() -> None:
     print("| Run | Gemini calls | Input tokens | Input per run | Cached share | Hero input | Total cost | "
           "Cost per order | Escalated steps |")
     print("|---|---|---|---|---|---|---|---|---|")
-    for label in ("before-trim", "after-trim"):
+    for label in ("before-trim", "after-trim", "sun"):
         rows = load(label)
         s = summarize(rows)
         hero = sum(r["in"] for r in rows if r["scenario"] == "happy")
@@ -37,16 +40,17 @@ def main() -> None:
               f"{hero:,} | ${s['cost_usd']:.4f} | ${s['cost_usd'] / ORDERS_PLACED:.4f} | "
               f"{s['escalated_runs']}/{s['runs']} runs, {s['escalated_steps']}/{s['agent_steps']} steps "
               f"({s['escalated_steps'] / s['agent_steps']:.0%}) |")
-    print()
-    print("After trim, per scenario:")
-    per: dict[str, list[dict]] = defaultdict(list)
-    for r in load("after-trim"):
-        per[r["scenario"]].append(r)
-    for name, rows in per.items():
-        cost = sum(row_cost(r) or 0 for r in rows)
-        print(f"  {name:16s} calls={len(rows):2d} in={sum(r['in'] for r in rows):6,d} "
-              f"cached={sum(r['cached'] for r in rows):6,d} out={sum(r['out'] for r in rows):5,d} "
-              f"thinking={sum(r['thinking'] for r in rows):4d} cost=${cost:.4f}")
+    for label in ("after-trim", "sun"):
+        print()
+        print(f"{label}, per scenario:")
+        per: dict[str, list[dict]] = defaultdict(list)
+        for r in load(label):
+            per[r["scenario"]].append(r)
+        for name, rows in per.items():
+            cost = sum(row_cost(r) or 0 for r in rows)
+            print(f"  {name:16s} calls={len(rows):2d} in={sum(r['in'] for r in rows):6,d} "
+                  f"cached={sum(r['cached'] for r in rows):6,d} out={sum(r['out'] for r in rows):5,d} "
+                  f"thinking={sum(r['thinking'] for r in rows):4d} cost=${cost:.4f}")
 
 
 if __name__ == "__main__":
