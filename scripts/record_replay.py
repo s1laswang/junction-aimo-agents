@@ -143,9 +143,9 @@ def collect(verbose: bool = False) -> tuple[list[dict], str]:
     port = free_port()
     base = f"http://127.0.0.1:{port}"
     pin = os.environ.get("AIMO_APPROVER_PIN") or secrets.token_urlsafe(9)
-    env = {**os.environ, "AIMO_DATA_DIR": str(scratch), "AIMO_APPROVER_PIN": pin, "AIMO_REPLAY": "0",
-           "AIMO_REPLAY_FALLBACK": "0", "AIMO_LLM_MODE": "mock", "GEMINI_API_KEY": "", "GOOGLE_API_KEY": "",
-           "AIMO_RECIPE_CHECK": "0", "AIMO_URL": base}
+    env = {**os.environ, "AIMO_DATA_DIR": str(scratch), "AIMO_APPROVER_PIN": pin, "AIMO_DEMO_FAULTS": "1",
+           "AIMO_REPLAY": "0", "AIMO_REPLAY_FALLBACK": "0", "AIMO_LLM_MODE": "mock", "GEMINI_API_KEY": "",
+           "GOOGLE_API_KEY": "", "AIMO_RECIPE_CHECK": "0", "AIMO_URL": base}
     env.pop("AIMO_NOW", None)
     srv_log = open(scratch / "server.log", "w")
     srv = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--_serve", str(port), str(log_path)],
@@ -195,13 +195,15 @@ def agent_runs(base: str, pin: str) -> None:
     for cust, text, faults in AGENT_RUNS:
         t = time.time()
         try:
+            run_hdrs = {"X-Customer-Id": cust, "X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "") or pin}
             r = httpx.post(base + "/v1/agent/runs", json={"text": text, "customer_id": cust, "faults": faults,
                                                           "clarify": False},
-                           headers={"X-Customer-Id": cust}, timeout=60)
+                           headers=run_hdrs,
+                           timeout=60)
             rid = r.json().get("run_id")
             status = "?"
             for _ in range(240):
-                v = httpx.get(f"{base}/v1/agent/runs/{rid}", timeout=30).json()
+                v = httpx.get(f"{base}/v1/agent/runs/{rid}", headers=run_hdrs, timeout=30).json()
                 status = v.get("status")
                 if status in ("finished", "done", "error", "failed", "completed", "cancelled"):
                     break

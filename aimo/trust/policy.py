@@ -875,6 +875,14 @@ def r_injection(c: Ctx, r: dict) -> None:
         flagged = True
         c.hit(r["id"], "needs_approval", f"The buyer agent reported suspicious instructions in untrusted text "
               f"({', '.join(map(str, need_flags))[:200]}). A {role_text(role)} should confirm the order was not influenced.", role)
+    raw = " \n".join(t for t in ((c.quote.need.raw_text, c.quote.need.product_query) if c.quote.need else ()) if t)
+    if raw and not need_flags:
+        s = screen_text(raw, use_gemini=False)
+        if s["suspicious"]:
+            flagged = True
+            c.hit(f"{r['id']}:request", "needs_approval", f"The buyer request itself contains instructions aimed at AI "
+                  f"agents ({', '.join(dict.fromkeys(s['strong_reasons']))[:200]}). The agent must not follow them; a "
+                  f"{role_text(role)} should confirm the order was not influenced.", role)
     for ln in c.quote.lines:
         reasons = [f for f in ln.flags if "injection" in f]
         p = c.product(ln.product_id)

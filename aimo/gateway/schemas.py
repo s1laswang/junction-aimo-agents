@@ -2,16 +2,52 @@
 from __future__ import annotations
 
 from datetime import date
+from itertools import islice
+import json
 import math
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator
 
 from aimo.models import Need, Tier
 
 MAX_QTY = 1e6
-ProductId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^\S+$")]
-ShortId = Annotated[str, Field(max_length=128)]
+
+
+def _has_control_char(s: str) -> bool:
+    for ch in s:
+        code = ord(ch)
+        if code < 32 or 127 <= code <= 159 or 0xD800 <= code <= 0xDFFF:
+            return True
+    return False
+
+
+def _has_null_or_surrogate(s: str) -> bool:
+    for ch in s:
+        code = ord(ch)
+        if code == 0 or 0xD800 <= code <= 0xDFFF:
+            return True
+    return False
+
+
+def _reject_control_chars(v: str) -> str:
+    if _has_control_char(v):
+        raise ValueError("control characters are not allowed")
+    return v
+
+
+ProductId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^[^\s\x00-\x1f\x7f-\x9f]+$"),
+    AfterValidator(_reject_control_chars),
+]
+ShortId = Annotated[str, Field(max_length=128), AfterValidator(_reject_control_chars)]
+QuoteId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[^\s\x00-\x1f\x7f-\x9f]+$"),
+    AfterValidator(_reject_control_chars),
+]
+SafeHash = Annotated[str, Field(max_length=128), AfterValidator(_reject_control_chars)]
 
 
 class OffersRequest(BaseModel):
@@ -35,12 +71,21 @@ class QuoteLineIn(BaseModel):
                     "allowedLotSize is a fractional step; > 1,000,000 is refused (422)",
     )
     tier: Optional[Tier] = Field(None, description="preferred | best | better | good (from plan_need); drives substitution rules")
-    flags: list[Annotated[str, Field(max_length=100)]] = Field(
+    flags: list[Annotated[str, Field(max_length=100), AfterValidator(_reject_control_chars)]] = Field(
         default_factory=list,
         max_length=50,
         description="Planner flags carried into policy evaluation",
     )
     product_name: Optional[str] = Field(None, max_length=300)
+
+    @field_validator("qty_sales_units", mode="before")
+    @classmethod
+    def _reject_bool_qty(cls, v: Any) -> Any:
+        if isinstance(v, bool):
+            raise ValueError("qty_sales_units must be a number, not a boolean")
+        if isinstance(v, float) and not math.isfinite(v):
+            raise ValueError("qty_sales_units must be a finite number > 0")
+        return v
 
 
 class QuoteRequest(BaseModel):
@@ -55,13 +100,36 @@ class QuoteRequest(BaseModel):
     def _validate_need(cls, v: Optional[Need]) -> Optional[Need]:
         if v is None:
             return None
-        if not math.isfinite(v.quantity) or v.quantity > MAX_QTY:
-            raise ValueError(f"quantity must be finite and <= {int(MAX_QTY):,}")
-        if len(v.product_query or "") > 500:
-            raise ValueError("product_query must be at most 500 characters")
-        if len(v.raw_text or "") > 4000:
-            raise ValueError("raw_text must be at most 4,000 characters")
-        if not (v.product_query or "").strip() and not v.preferred_product_ids:
+        qty = getattr(v, "quantity", None)
+        if isinstance(qty, bool) or not isinstance(qty, (int, float)):
+            raise ValueError("quantity must be a finite number > 0")
+        try:
+            qf = float(qty)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("quantity must be a finite number > 0") from None
+        if not math.isfinite(qf) or qf <= 0 or qf > MAX_QTY:
+            raise ValueError(f"quantity must be > 0, finite, and <= {int(MAX_QTY):,}")
+        pq = getattr(v, "product_query", "")
+        if pq is not None and not isinstance(pq, str):
+            raise ValueError("product_query must be a string")
+        if len(pq or "") > 500 or _has_null_or_surrogate(pq or ""):
+            raise ValueError("product_query must be at most 500 valid characters")
+        rt = getattr(v, "raw_text", "")
+        if rt is not None and not isinstance(rt, str):
+            raise ValueError("raw_text must be a string")
+        if len(rt or "") > 4000 or _has_null_or_surrogate(rt or ""):
+            raise ValueError("raw_text must be at most 4,000 valid characters")
+        prefs = getattr(v, "preferred_product_ids", None)
+        if prefs is not None:
+            if not isinstance(prefs, (list, tuple)) or len(prefs) > 200:
+                raise ValueError("preferred_product_ids must be a list of at most 200 product IDs")
+            for pid in prefs:
+                if not isinstance(pid, str):
+                    raise ValueError("preferred_product_ids entries must be strings")
+                sp = pid.strip()
+                if not sp or len(sp) > 64 or any(c.isspace() for c in sp) or _has_control_char(sp):
+                    raise ValueError("preferred_product_ids contains an invalid product ID")
+        if not (pq or "").strip() and not prefs:
             raise ValueError("product_query or preferred_product_ids is required")
         return v
 
@@ -71,19 +139,24 @@ class QuoteRequest(BaseModel):
 
 
 class OrderRequest(BaseModel):
-    quote_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
-    quote_hash: str = Field(..., max_length=128, description="Must equal the quote's quote_hash: binds the order to the exact signed quote")
+    quote_id: QuoteId
+    quote_hash: SafeHash = Field(..., description="Must equal the quote's quote_hash: binds the order to the exact signed quote")
 
     model_config = {"json_schema_extra": {"examples": [{"quote_id": "Q-20261114-1a2b3c4d", "quote_hash": "<sha256 from the quote>"}]}}
 
 
 class DecisionRequest(BaseModel):
     decision: Literal["approve", "reject"]
-    approver: str = Field("", max_length=200, description="Human approver identity, e.g. anna@aurora. With X-Approver-Session it defaults to (and must match) the signed-in approver")
+    approver: Annotated[str, Field(max_length=200), AfterValidator(_reject_control_chars)] = Field(
+        "",
+        description="Human approver identity, e.g. anna@aurora. With X-Approver-Session it defaults to (and must match) the signed-in approver",
+    )
     note: Optional[str] = Field(None, max_length=2000)
-    quote_hash: str = Field(..., max_length=128, description="The quote_hash the approver reviewed; 409 if it does not match the order")
-    approver_role: Optional[str] = Field(None, max_length=100, description="Role the approver acts in (e.g. procurement_manager). "
-                                         "Defaults to the role in the customer's approver directory.")
+    quote_hash: SafeHash = Field(..., description="The quote_hash the approver reviewed; 409 if it does not match the order")
+    approver_role: Optional[Annotated[str, Field(max_length=100), AfterValidator(_reject_control_chars)]] = Field(
+        None,
+        description="Role the approver acts in (e.g. procurement_manager). Defaults to the role in the customer's approver directory.",
+    )
     remember: bool = Field(False, description="Learned approvals: remember this approved swap so the policy can "
                                               "auto-allow it next time (aimo.trust.learned)")
     remember_scope: Literal["product", "product_type"] = Field(
@@ -113,26 +186,103 @@ _HTTP_CODES = {
 }
 
 
+def _utf8_clean(s: str) -> str:
+    try:
+        s.encode("utf-8")
+        return s
+    except UnicodeEncodeError:
+        return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _safe_str(val: Any, max_len: int = 300) -> str:
+    try:
+        s = str(val)
+    except Exception:
+        s = type(val).__name__
+    return _utf8_clean(s[:max_len])
+
+
+def _json_safe(val: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return _safe_str(val, 200)
+    if val is None or isinstance(val, bool):
+        return val
+    if isinstance(val, int):
+        return val if -10**15 <= val <= 10**15 else _safe_str(val, 80)
+    if isinstance(val, float):
+        return val if math.isfinite(val) else _safe_str(val, 40)
+    if isinstance(val, str):
+        return _utf8_clean(val[:300])
+    if isinstance(val, dict):
+        out: dict[str, Any] = {}
+        for idx, (k, v) in enumerate(val.items()):
+            if idx >= 20:
+                break
+            out[_safe_str(k, 80)] = _json_safe(v, depth + 1)
+        return out
+    if isinstance(val, (list, tuple)):
+        return [_json_safe(x, depth + 1) for x in list(val)[:20]]
+    return _safe_str(val, 200)
+
+
 def _clean_errors(errors: list) -> list[dict]:
     out = []
     for e in errors[:50]:
-        loc = [x if isinstance(x, (int, str)) else str(x) for x in (e.get("loc") or ())]
-        out.append({"loc": loc, "msg": str(e.get("msg", ""))[:300], "type": str(e.get("type", ""))[:80]})
+        if isinstance(e, dict):
+            raw_loc = e.get("loc")
+            if isinstance(raw_loc, (list, tuple)):
+                loc = [
+                    x if (isinstance(x, int) and not isinstance(x, bool) and -10**9 <= x <= 10**9) else _safe_str(x, 120)
+                    for x in raw_loc[:20]
+                ]
+            elif raw_loc is None or raw_loc == "":
+                loc = []
+            else:
+                loc = [_safe_str(raw_loc, 120)]
+            msg = _safe_str(e.get("msg", ""), 300)
+            if not msg and isinstance(e.get("ctx"), dict) and "error" in e["ctx"]:
+                msg = _safe_str(e["ctx"]["error"], 300)
+            err_type = _safe_str(e.get("type", "validation_error"), 80) or "validation_error"
+            item: dict[str, Any] = {"loc": loc, "msg": msg, "type": err_type}
+            if "ctx" in e and e["ctx"] is not None:
+                item["ctx"] = _json_safe(e["ctx"])
+            out.append(item)
+        else:
+            out.append({"loc": [], "msg": _safe_str(e, 300), "type": type(e).__name__[:80]})
     return out
 
 
-def validation_message(errors: list[dict]) -> str:
+def validation_message(errors: list[dict], total: Optional[int] = None) -> str:
+    n = len(errors) if total is None else max(total, len(errors))
     parts = []
     for e in errors[:5]:
-        loc = [str(x) for x in e.get("loc", []) if x not in ("body", "query", "path", "header")]
-        parts.append(f"{'.'.join(loc) or 'request'}: {e.get('msg')}")
-    more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+        if isinstance(e, dict):
+            loc = [_safe_str(x, 80) for x in (e.get("loc") or []) if x not in ("body", "query", "path", "header")]
+            msg = _safe_str(e.get("msg", ""), 300)
+        else:
+            loc, msg = [], _safe_str(e, 300)
+        parts.append(f"{'.'.join(loc) or 'request'}: {msg}")
+    if not parts:
+        return "Invalid request."
+    more = f" (+{n - 5} more)" if n > 5 else ""
     return ("Invalid request. " + "; ".join(parts) + more)[:1000]
 
 
-def validation_error_body(errors: list) -> dict:
-    errs = _clean_errors(list(errors))
-    return {"error": "validation_error", "message": validation_message(errs), "detail": errs}
+def validation_error_body(errors: Any) -> dict:
+    if errors is None:
+        total, raw_head = 0, []
+    elif isinstance(errors, (list, tuple)):
+        total, raw_head = len(errors), list(errors[:50])
+    elif isinstance(errors, (str, bytes, dict)):
+        total, raw_head = 1, [errors]
+    else:
+        try:
+            sampled = list(islice(iter(errors), 1001))
+            total, raw_head = len(sampled), sampled[:50]
+        except TypeError:
+            total, raw_head = 1, [errors]
+    errs = _clean_errors(raw_head)
+    return {"error": "validation_error", "message": validation_message(errs, total=total), "detail": errs}
 
 
 def install_error_handlers(app) -> None:
@@ -142,27 +292,86 @@ def install_error_handlers(app) -> None:
     from fastapi.responses import JSONResponse
     from pydantic import ValidationError
     from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.requests import ClientDisconnect
 
     log = logging.getLogger("aimo.gateway")
 
     @app.exception_handler(RequestValidationError)
     async def _req_validation(_req, exc: RequestValidationError):
-        return JSONResponse(validation_error_body(exc.errors()), status_code=422)
+        try:
+            raw_errors = exc.errors()
+        except Exception:
+            raw_errors = [_safe_str(exc, 300)]
+        return JSONResponse(validation_error_body(raw_errors), status_code=422)
 
     @app.exception_handler(ValidationError)
     async def _model_validation(_req, exc: ValidationError):
-        return JSONResponse(validation_error_body(exc.errors()), status_code=422)
+        try:
+            raw_errors = exc.errors()
+        except Exception:
+            raw_errors = [_safe_str(exc, 300)]
+        return JSONResponse(validation_error_body(raw_errors), status_code=422)
+
+    @app.exception_handler(json.JSONDecodeError)
+    async def _json_decode(_req, exc: json.JSONDecodeError):
+        detail = _safe_str(exc, 300) or "Malformed JSON"
+        return JSONResponse(
+            {"error": "invalid_json", "message": f"Malformed JSON in request: {_safe_str(exc.msg, 200)}", "detail": detail},
+            status_code=400,
+        )
+
+    @app.exception_handler(UnicodeDecodeError)
+    async def _unicode_decode(_req, exc: UnicodeDecodeError):
+        detail = _safe_str(exc, 300) or "Invalid UTF-8"
+        return JSONResponse(
+            {"error": "invalid_encoding", "message": "Request could not be decoded as valid UTF-8.", "detail": detail},
+            status_code=400,
+        )
+
+    @app.exception_handler(ValueError)
+    async def _val_error(_req, exc: ValueError):
+        msg = _safe_str(exc, 300).strip() or "Invalid request value"
+        return JSONResponse({"error": "invalid_request", "message": msg, "detail": msg}, status_code=422)
+
+    @app.exception_handler(ClientDisconnect)
+    async def _client_disconnect(_req, _exc: ClientDisconnect):
+        return JSONResponse(
+            {"error": "bad_request", "message": "Client disconnected before request body was read.", "detail": "client_disconnect"},
+            status_code=400,
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_req, exc: StarletteHTTPException):
+        sc = exc.status_code if isinstance(exc.status_code, int) and 400 <= exc.status_code <= 599 else 400
         d = exc.detail
-        if isinstance(d, dict) and d.get("error") and d.get("message"):
-            body = d
+        if (
+            isinstance(d, dict)
+            and isinstance(d.get("error"), str)
+            and d["error"].strip()
+            and isinstance(d.get("message"), str)
+            and d["message"].strip()
+        ):
+            body = _json_safe(d)
         else:
-            code = _HTTP_CODES.get(exc.status_code, f"http_{exc.status_code}")
-            msg = str(d) if d else code.replace("_", " ")
-            body = {"error": code, "message": msg, "detail": msg}
-        return JSONResponse(body, status_code=exc.status_code, headers=getattr(exc, "headers", None))
+            code = _HTTP_CODES.get(sc, f"http_{sc}")
+            msg = _safe_str(d, 500).strip() if d else ""
+            if not msg:
+                msg = code.replace("_", " ")
+            body = {"error": code, "message": msg, "detail": _json_safe(d) if isinstance(d, (dict, list)) else msg}
+        raw_headers = getattr(exc, "headers", None)
+        safe_headers: dict[str, str] | None = None
+        if isinstance(raw_headers, dict):
+            safe_headers = {}
+            for hk, hv in raw_headers.items():
+                ks = _safe_str(hk, 100)
+                vs = _safe_str(hv, 300)
+                try:
+                    ks.encode("latin-1")
+                    vs.encode("latin-1")
+                    safe_headers[ks] = vs
+                except UnicodeEncodeError:
+                    continue
+        return JSONResponse(body, status_code=sc, headers=safe_headers)
 
     @app.exception_handler(Exception)
     async def _unhandled(req, exc: Exception):

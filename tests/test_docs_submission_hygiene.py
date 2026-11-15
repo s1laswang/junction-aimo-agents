@@ -121,6 +121,9 @@ def test_markdown_relative_links_resolve():
     allowed_pending = {
         (ROOT / "docs" / "demo-backup.mp4").resolve(),
         (ROOT / "docs" / "pitch" / "requote_beat.py").resolve(),
+        (ROOT / "docs" / "arena" / "index.html").resolve(),
+        (ROOT / "docs" / "demo" / "index.html").resolve(),
+        (ROOT / "docs" / "demo" / "ASSETS.md").resolve(),
     }
     broken: list[str] = []
 

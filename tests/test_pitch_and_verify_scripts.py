@@ -194,8 +194,8 @@ def test_ledger_stats_script_on_sanitized_evidence(tmp_path: Path) -> None:
             timeout=20,
         )
         assert md_res.returncode == 0, md_res.stdout + md_res.stderr
-        assert "rows=105 unparseable=0" in md_res.stdout
-        assert "105 calls (105 ok, 0 errors)" in md_res.stdout
+        assert "rows=158 unparseable=0" in md_res.stdout
+        assert "158 calls (158 ok, 0 errors)" in md_res.stdout
         assert "gemini-3.8-flash" in md_res.stdout
         assert "gemini-4-hydrogen" in md_res.stdout
         for feature in ("buyer.agent_step", "buyer.parse_need", "buyer.explain", "buyer.summary"):
@@ -211,13 +211,13 @@ def test_ledger_stats_script_on_sanitized_evidence(tmp_path: Path) -> None:
         )
         assert json_res.returncode == 0, json_res.stdout + json_res.stderr
         payload = json.loads(json_res.stdout)
-        assert payload["rows"] == 105
+        assert payload["rows"] == 158
         assert payload["unparseable"] == 0
-        assert payload["total"]["calls"] == 105
-        assert payload["total"]["ok"] == 105
+        assert payload["total"]["calls"] == 158
+        assert payload["total"]["ok"] == 158
         assert payload["total"]["errors"] == 0
         by_model = {entry["key"]: entry["calls"] for entry in payload["by_model"]}
-        assert by_model == {"gemini-3.8-flash": 93, "gemini-4-hydrogen": 12}
+        assert by_model == {"gemini-3.8-flash": 141, "gemini-4-hydrogen": 17}
 
 
 def test_qa_milk_flow_script_against_replay_gateway(local_replay_gateway: str, tmp_path: Path) -> None:
