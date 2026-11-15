@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import math
 import os
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -54,12 +55,12 @@ def _use_fixture_catalog() -> str:
             raw = gz.read_bytes()
             stamp = dst / (name + ".md5")
             digest = hashlib.md5(raw).hexdigest()
-            if not (dst / name).exists() or not stamp.exists() or stamp.read_text() != digest:
+            if not (dst / name).exists() or not stamp.exists() or stamp.read_text(encoding="utf-8", errors="replace") != digest:
                 tmp = dst / (name + ".tmp")
                 tmp.write_bytes(gzip.decompress(raw))
                 tmp.replace(dst / name)
-                stamp.write_text(digest)
-    except OSError:
+                stamp.write_text(digest, encoding="utf-8")
+    except (OSError, EOFError, ValueError):
         return "missing"
     config.PRODUCT_JSON = dst / config.PRODUCT_JSON.name
     config.RELIABILITY_CSV = dst / config.RELIABILITY_CSV.name
@@ -89,46 +90,190 @@ def load_catalog() -> None:
     _lc()
 
 
+def _has_bad_codepoints(s: str) -> bool:
+    if "\x00" in s:
+        return True
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
+def _sanitize_search_query(query: str) -> str:
+    return "".join(
+        ch for ch in query[:4096]
+        if ch != "\x00" and not (0xD800 <= ord(ch) <= 0xDFFF)
+    )
+
+
+def _opt_str(val: Any) -> Optional[str]:
+    if not isinstance(val, str):
+        return None
+    if not _has_bad_codepoints(val):
+        return val
+    return "".join(
+        ch for ch in val
+        if ch != "\x00" and not (0xD800 <= ord(ch) <= 0xDFFF)
+    )
+
+
+def _pos_finite_float(val: Any) -> Optional[float]:
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    try:
+        fv = float(val)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return fv if (math.isfinite(fv) and fv > 0.0) else None
+
+
+def _nonneg_finite_float(val: Any) -> Optional[float]:
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    try:
+        fv = float(val)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(fv) or fv < 0.0:
+        return None
+    return 0.0 if fv == 0.0 else fv
+
+
 def search(query: str, *, claims: list[str] | None = None, category: str | None = None,
            content_unit: str | None = None, limit: int = 20) -> list[ProductSummary]:
+    if not isinstance(query, str):
+        raise ValueError("query must be a string")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    if claims is not None:
+        if (isinstance(claims, (str, bytes, bytearray, dict))
+                or not isinstance(claims, (list, tuple, set, frozenset))
+                or any(not isinstance(c, str) for c in claims)):
+            raise ValueError("claims must be a sequence of strings")
+    if category is not None and not isinstance(category, str):
+        raise ValueError("category must be a string")
+    if content_unit is not None and not isinstance(content_unit, str):
+        raise ValueError("content_unit must be a string")
+    clean_claims = list(claims) if claims else []
+    if any(_has_bad_codepoints(c) for c in clean_claims):
+        return []
+    if category is not None and _has_bad_codepoints(category):
+        return []
+    if content_unit is not None and _has_bad_codepoints(content_unit):
+        return []
     from aimo.catalog.textsearch import search as _s
-    return _s(query, claims=claims or [], category=category, content_unit=content_unit, limit=limit)
+    return _s(_sanitize_search_query(query), claims=clean_claims, category=category,
+              content_unit=content_unit, limit=min(limit, 10_000))
 
 
 def get_product(product_id: str) -> Optional[Product]:
+    if isinstance(product_id, bool) or not isinstance(product_id, str):
+        return None
+    if len(product_id) > 128 or _has_bad_codepoints(product_id):
+        return None
+    pid = product_id.strip()
+    if not pid or len(pid) > 128:
+        return None
     from aimo.catalog.textsearch import get_rows
-    d = get_rows([str(product_id)]).get(str(product_id))
+    d = get_rows([pid]).get(pid)
     if d is None:
         return None
     return product_from_row(d)
 
 
 def product_from_row(d: dict[str, Any]) -> Product:
+    if not isinstance(d, dict):
+        raise ValueError("product row must be a dict")
+    raw_id = d.get("id")
+    if isinstance(raw_id, bool) or not isinstance(raw_id, str) or _has_bad_codepoints(raw_id):
+        raise ValueError("product row must have a valid string id")
+    pid = raw_id.strip()
+    if not pid or len(pid) > 128:
+        raise ValueError("product row must have a non-empty string id")
     from aimo.catalog.textsearch import summary_from_row
-    allergens = dict(d.get("allergens") or {})
-    source = dict(d.get("allergen_source") or {})
-    try:  # Gemini-inferred hints (cached only; never makes anything "free")
+    allergens: dict[str, Any] = {}
+    raw_allergens = d.get("allergens")
+    if isinstance(raw_allergens, dict):
+        for k, v in raw_allergens.items():
+            if isinstance(k, str) and k:
+                sv = getattr(v, "value", v)
+                if sv in ("contains", "may_contain", "free", "unknown"):
+                    allergens[k] = sv
+    source: dict[str, str] = {}
+    raw_source = d.get("allergen_source")
+    if isinstance(raw_source, dict):
+        for k, v in raw_source.items():
+            if isinstance(k, str) and k and isinstance(v, str):
+                source[k] = v
+    try:
         from aimo.catalog.gemini_allergens import cached_inference
-        inf = cached_inference(d["id"])
-        for g, st in (inf or {}).items():
-            if source.get(g) == "none":
-                source[g] = "inferred:gemini"
-                if st in ("contains", "may_contain"):
-                    allergens[g] = st          # conservative: an inferred 'contains' still blocks
-                # inferred 'free' stays 'unknown' until a human confirms
-    except Exception:  # noqa: BLE001
+        inf = cached_inference(pid)
+        if isinstance(inf, dict):
+            for g, st in inf.items():
+                if isinstance(g, str) and source.get(g) == "none":
+                    source[g] = "inferred:gemini"
+                    if st in ("contains", "may_contain"):
+                        allergens[g] = st
+    except Exception:
         pass
-    s = summary_from_row(d)
+    raw_claims = d.get("claims")
+    clean_claims = [c for c in raw_claims if isinstance(c, str)] if isinstance(raw_claims, (list, tuple)) else []
+    raw_labels = d.get("labels")
+    clean_labels = [lb for lb in raw_labels if isinstance(lb, str)] if isinstance(raw_labels, (list, tuple)) else []
+    rel = _nonneg_finite_float(d.get("delivery_reliability"))
+    if rel is not None and rel > 1.0:
+        rel = None
+    clean_d: dict[str, Any] = {
+        "id": pid,
+        "gtin": _opt_str(d.get("gtin")),
+        "name": (_opt_str(d.get("name")) or "").strip() or pid,
+        "name_fi": _opt_str(d.get("name_fi")),
+        "brand": _opt_str(d.get("brand")),
+        "vendor": _opt_str(d.get("vendor")),
+        "category": _opt_str(d.get("category")),
+        "sales_unit": _opt_str(d.get("sales_unit")) or "",
+        "content_amount": _pos_finite_float(d.get("content_amount")),
+        "content_unit": d.get("content_unit") if d.get("content_unit") in ("L", "KG", "PCS") else None,
+        "claims": clean_claims,
+        "labels": clean_labels,
+        "delivery_reliability": rel,
+        "co2_kg_per_kg": _nonneg_finite_float(d.get("co2_kg_per_kg")),
+    }
+    s = summary_from_row(clean_d)
+    nutrition: dict[str, float] = {}
+    raw_nutr = d.get("nutrition")
+    if isinstance(raw_nutr, dict):
+        for k, v in raw_nutr.items():
+            if not isinstance(k, str) or not k.strip():
+                continue
+            fv = _nonneg_finite_float(v)
+            if fv is not None:
+                nutrition[k] = fv
+    raw_temp = d.get("temperature_condition")
+    temp_cond = raw_temp if (isinstance(raw_temp, int) and not isinstance(raw_temp, bool)) else None
+    lot_size = _pos_finite_float(d.get("allowed_lot_size"))
     return Product(**s.model_dump(), allergens=allergens, allergen_source=source,
-                   ingredients_text=d.get("ingredients_text"), nutrition=d.get("nutrition") or {},
-                   temperature_condition=d.get("temperature_condition"), country_of_origin=d.get("country_of_origin"),
-                   allowed_lot_size=d.get("allowed_lot_size"), marketing_text=d.get("marketing_text"))
+                   ingredients_text=_opt_str(d.get("ingredients_text")), nutrition=nutrition,
+                   temperature_condition=temp_cond, country_of_origin=_opt_str(d.get("country_of_origin")),
+                   allowed_lot_size=lot_size, marketing_text=_opt_str(d.get("marketing_text")))
 
 
 def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: int = 12) -> list[Candidate]:
     """Ranks candidates for `need`. If `offers` is None, fetches live offers for the top ~30."""
     from aimo.catalog import plan as P
-    from aimo.catalog.substitution import rank_substitutes as _r
+    from aimo.catalog.substitution import rank_substitutes as _r, validate_need
+    validate_need(need)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    if offers is not None:
+        if not isinstance(offers, dict):
+            raise ValueError("offers must be a dict or None")
+        for k, v in offers.items():
+            if isinstance(k, bool) or not isinstance(k, str):
+                raise ValueError("offers keys must be product_id strings")
+            if v is not None and not isinstance(v, Offer):
+                raise ValueError("offers values must be Offer instances or None")
     if offers is None:
         return P.plan_need(need, limit=limit).candidates
     need, _, _ = P.with_customer_policy(need)
@@ -138,6 +283,12 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
     return _r(need, offers, limit=limit, rows=keep or rows, relevance=rel)
 
 
-def plan_need(need: Need, offers_fn: Optional[Callable[..., dict[str, Offer]]] = None) -> Plan:
+def plan_need(need: Need, offers_fn: Optional[Callable[..., dict[str, Offer]]] = None, limit: int = 12) -> Plan:
     from aimo.catalog.plan import plan_need as _p
-    return _p(need, offers_fn=offers_fn)
+    from aimo.catalog.substitution import validate_need
+    validate_need(need)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    if offers_fn is not None and not callable(offers_fn):
+        raise ValueError("offers_fn must be callable or None")
+    return _p(need, offers_fn=offers_fn, limit=limit)
