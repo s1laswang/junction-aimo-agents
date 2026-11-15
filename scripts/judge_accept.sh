@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 rows=(); pass=0; fail=0; skip=0
 TMP_ACCEPT=""
+ACCEPT_TMP=""
 spid=""
 
 record() {
@@ -120,10 +121,12 @@ main() {
     export UV_PROJECT_ENVIRONMENT
   fi
   TMP_ACCEPT="$(mktemp -d)"
-  LOG_PREFIX="${AIMO_ACCEPT_LOG_PREFIX:-/tmp/aimo-accept-}"
+  ACCEPT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/aimo-accept.XXXXXX")"
+  LOG_PREFIX="${AIMO_ACCEPT_LOG_PREFIX:-$ACCEPT_TMP/aimo-accept-}"
   trap cleanup EXIT INT TERM
 
   say "== Aimo judge accept (junction-aimo-agents) =="
+  say "logs=$ACCEPT_TMP"
   say "cwd=$ROOT"
 
   if command -v uv >/dev/null 2>&1; then

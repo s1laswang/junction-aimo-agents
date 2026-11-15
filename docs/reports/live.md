@@ -16,7 +16,7 @@ AIMO_DATA_DIR=~/aimo-montage-data caffeinate -i uv run aimo demo --montage --bas
 
 | Scenario | Verdict | Outcome |
 |---|---|---|
-| happy | PASS | placed, EUR 1,010.00, approved by anna@hotel-aurora.example (spend, substitution, quantity_drift) |
+| happy | PASS | placed, EUR 1,010.00, approved by anna@hotel-aurora.example (spend, substitution, quantity_drift on the Sun 02:54 run; on final policy `7225d06` / `f3c5996` listed pack swap `464306` is allowed, leaving 2 reasons: `spend` and `quantity_drift`) |
 | stockout | PASS | placed, split into 4 lines, EUR 2,544.80, shortfall 0 |
 | school-allergen | PASS | placed, **Oatly Oat Drink Whole 1L (470889)**, EUR 280.00, **auto-approved by the school's policy** (under its €300 limit; the allergen rule confirms milk- and nut-free from structured data) |
 | injection | PASS | placed, 6 supplier texts flagged and redacted, policy cites injection, largest line 300 units |
@@ -64,7 +64,8 @@ Tests: `tests/test_live_demo.py` (5 tests: keyless transport choice, the approve
 - `uv run python -m scenarios.run_all`: 8/8
 - `make accept`: RESULT: PASS (19 PASS, 1 SKIP live demo)
 
-## Hand-off notes (closed in `aef6b7d`, `0f51cf0`, and `9742758`)
+## Hand-off and final-freeze alignment (`aef6b7d`, `0f51cf0`, `9742758`, `7225d06`/`f3c5996`, `02575d8`/`62e8384`)
 - **S4 submit (`aef6b7d` -> `9742758`):** V3 montage numbers ($0.0352 per order, 53 calls, 5/6 runs / 15% of steps, 6/6 PASS, Sun 15 Nov 02:54; school-allergen auto-approved by policy at €280; injection 6 supplier texts flagged; event EUR 266.49) synced across `origin/main` docs, while the sanitized Sat ledgers (`montage-ledger-before-trim.jsonl`, `montage-ledger-after-trim.jsonl`) remain reproducible via `docs/evidence/montage_stats.py`.
 - **Keyless catalog tests (`0f51cf0`):** all 7 `tests/test_harden.py` catalog-dependent tests and `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit` were marked `@pytest.mark.needs_data` by the `tests` session (`0f51cf0`, see [tests.md](tests.md)), eliminating the 8 keyless failures.
+- **Raw live Gemini hero run evidence (`02575d8`, linked in `62e8384`):** committed one real live Gemini hero run recorded Sun 15 Nov 05:38 on the final policy (`7225d06` / `f3c5996`, where listed pack swap `464306` is allowed so 2 needs-approval reasons remain: `spend` and `quantity_drift`) in [docs/evidence/live-run/](../evidence/live-run/README.md): `run-b9690772fe`, `24.53 s` wall clock, 8 Gemini calls (`7` `gemini-3.8-flash` + `1` `gemini-4-hydrogen` HIGH, 0 fallbacks) captured via opt-in `AIMO_GEMINI_TRACE` (`gemini-trace.jsonl`, off by default and never logging the API key), `transcript.md` (`docs/evidence/live-run/summarize.py`), `run.json`, signed quote `Q-20261115-964294b6` (`EUR 1,010.00`), placed order `ORD-20261115-06eda13d` (`AP`), 6-event hash-chained `audit-events.json`, `audit-report.md`, and `jwks.json`, verified offline by `scripts/verify_quote.py` and `tests/test_live_run_evidence.py`.
 - The gateway on `:8031` (pid in `~/aimo-montage-data/serve.pid`) was stopped after the run.

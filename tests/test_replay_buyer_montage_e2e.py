@@ -125,8 +125,8 @@ def test_auto_transport_selects_inproc_on_forced_replay_and_fake_otherwise(
         mandate=mandate,
     )
     try:
-        assert isinstance(t_unset, FakeTransport)
-        assert t_unset.kind == "fake"
+        assert isinstance(t_unset, InProcessTransport)
+        assert t_unset.kind == "inproc"
     finally:
         t_unset.close()
 

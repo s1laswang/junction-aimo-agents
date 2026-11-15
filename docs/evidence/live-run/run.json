@@ -1,0 +1,5742 @@
+{
+ "run_id": "run-b9690772fe",
+ "status": "placed",
+ "summary": "An order was placed for 1,000 units (1,000 L) of Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free for a total net amount of \u20ac1,010.00. This substitution was selected because it shares the same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free, differing only in packaging. The policy required approval due to spend exceeding the \u20ac500.00 limit and milk volume exceeding your usual weekly amount, which human approver anna@hotel-aurora.example approved. You can view the full details at http://localhost:8041/v1/audit/report/ORD-20261115-06eda13d.",
+ "mock": false,
+ "need": {
+  "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+  "customer_id": "hotel-aurora",
+  "product_query": "lactose-free milk",
+  "required_claims": [
+   "FREE_FROM_LACTOSE"
+  ],
+  "excluded_allergens": [],
+  "quantity": 1000.0,
+  "unit": "L",
+  "delivery_by": "2026-11-16",
+  "preferred_product_ids": [
+   "463038"
+  ],
+  "preferences": {
+   "brand": "Valio",
+   "pack": "10 l novobox for the milk dispenser",
+   "fat_pct": 1.5,
+   "parsed_by": "gemini",
+   "site": "Hotel Aurora Helsinki",
+   "standing_order_qty_per_week": 300,
+   "standing_order_ratio": 3.33
+  }
+ },
+ "needs": [
+  {
+   "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+   "customer_id": "hotel-aurora",
+   "product_query": "lactose-free milk",
+   "required_claims": [
+    "FREE_FROM_LACTOSE"
+   ],
+   "excluded_allergens": [],
+   "quantity": 1000.0,
+   "unit": "L",
+   "delivery_by": "2026-11-16",
+   "preferred_product_ids": [
+    "463038"
+   ],
+   "preferences": {
+    "brand": "Valio",
+    "pack": "10 l novobox for the milk dispenser",
+    "fat_pct": 1.5,
+    "parsed_by": "gemini",
+    "site": "Hotel Aurora Helsinki",
+    "standing_order_qty_per_week": 300,
+    "standing_order_ratio": 3.33
+   }
+  }
+ ],
+ "quote": {
+  "quote_id": "Q-20261115-964294b6",
+  "customer_id": "hotel-aurora",
+  "agent_id": "buyer-1",
+  "delivery_date": "2026-11-16",
+  "lines": [
+   {
+    "product_id": "464306",
+    "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+    "qty_sales_units": 1000.0,
+    "sales_unit": "ST",
+    "unit_price": 1.01,
+    "line_total": 1010.0,
+    "tier": "best",
+    "flags": [
+     "outside_preference"
+    ]
+   }
+  ],
+  "total_net": 1010.0,
+  "total_gross": 1150.0,
+  "currency": "EUR",
+  "created_at": "2026-11-15T03:38:10Z",
+  "expires_at": "2026-11-15T03:53:10Z",
+  "need": {
+   "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+   "customer_id": "hotel-aurora",
+   "product_query": "lactose-free milk",
+   "required_claims": [
+    "FREE_FROM_LACTOSE"
+   ],
+   "excluded_allergens": [],
+   "quantity": 1000.0,
+   "unit": "L",
+   "delivery_by": "2026-11-16",
+   "preferred_product_ids": [
+    "463038"
+   ],
+   "preferences": {
+    "parsed_by": "gemini",
+    "brand": "Valio",
+    "standing_order_ratio": 3.33,
+    "standing_order_qty_per_week": 300,
+    "fat_pct": 1.5,
+    "pack": "10 l novobox for the milk dispenser",
+    "site": "Hotel Aurora Helsinki"
+   }
+  },
+  "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+  "signature": "eyJhbGciOiJFZERTQSIsImtpZCI6IkNJYk1qZHVwN3hlamhpelF2MmVTMXNLZEVaX3JJT2RldEQ0VTFELVhhdmMiLCJ0eXAiOiJxdW90ZStqd3MifQ.eyJhZ2VudF9pZCI6ImJ1eWVyLTEiLCJjdXJyZW5jeSI6IkVVUiIsImN1c3RvbWVyX2lkIjoiaG90ZWwtYXVyb3JhIiwiZXhwIjoxNzk0NzE0NzkwLCJpYXQiOjE3OTQ3MTM4OTAsImlzcyI6InZhbGlvLWFpbW8tdHJ1c3RlZC10cmFkZSIsInF1b3RlX2hhc2giOiI2ZGVmN2RhZTE2M2YyMzMyNGZiOTcwMzcwMDBhYzlhYjdmYTcyNzY5NzFlZWFkMTIwMDY5ZTA5ZjMyNzBmYmRhIiwicXVvdGVfaWQiOiJRLTIwMjYxMTE1LTk2NDI5NGI2IiwidG90YWxfbmV0IjoxMDEwLCJ0eXAiOiJxdW90ZSJ9.-n7kj1Feu6E5cSWGBgBp46-5b2VFqfTGQBbKnSxljaa9ToVrTWusFhIrd9XqiS4inM4P2f3tBrGW5mKOXxZ1Cg",
+  "kid": "CIbMjdup7xejhizQv2eS1sKdEZ_rIOdetD4U1D-Xavc",
+  "provenance": {
+   "source": "valio-aimo-mock-api",
+   "upstream": "https://junction26.valioaimo.fi",
+   "endpoints": [
+    "/api/price",
+    "/api/availability"
+   ],
+   "served_from": "live",
+   "fresh_requested": true,
+   "upstream_calls": 2,
+   "fetched_at": "2026-11-15T03:38:10.230958+00:00",
+   "valid_for_s": 300,
+   "upstream_time_now": "2026-11-15T05:38:10+0200",
+   "faults": null,
+   "clock": {
+    "mode": "real",
+    "now": "2026-11-15T03:38:10.293090+00:00",
+    "frozen": false
+   },
+   "price_locked_until": "2026-11-15T03:53:10+00:00",
+   "line_verification": {
+    "464306": {
+     "tier": "best",
+     "method": "catalog.rank_substitutes",
+     "reasons": [
+      "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+      "1 L per ST",
+      "\u20ac1.01/L (\u20ac1.01 per ST)"
+     ],
+     "reference": "463038"
+    }
+   },
+   "client_claims": [
+    {
+     "product_id": "464306",
+     "tier": "best",
+     "flags": [
+      "outside_preference"
+     ]
+    }
+   ]
+  },
+  "availability_snapshot": [
+   {
+    "product_id": "464306",
+    "available_amount": 9999999999.0,
+    "available_date": "2026-11-16",
+    "closing_time": "2026-11-15T17:00:00+02:00",
+    "logistic_model": "Stock",
+    "unit_price": 1.01,
+    "issues": []
+   }
+  ]
+ },
+ "order": {
+  "order_id": "ORD-20261115-06eda13d",
+  "quote_id": "Q-20261115-964294b6",
+  "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+  "customer_id": "hotel-aurora",
+  "agent_id": "buyer-1",
+  "status": "placed",
+  "decision": {
+   "outcome": "needs_approval",
+   "approver_role": "procurement_manager",
+   "hits": [
+    {
+     "rule_id": "quote_integrity",
+     "outcome": "allow",
+     "message": "Quote arithmetic checks out (1 line(s), \u20ac1,010.00); signed by Valio Aimo and unmodified."
+    },
+    {
+     "rule_id": "mandate_scope",
+     "outcome": "allow",
+     "message": "Agent hotel-aurora/buyer-1 holds a valid mandate from Hotel Aurora Helsinki to submit orders."
+    },
+    {
+     "rule_id": "quote_freshness",
+     "outcome": "allow",
+     "message": "Prices are locked until 05:53 (Helsinki time)."
+    },
+    {
+     "rule_id": "spend",
+     "outcome": "needs_approval",
+     "message": "Order total \u20ac1,010.00 is above the \u20ac500.00 auto-approve limit, so a procurement manager must approve it."
+    },
+    {
+     "rule_id": "weekly_budget",
+     "outcome": "allow",
+     "message": "Spending in the last 7 days would be \u20ac1,010.00 of the \u20ac8,000.00 weekly budget."
+    },
+    {
+     "rule_id": "category_scope",
+     "outcome": "allow",
+     "message": "All lines are within the allowed categories (dairy and chilled, fresh bakery, chilled food and produce, dry goods, frozen food)."
+    },
+    {
+     "rule_id": "substitution:464306",
+     "outcome": "allow",
+     "message": "'Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free' (464306) is a substitute: same brand and spec in a different pack (tier best), verified as a customer-approved alternative in the profile. Allowed automatically by this policy."
+    },
+    {
+     "rule_id": "allergens",
+     "outcome": "allow",
+     "message": "This mandate has no allergen exclusions."
+    },
+    {
+     "rule_id": "delivery",
+     "outcome": "allow",
+     "message": "Delivery Mon 16 Nov meets the requested date (Mon 16 Nov) and no line is past its order cut-off."
+    },
+    {
+     "rule_id": "quantity_drift:milk",
+     "outcome": "needs_approval",
+     "message": "This is 3.3\u00d7 your usual weekly volume of milk (1,000 L vs about 300 L a week). A procurement manager must confirm the quantity."
+    },
+    {
+     "rule_id": "split_order",
+     "outcome": "allow",
+     "message": "This order is above the auto-approve limit on its own; the spend rule decides."
+    },
+    {
+     "rule_id": "price_jump",
+     "outcome": "allow",
+     "message": "No line is more than 15% above the last price paid."
+    },
+    {
+     "rule_id": "injection",
+     "outcome": "allow",
+     "message": "No prompt-injection signals in the request or supplier text."
+    }
+   ],
+   "policy_id": "hotel-aurora",
+   "policy_version": "1.2.0"
+  },
+  "approved_by": "anna@hotel-aurora.example",
+  "approval_note": "Approved from the terminal demo",
+  "response_code": "AP",
+  "response_lines": [
+   {
+    "product_id": "464306",
+    "code": "AP",
+    "qty_confirmed": 1000.0,
+    "note": "confirmed"
+   }
+  ],
+  "created_at": "2026-11-15T03:38:12.402504Z",
+  "updated_at": "2026-11-15T03:38:16.033905Z",
+  "provenance": {
+   "source": "valio-aimo-mock-api",
+   "upstream": "https://junction26.valioaimo.fi",
+   "endpoints": [
+    "/api/price",
+    "/api/availability"
+   ],
+   "served_from": "live",
+   "fresh_requested": true,
+   "upstream_calls": 2,
+   "fetched_at": "2026-11-15T03:38:15.920761+00:00",
+   "valid_for_s": 300,
+   "upstream_time_now": "2026-11-15T05:38:16+0200",
+   "faults": null,
+   "clock": {
+    "mode": "real",
+    "now": "2026-11-15T03:38:16.031439+00:00",
+    "frozen": false
+   }
+  },
+  "approver_role": "procurement_manager"
+ },
+ "plan": {
+  "need": {
+   "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+   "customer_id": "hotel-aurora",
+   "product_query": "lactose-free milk",
+   "required_claims": [
+    "FREE_FROM_LACTOSE"
+   ],
+   "excluded_allergens": [],
+   "quantity": 1000.0,
+   "unit": "L",
+   "delivery_by": "2026-11-16",
+   "preferred_product_ids": [
+    "463038"
+   ],
+   "preferences": {
+    "brand": "Valio",
+    "pack": "10 l novobox for the milk dispenser",
+    "fat_pct": 1.5
+   }
+  },
+  "lines": [
+   {
+    "product_id": "464306",
+    "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+    "tier": "best",
+    "qty_sales_units": 1000.0,
+    "sales_unit": "ST",
+    "covered_amount": 1000.0,
+    "unit_price": 1.01,
+    "line_total": 1010.0,
+    "reasons": [
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "1000 x ST x 1 L = 1000 L; 1000 x \u20ac1.01 = \u20ac1,010.00",
+     "Gemini recipe check vs usual product: compatible (high): Both products are identical in fat content and lactose-free status, making them functionally interchangeable for your volume requirements. [inferred:gemini]"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   }
+  ],
+  "candidates": [
+   {
+    "product": {
+     "id": "464306",
+     "gtin": "6408430000487",
+     "name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+     "name_fi": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae kevytmaitojuoma 1 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.5402
+    },
+    "offer": {
+     "product_id": "464306",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 9999999999.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 1.01,
+     "unit_price_gross": 1.15,
+     "list_price": 1.44,
+     "comparison_price": 1.01,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:38:01.891834Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "best",
+    "rank_score": 1.0,
+    "reasons": [
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "1 L per ST",
+     "\u20ac1.01/L (\u20ac1.01 per ST)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "464201",
+     "gtin": "6408430011667",
+     "name": "Valio semi skimmed milk 1 l lactose free UHT",
+     "name_fi": "Valio kevytmaito 1 l laktoositon UHT",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.886
+    },
+    "offer": {
+     "product_id": "464201",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 9999999999.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 1.56,
+     "unit_price_gross": 1.77,
+     "list_price": 1.83,
+     "comparison_price": 1.56,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:33:44.394122Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "best",
+    "rank_score": 0.8237,
+    "reasons": [
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "1 L per ST",
+     "\u20ac1.56/L (\u20ac1.56 per ST)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "464398",
+     "gtin": "6408430011681",
+     "name": "Valio Eila\u00ae semi skimmed milk drink 1 l UHT lactose free",
+     "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1 l UHT laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.7601
+    },
+    "offer": {
+     "product_id": "464398",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 9999999999.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 1.65,
+     "unit_price_gross": 1.87,
+     "list_price": 2.08,
+     "comparison_price": 1.65,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "best",
+    "rank_score": 0.8061,
+    "reasons": [
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "1 L per ST",
+     "\u20ac1.65/L (\u20ac1.65 per ST)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "463779",
+     "gtin": "6408430100750",
+     "name": "Valio Eila\u00ae semi skimmed milk drink 2,5 dl UHT lactose free",
+     "name_fi": "Valio Eila\u00ae kevytmaitojuoma 2,5 dl UHT laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "KI",
+     "content_amount": 3.75,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 0.99,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.7264
+    },
+    "offer": {
+     "product_id": "463779",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 666666666.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "KI",
+     "unit_price": 10.71,
+     "unit_price_gross": 12.16,
+     "list_price": 12.6,
+     "comparison_price": 2.86,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "best",
+    "rank_score": 0.6746,
+    "reasons": [
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "15 x 0.25 L (3.75 L per KI)",
+     "\u20ac2.86/L (\u20ac10.71 per KI)",
+     "delivery reliability 0.99",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "469363",
+     "gtin": "6413300011517",
+     "name": "Arla Semi skimmed milkdrink 1 L UHT lactose free Suomesta",
+     "name_fi": "Arla Kevytmaitojuoma 1 L UHT laktoositon Suomesta",
+     "brand": "Arla",
+     "vendor": "ARLA OY",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_LACTOSE"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": null,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.7975
+    },
+    "offer": {
+     "product_id": "469363",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 384.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 2.48,
+     "unit_price_gross": 2.81,
+     "list_price": 2.92,
+     "comparison_price": 2.48,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "limited_stock"
+     ],
+     "provenance": null
+    },
+    "tier": "better",
+    "rank_score": 0.612,
+    "reasons": [
+     "Same spec (1.5 % fat) as Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free, other brand (Arla)",
+     "1 L per ST",
+     "\u20ac2.48/L (\u20ac2.48 per ST)",
+     "delivery reliability: no data",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00",
+     "only 384 ST in stock (= 384 L)"
+    ],
+    "flags": [
+     "outside_preference",
+     "partial_stock"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "464401",
+     "gtin": "6408430000494",
+     "name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae skimmed milk drink 1 l lactose free",
+     "name_fi": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae rasvaton maitojuoma 1 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_FAT",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "FINNISH_HEART_SYMBOL",
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.5878
+    },
+    "offer": {
+     "product_id": "464401",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 9999999999.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 1.1,
+     "unit_price_gross": 1.25,
+     "list_price": 1.31,
+     "comparison_price": 1.1,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "good",
+    "rank_score": 0.9591,
+    "reasons": [
+     "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+     "1 L per ST",
+     "\u20ac1.10/L (\u20ac1.10 per ST)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "463335",
+     "gtin": "6408430000296",
+     "name": "Valio Eila\u00ae 3 % milk drink 1 l lactose free",
+     "name_fi": "Valio Eila\u00ae 3 % maitojuoma 1 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.8989
+    },
+    "offer": {
+     "product_id": "463335",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 9999999999.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 1.4,
+     "unit_price_gross": 1.59,
+     "list_price": 2.02,
+     "comparison_price": 1.4,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "good",
+    "rank_score": 0.8607,
+    "reasons": [
+     "Meets the hard constraints; differs: fat 3.0 % vs 1.5 %",
+     "1 L per ST",
+     "\u20ac1.40/L (\u20ac1.40 per ST)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "464073",
+     "gtin": "6408430011674",
+     "name": "Valio whole milk 1 l lactose free UHT",
+     "name_fi": "Valio t\u00e4ysmaito 1 l laktoositon UHT",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.9357
+    },
+    "offer": {
+     "product_id": "464073",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 9999999999.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 1.64,
+     "unit_price_gross": 1.86,
+     "list_price": 1.95,
+     "comparison_price": 1.64,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [],
+     "provenance": null
+    },
+    "tier": "good",
+    "rank_score": 0.8079,
+    "reasons": [
+     "Meets the hard constraints; differs: fat 3.5 % vs 1.5 %",
+     "1 L per ST",
+     "\u20ac1.64/L (\u20ac1.64 per ST)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00"
+    ],
+    "flags": [
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "462775",
+     "gtin": "6413300011500",
+     "name": "Arla Milkdrink 1L lactose free fat free UHT Suomesta",
+     "name_fi": "Arla Maitojuoma 1L laktoositon rasvaton UHT Suomesta",
+     "brand": "Arla",
+     "vendor": "ARLA OY",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_FAT",
+      "FREE_FROM_LACTOSE"
+     ],
+     "labels": [
+      "FINNISH_HEART_SYMBOL",
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": null,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.8393
+    },
+    "offer": {
+     "product_id": "462775",
+     "requested_date": "2026-11-16",
+     "available": true,
+     "available_amount": 51.0,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-15T17:00:00+02:00",
+     "cutoff_passed": false,
+     "logistic_model": "Stock",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 2.57,
+     "unit_price_gross": 2.92,
+     "list_price": 3.02,
+     "comparison_price": 2.57,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "limited_stock"
+     ],
+     "provenance": null
+    },
+    "tier": "good",
+    "rank_score": 0.5716,
+    "reasons": [
+     "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+     "1 L per ST",
+     "\u20ac2.57/L (\u20ac2.57 per ST)",
+     "delivery reliability: no data",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Stock item, order by Sun 15 Nov 17:00",
+     "only 51 ST in stock (= 51 L)"
+    ],
+    "flags": [
+     "outside_preference",
+     "partial_stock"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "463038",
+     "gtin": "6408430100330",
+     "name": "Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free",
+     "name_fi": "Valio Eila\u00ae kevytmaitojuoma 10 l novobox laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "KI",
+     "content_amount": 20.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": null,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.6973
+    },
+    "offer": {
+     "product_id": "463038",
+     "requested_date": "2026-11-16",
+     "available": false,
+     "available_amount": null,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-12T15:00:00+02:00",
+     "cutoff_passed": true,
+     "logistic_model": "Terminal",
+     "sales_block": false,
+     "sales_unit": "KI",
+     "unit_price": 31.31,
+     "unit_price_gross": 35.54,
+     "list_price": 36.83,
+     "comparison_price": 1.57,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "terminal_unknown_qty",
+      "cutoff_passed"
+     ],
+     "provenance": null
+    },
+    "tier": "rejected",
+    "rank_score": 0.7917,
+    "reasons": [
+     "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+     "Your usual product",
+     "2 x 10 L (20 L per KI)",
+     "\u20ac1.57/L (\u20ac31.31 per KI)",
+     "delivery reliability: no data",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Terminal item"
+    ],
+    "flags": [
+     "cutoff_passed"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": false
+    }
+   },
+   {
+    "product": {
+     "id": "469119",
+     "gtin": "6408430000517",
+     "name": "Valio Eila\u00ae skimmed milk drink 1,75 l lactose free",
+     "name_fi": "Valio Eila\u00ae rasvaton maitojuoma 1,75 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "ST",
+     "content_amount": 1.75,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_FAT",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "FINNISH_HEART_SYMBOL",
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": null,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.8122
+    },
+    "offer": {
+     "product_id": "469119",
+     "requested_date": "2026-11-16",
+     "available": false,
+     "available_amount": null,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-12T15:00:00+02:00",
+     "cutoff_passed": true,
+     "logistic_model": "Terminal",
+     "sales_block": false,
+     "sales_unit": "ST",
+     "unit_price": 2.08,
+     "unit_price_gross": 2.36,
+     "list_price": 2.45,
+     "comparison_price": 1.19,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "terminal_unknown_qty",
+      "cutoff_passed"
+     ],
+     "provenance": null
+    },
+    "tier": "rejected",
+    "rank_score": 0.8944,
+    "reasons": [
+     "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+     "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+     "1.75 L per ST",
+     "\u20ac1.19/L (\u20ac2.08 per ST)",
+     "delivery reliability: no data",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Terminal item"
+    ],
+    "flags": [
+     "cutoff_passed",
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "464119",
+     "gtin": "6408430100866",
+     "name": "Valio skimmed milk 1 l lactose free UHT",
+     "name_fi": "Valio rasvaton maito 1 l laktoositon UHT",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "KI",
+     "content_amount": 10.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_FAT",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "FINNISH_HEART_SYMBOL",
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.923
+    },
+    "offer": {
+     "product_id": "464119",
+     "requested_date": "2026-11-16",
+     "available": false,
+     "available_amount": null,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-12T15:00:00+02:00",
+     "cutoff_passed": true,
+     "logistic_model": "Terminal",
+     "sales_block": false,
+     "sales_unit": "KI",
+     "unit_price": 13.32,
+     "unit_price_gross": 15.12,
+     "list_price": 18.11,
+     "comparison_price": 1.33,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "terminal_unknown_qty",
+      "cutoff_passed"
+     ],
+     "provenance": null
+    },
+    "tier": "rejected",
+    "rank_score": 0.8797,
+    "reasons": [
+     "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+     "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+     "10 x 1 L (10 L per KI)",
+     "\u20ac1.33/L (\u20ac13.32 per KI)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Terminal item"
+    ],
+    "flags": [
+     "cutoff_passed",
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "465039",
+     "gtin": "6408430100248",
+     "name": "Valio Eila\u00ae semi skimmed milk drink 1 l lactose free",
+     "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "KI",
+     "content_amount": 5.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.7985
+    },
+    "offer": {
+     "product_id": "465039",
+     "requested_date": "2026-11-16",
+     "available": false,
+     "available_amount": null,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-12T15:00:00+02:00",
+     "cutoff_passed": true,
+     "logistic_model": "Terminal",
+     "sales_block": false,
+     "sales_unit": "KI",
+     "unit_price": 6.86,
+     "unit_price_gross": 7.79,
+     "list_price": 9.75,
+     "comparison_price": 1.37,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "2026-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "terminal_unknown_qty",
+      "cutoff_passed"
+     ],
+     "provenance": null
+    },
+    "tier": "rejected",
+    "rank_score": 0.8686,
+    "reasons": [
+     "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "5 x 1 L (5 L per KI)",
+     "\u20ac1.37/L (\u20ac6.86 per KI)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Terminal item"
+    ],
+    "flags": [
+     "cutoff_passed",
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "469287",
+     "gtin": "6408430101108",
+     "name": "Valio Eila\u00ae semi skimmed milk drink 1,75 l lactose free",
+     "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1,75 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "KI",
+     "content_amount": 21.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_FAT",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": null,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.7647
+    },
+    "offer": {
+     "product_id": "469287",
+     "requested_date": "2026-11-16",
+     "available": false,
+     "available_amount": null,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-12T15:00:00+02:00",
+     "cutoff_passed": true,
+     "logistic_model": "Terminal",
+     "sales_block": false,
+     "sales_unit": "KI",
+     "unit_price": 27.39,
+     "unit_price_gross": 31.09,
+     "list_price": 32.22,
+     "comparison_price": 1.3,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "terminal_unknown_qty",
+      "cutoff_passed"
+     ],
+     "provenance": null
+    },
+    "tier": "rejected",
+    "rank_score": 0.8585,
+    "reasons": [
+     "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+     "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+     "12 x 1.75 L (21 L per KI)",
+     "\u20ac1.30/L (\u20ac27.39 per KI)",
+     "delivery reliability: no data",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Terminal item"
+    ],
+    "flags": [
+     "cutoff_passed",
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   },
+   {
+    "product": {
+     "id": "476240",
+     "gtin": "6408430100224",
+     "name": "Valio Eila\u00ae skimmed milk drink 1 l lactose free",
+     "name_fi": "Valio Eila\u00ae rasvaton maitojuoma 1 l laktoositon",
+     "brand": "Valio",
+     "vendor": "VALIO OY TUORE",
+     "category": "10400",
+     "sales_unit": "KI",
+     "content_amount": 5.0,
+     "content_unit": "L",
+     "claims": [
+      "FREE_FROM_ADDITIVES",
+      "FREE_FROM_COLOURING_AGENTS",
+      "FREE_FROM_FAT",
+      "FREE_FROM_LACTOSE",
+      "FREE_FROM_PRESERVATIVES",
+      "FREE_FROM_SWEETENERS",
+      "LOW_SODIUM_SALT",
+      "NO_ADDED_SUGARS",
+      "VEGETARIAN"
+     ],
+     "labels": [
+      "FINNISH_HEART_SYMBOL",
+      "GOODS_FROM_FINLAND_BLUE_SWAN"
+     ],
+     "delivery_reliability": 1.0,
+     "co2_kg_per_kg": 1.1,
+     "score": 15.846
+    },
+    "offer": {
+     "product_id": "476240",
+     "requested_date": "2026-11-16",
+     "available": false,
+     "available_amount": null,
+     "available_date": "2026-11-16",
+     "closing_time": "2026-11-12T15:00:00+02:00",
+     "cutoff_passed": true,
+     "logistic_model": "Terminal",
+     "sales_block": false,
+     "sales_unit": "KI",
+     "unit_price": 7.62,
+     "unit_price_gross": 8.65,
+     "list_price": 8.96,
+     "comparison_price": 1.52,
+     "comparison_unit": "L",
+     "tax_rate": 13.5,
+     "currency": "EUR",
+     "price_valid_to": "9999-12-31T00:00:00+02:00",
+     "fetched_at": "2026-11-15T03:37:49.423175Z",
+     "issues": [
+      "terminal_unknown_qty",
+      "cutoff_passed"
+     ],
+     "provenance": null
+    },
+    "tier": "rejected",
+    "rank_score": 0.8322,
+    "reasons": [
+     "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+     "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+     "5 x 1 L (5 L per KI)",
+     "\u20ac1.52/L (\u20ac7.62 per KI)",
+     "delivery reliability 1.00",
+     "CO2 1.10 kg CO2e/kg (category average)",
+     "has FREE_FROM_LACTOSE",
+     "Terminal item"
+    ],
+    "flags": [
+     "cutoff_passed",
+     "outside_preference"
+    ],
+    "injection_screen": {
+     "suspicious": false,
+     "reasons": [],
+     "screened": true
+    }
+   }
+  ],
+  "covered_amount": 1000.0,
+  "shortfall": 0.0,
+  "total_net": 1010.0,
+  "explanation": "1000 L: 1000 L Mon 16 Nov (Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free). Need: 1000 L of 'lactose-free milk' with FREE_FROM_LACTOSE, delivered by Mon 16 Nov 2026. Usual product Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (463038) cannot be used: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov. BEST: 1000 ST of Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free (464306) covers 1000 L for \u20ac1,010.00. Total 1000 L for \u20ac1,010.00 net. 6 candidate(s) rejected; see candidates[].reasons."
+ },
+ "latency_s": 24.53,
+ "models_used": [
+  {
+   "step": 0,
+   "model": "gemini-3.8-flash",
+   "thinking": "LOW",
+   "latency_s": 1.62
+  },
+  {
+   "step": 1,
+   "model": "gemini-3.8-flash",
+   "thinking": "LOW",
+   "latency_s": 2.5
+  },
+  {
+   "step": 2,
+   "model": "gemini-3.8-flash",
+   "thinking": "LOW",
+   "latency_s": 2.61
+  },
+  {
+   "step": 3,
+   "model": "gemini-4-hydrogen",
+   "thinking": "HIGH",
+   "latency_s": 3.19
+  },
+  {
+   "step": 4,
+   "model": "gemini-3.8-flash",
+   "thinking": "LOW",
+   "latency_s": 2.01
+  }
+ ],
+ "clarifications": [],
+ "steps": [
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 1,
+   "ts": "2026-11-15T05:37:54.281023+02:00",
+   "kind": "thought",
+   "title": "Received purchasing request",
+   "data": {
+    "text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+    "customer_id": "hotel-aurora",
+    "agent_id": "hotel-aurora/buyer-1",
+    "transport": "mcp",
+    "model": "gemini-3.8-flash",
+    "thinking": "LOW",
+    "has_image": false,
+    "mock": false
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 2,
+   "ts": "2026-11-15T05:37:56.433942+02:00",
+   "kind": "thought",
+   "title": "Parsed need: 1000 L lactose-free milk, delivery by 2026-11-16",
+   "data": {
+    "need": {
+     "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+     "customer_id": "hotel-aurora",
+     "product_query": "lactose-free milk",
+     "required_claims": [
+      "FREE_FROM_LACTOSE"
+     ],
+     "excluded_allergens": [],
+     "quantity": 1000.0,
+     "unit": "L",
+     "delivery_by": "2026-11-16",
+     "preferred_product_ids": [
+      "463038"
+     ],
+     "preferences": {
+      "brand": "Valio",
+      "pack": "10 l novobox for the milk dispenser",
+      "fat_pct": 1.5,
+      "parsed_by": "gemini",
+      "site": "Hotel Aurora Helsinki",
+      "standing_order_qty_per_week": 300,
+      "standing_order_ratio": 3.33
+     }
+    },
+    "needs": [
+     {
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "customer_id": "hotel-aurora",
+      "product_query": "lactose-free milk",
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ],
+      "excluded_allergens": [],
+      "quantity": 1000.0,
+      "unit": "L",
+      "delivery_by": "2026-11-16",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "preferences": {
+       "brand": "Valio",
+       "pack": "10 l novobox for the milk dispenser",
+       "fat_pct": 1.5,
+       "parsed_by": "gemini",
+       "site": "Hotel Aurora Helsinki",
+       "standing_order_qty_per_week": 300,
+       "standing_order_ratio": 3.33
+      }
+     }
+    ],
+    "latency_s": 2.15,
+    "parsed_by": "gemini"
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 3,
+   "ts": "2026-11-15T05:37:56.435113+02:00",
+   "kind": "tool_call",
+   "title": "list_policies({})",
+   "data": {
+    "name": "list_policies",
+    "args": {}
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 4,
+   "ts": "2026-11-15T05:37:56.472749+02:00",
+   "kind": "tool_result",
+   "title": "list_policies: 3 policies",
+   "data": {
+    "name": "list_policies",
+    "latency_s": 0.04,
+    "result": {
+     "policies": [
+      {
+       "customer_id": "hospital-meilahti",
+       "name": "Meilahti Hospital Ward Kitchen",
+       "segment": "hospital",
+       "description": "Patient meals incl. gluten-free and texture-modified diets.",
+       "policy_id": "hospital-meilahti",
+       "policy_version": "1.2.0",
+       "approver_roles": [
+        "dietitian",
+        "procurement_manager"
+       ],
+       "override_roles": [
+        "head_of_nutrition"
+       ],
+       "approvers": [
+        {
+         "id": "sara@hospital-meilahti.example",
+         "name": "Sara Lindqvist",
+         "role": "dietitian"
+        },
+        {
+         "id": "olli@hospital-meilahti.example",
+         "name": "Olli M\u00e4kinen",
+         "role": "procurement_manager"
+        },
+        {
+         "id": "helena@hospital-meilahti.example",
+         "name": "Helena Salo",
+         "role": "head_of_nutrition"
+        }
+       ],
+       "agents": [
+        {
+         "agent_id": "hospital-meilahti/buyer-1",
+         "label": "Gemini purchasing agent",
+         "scopes": [
+          "catalog:read",
+          "quote:create",
+          "order:submit"
+         ]
+        }
+       ],
+       "mandates": [
+        {
+         "customer_id": "hospital-meilahti",
+         "agent_id": "hospital-meilahti/buyer-1",
+         "policy_id": "hospital-meilahti",
+         "scopes": [
+          "catalog:read",
+          "quote:create",
+          "order:submit"
+         ],
+         "expires_at": null
+        }
+       ],
+       "excluded_allergens": [
+        "gluten"
+       ],
+       "standing_orders": [
+        {
+         "id": "milk",
+         "label": "milk",
+         "keywords": [
+          "milk",
+          "maito",
+          "mj\u00f6lk"
+         ],
+         "weekly_qty": 500,
+         "unit": "L"
+        }
+       ],
+       "preferred_products": [
+        {
+         "product_id": "473328",
+         "label": "Sch\u00e4r Vital dark sliced bread 350 g gluten-free"
+        }
+       ],
+       "approved_alternatives": [],
+       "rules": [
+        {
+         "id": "mandate_scope",
+         "type": "scope"
+        },
+        {
+         "id": "quote_freshness",
+         "type": "quote_freshness"
+        },
+        {
+         "id": "spend",
+         "type": "spend_threshold"
+        },
+        {
+         "id": "substitution",
+         "type": "substitution"
+        },
+        {
+         "id": "allergens",
+         "type": "allergen_block"
+        },
+        {
+         "id": "delivery",
+         "type": "delivery"
+        },
+        {
+         "id": "quantity_drift",
+         "type": "quantity_drift"
+        },
+        {
+         "id": "split_order",
+         "type": "split_order"
+        },
+        {
+         "id": "price_jump",
+         "type": "price_jump"
+        },
+        {
+         "id": "injection",
+         "type": "injection"
+        }
+       ],
+       "summary": [
+        "Only registered agents with the order:submit permission may order.",
+        "Quotes are only honoured while their price lock is valid.",
+        "Orders up to \u20ac1,000.00 are placed automatically; up to \u20ac10,000.00 need a procurement manager; larger orders are refused.",
+        "Substitutes: best/better/good tier need a dietitian. Required claims (e.g. lactose free) must be kept. Only the products in the customer profile count as usual; the agent's own tier label is never trusted: the catalog re-checks it, and anything unverified is treated as a substitution. A first purchase that exactly matches the request (no usual product of that kind) is not a substitution. Swaps a human approved with 'always allow' are remembered.",
+        "Never orders products that contain or may contain gluten; products with unknown allergen data need a dietitian.",
+        "Lines past their order cut-off or arriving after the needed date are refused.",
+        "Orders over 3\u00d7 the usual weekly volume (milk 500 L/week) need a procurement manager.",
+        "Several small orders of the same thing within 7 days that add up to more than 1x the auto-approve limit need a procurement manager (split-order evasion).",
+        "A price more than 15% above the last price paid needs a procurement manager.",
+        "Orders touched by suspected prompt injection in supplier text need a procurement manager."
+       ]
+      },
+      {
+       "customer_id": "hotel-aurora",
+       "name": "Hotel Aurora Helsinki",
+       "segment": "hotel",
+       "description": "180-room city hotel; breakfast buffet and restaurant.",
+       "policy_id": "hotel-aurora",
+       "policy_version": "1.2.0",
+       "approver_roles": [
+        "procurement_manager"
+       ],
+       "override_roles": [
+        "general_manager"
+       ],
+       "approvers": [
+        {
+         "id": "anna@hotel-aurora.example",
+         "name": "Anna Virtanen",
+         "role": "procurement_manager"
+        },
+        {
+         "id": "mikko@hotel-aurora.example",
+         "name": "Mikko Laine",
+         "role": "general_manager"
+        }
+       ],
+       "agents": [
+        {
+         "agent_id": "hotel-aurora/buyer-1",
+         "label": "Gemini purchasing agent",
+         "scopes": [
+          "catalog:read",
+          "quote:create",
+          "order:submit"
+         ]
+        },
+        {
+         "agent_id": "hotel-aurora/planner-1",
+         "label": "Menu planning assistant (may quote, may not order)",
+         "scopes": [
+          "catalog:read",
+          "quote:create"
+         ]
+        }
+       ],
+       "mandates": [
+        {
+         "customer_id": "hotel-aurora",
+         "agent_id": "hotel-aurora/buyer-1",
+         "policy_id": "hotel-aurora",
+         "scopes": [
+          "catalog:read",
+          "quote:create",
+          "order:submit"
+         ],
+         "expires_at": null
+        },
+        {
+         "customer_id": "hotel-aurora",
+         "agent_id": "hotel-aurora/planner-1",
+         "policy_id": "hotel-aurora",
+         "scopes": [
+          "catalog:read",
+          "quote:create"
+         ],
+         "expires_at": null
+        }
+       ],
+       "excluded_allergens": [],
+       "standing_orders": [
+        {
+         "id": "milk",
+         "label": "milk",
+         "keywords": [
+          "milk",
+          "maito",
+          "mj\u00f6lk"
+         ],
+         "weekly_qty": 300,
+         "unit": "L"
+        },
+        {
+         "id": "butter",
+         "label": "butter",
+         "keywords": [
+          "butter",
+          "voi",
+          "sm\u00f6r"
+         ],
+         "weekly_qty": 25,
+         "unit": "KG"
+        }
+       ],
+       "preferred_products": [
+        {
+         "product_id": "463038",
+         "label": "Valio Eila semi-skimmed lactose-free milk drink 10 L Novobox (dispenser)"
+        }
+       ],
+       "approved_alternatives": [
+        {
+         "product_id": "464306",
+         "tier": "best",
+         "for": "463038",
+         "label": "Valio Eila semi-skimmed lactose-free milk drink 1 L (same product",
+         "smaller pack)": null
+        }
+       ],
+       "rules": [
+        {
+         "id": "mandate_scope",
+         "type": "scope"
+        },
+        {
+         "id": "quote_freshness",
+         "type": "quote_freshness"
+        },
+        {
+         "id": "spend",
+         "type": "spend_threshold"
+        },
+        {
+         "id": "weekly_budget",
+         "type": "period_spend"
+        },
+        {
+         "id": "category_scope",
+         "type": "category_scope"
+        },
+        {
+         "id": "substitution",
+         "type": "substitution"
+        },
+        {
+         "id": "allergens",
+         "type": "allergen_block"
+        },
+        {
+         "id": "delivery",
+         "type": "delivery"
+        },
+        {
+         "id": "quantity_drift",
+         "type": "quantity_drift"
+        },
+        {
+         "id": "split_order",
+         "type": "split_order"
+        },
+        {
+         "id": "price_jump",
+         "type": "price_jump"
+        },
+        {
+         "id": "injection",
+         "type": "injection"
+        }
+       ],
+       "summary": [
+        "Only registered agents with the order:submit permission may order.",
+        "Quotes are only honoured while their price lock is valid.",
+        "Orders up to \u20ac500.00 are placed automatically; up to \u20ac5,000.00 need a procurement manager; larger orders are refused.",
+        "7-day budget \u20ac8,000.00; going over it needs a procurement manager.",
+        "The agent may only buy: dairy and chilled, fresh bakery, chilled food and produce, dry goods, frozen food.",
+        "Substitutes: best tier allowed automatically; better/good tier need a procurement manager. Required claims (e.g. lactose free) must be kept. Only the products in the customer profile count as usual; the agent's own tier label is never trusted: the catalog re-checks it, and anything unverified is treated as a substitution. A first purchase that exactly matches the request (no usual product of that kind) is not a substitution. Verified-best or pre-approved alternatives under \u20ac50.00 a line are swapped without asking. Swaps a human approved with 'always allow' are remembered.",
+        "Allergen exclusions come from each request; unknown allergen data is never treated as safe.",
+        "Lines past their order cut-off or arriving after the needed date are refused.",
+        "Orders over 3\u00d7 the usual weekly volume (milk 300 L/week, butter 25 KG/week) need a procurement manager.",
+        "Several small orders of the same thing within 7 days that add up to more than 1x the auto-approve limit need a procurement manager (split-order evasion).",
+        "A price more than 15% above the last price paid needs a procurement manager.",
+        "Orders touched by suspected prompt injection in supplier text need a procurement manager."
+       ]
+      },
+      {
+       "customer_id": "school-tampere",
+       "name": "Tampere Hervanta School Kitchen",
+       "segment": "school",
+       "description": "Central kitchen, 650 lunches a day; milk-free and nut-free by policy.",
+       "policy_id": "school-tampere",
+       "policy_version": "1.2.0",
+       "approver_roles": [
+        "kitchen_manager"
+       ],
+       "override_roles": [
+        "catering_director"
+       ],
+       "approvers": [
+        {
+         "id": "liisa@school-tampere.example",
+         "name": "Liisa Korhonen",
+         "role": "kitchen_manager"
+        },
+        {
+         "id": "jari@school-tampere.example",
+         "name": "Jari Nieminen",
+         "role": "catering_director"
+        }
+       ],
+       "agents": [
+        {
+         "agent_id": "school-tampere/buyer-1",
+         "label": "Gemini purchasing agent",
+         "scopes": [
+          "catalog:read",
+          "quote:create",
+          "order:submit"
+         ]
+        }
+       ],
+       "mandates": [
+        {
+         "customer_id": "school-tampere",
+         "agent_id": "school-tampere/buyer-1",
+         "policy_id": "school-tampere",
+         "scopes": [
+          "catalog:read",
+          "quote:create",
+          "order:submit"
+         ],
+         "expires_at": null
+        }
+       ],
+       "excluded_allergens": [
+        "milk",
+        "nuts"
+       ],
+       "standing_orders": [
+        {
+         "id": "oat_drink",
+         "label": "oat drink",
+         "keywords": [
+          "oat",
+          "kaura",
+          "havre"
+         ],
+         "weekly_qty": 400,
+         "unit": "L"
+        },
+        {
+         "id": "potatoes",
+         "label": "potatoes",
+         "keywords": [
+          "potato",
+          "peruna",
+          "potatis"
+         ],
+         "weekly_qty": 300,
+         "unit": "KG"
+        }
+       ],
+       "preferred_products": [
+        {
+         "product_id": "470889",
+         "label": "Oatly Oat Drink Whole 1 L (milk and nut free per supplier data)"
+        }
+       ],
+       "approved_alternatives": [],
+       "rules": [
+        {
+         "id": "mandate_scope",
+         "type": "scope"
+        },
+        {
+         "id": "quote_freshness",
+         "type": "quote_freshness"
+        },
+        {
+         "id": "spend",
+         "type": "spend_threshold"
+        },
+        {
+         "id": "weekly_budget",
+         "type": "period_spend"
+        },
+        {
+         "id": "substitution",
+         "type": "substitution"
+        },
+        {
+         "id": "allergens",
+         "type": "allergen_block"
+        },
+        {
+         "id": "delivery",
+         "type": "delivery"
+        },
+        {
+         "id": "quantity_drift",
+         "type": "quantity_drift"
+        },
+        {
+         "id": "split_order",
+         "type": "split_order"
+        },
+        {
+         "id": "price_jump",
+         "type": "price_jump"
+        },
+        {
+         "id": "injection",
+         "type": "injection"
+        }
+       ],
+       "summary": [
+        "Only registered agents with the order:submit permission may order.",
+        "Quotes are only honoured while their price lock is valid.",
+        "Orders up to \u20ac300.00 are placed automatically; up to \u20ac3,000.00 need a kitchen manager; larger orders are refused.",
+        "7-day budget \u20ac4,000.00; going over it needs a kitchen manager.",
+        "Substitutes: best/better/good tier need a kitchen manager. Required claims (e.g. lactose free) must be kept. Only the products in the customer profile count as usual; the agent's own tier label is never trusted: the catalog re-checks it, and anything unverified is treated as a substitution. A first purchase that exactly matches the request (no usual product of that kind) is not a substitution. Swaps a human approved with 'always allow' are remembered.",
+        "Never orders products that contain or may contain milk or nuts; products with unknown allergen data are refused.",
+        "Lines past their order cut-off or arriving after the needed date are refused.",
+        "Orders over 3\u00d7 the usual weekly volume (oat drink 400 L/week, potatoes 300 KG/week) need a kitchen manager.",
+        "Several small orders of the same thing within 7 days that add up to more than 1x the auto-approve limit need a kitchen manager (split-order evasion).",
+        "A price more than 15% above the last price paid needs a kitchen manager.",
+        "Orders touched by suspected prompt injection in supplier text need a kitchen manager."
+       ]
+      }
+     ],
+     "learned_swaps": {
+      "customer_id": "hotel-aurora",
+      "available": true,
+      "swaps": []
+     }
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 5,
+   "ts": "2026-11-15T05:37:58.095222+02:00",
+   "kind": "tool_call",
+   "title": "search_products({\"limit\": 10, \"claims\": [\"FREE_FROM_LACTOSE\"], \"query\": \"lactose-free milk\"})",
+   "data": {
+    "name": "search_products",
+    "args": {
+     "limit": 10,
+     "claims": [
+      "FREE_FROM_LACTOSE"
+     ],
+     "query": "lactose-free milk"
+    },
+    "model": "gemini-3.8-flash",
+    "thinking": "LOW",
+    "latency_s": 1.62
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 6,
+   "ts": "2026-11-15T05:37:58.252874+02:00",
+   "kind": "tool_result",
+   "title": "search_products: 10 products",
+   "data": {
+    "name": "search_products",
+    "latency_s": 0.16,
+    "result": {
+     "products": [
+      {
+       "id": "463380",
+       "gtin": "6413300015515",
+       "name": "Arla Caf\u00e8 milk 1 L UHT lactose free",
+       "name_fi": "Arla Caf\u00e8 maito 1 L UHT laktoositon",
+       "brand": "Arla",
+       "vendor": "ARLA OY",
+       "category": "10400",
+       "sales_unit": "ST",
+       "content_amount": 1.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_LACTOSE"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": null,
+       "co2_kg_per_kg": 1.1,
+       "score": 12.963
+      },
+      {
+       "id": "464073",
+       "gtin": "6408430011674",
+       "name": "Valio whole milk 1 l lactose free UHT",
+       "name_fi": "Valio t\u00e4ysmaito 1 l laktoositon UHT",
+       "brand": "Valio",
+       "vendor": "VALIO OY TUORE",
+       "category": "10400",
+       "sales_unit": "ST",
+       "content_amount": 1.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_ADDITIVES",
+        "FREE_FROM_COLOURING_AGENTS",
+        "FREE_FROM_LACTOSE",
+        "FREE_FROM_PRESERVATIVES",
+        "FREE_FROM_SWEETENERS",
+        "LOW_SODIUM_SALT",
+        "NO_ADDED_SUGARS",
+        "VEGETARIAN"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": 1.0,
+       "co2_kg_per_kg": 1.1,
+       "score": 12.4286
+      },
+      {
+       "id": "464768",
+       "gtin": "6413300918434",
+       "name": "12 x Arla Whole milk drink 1 L UHT lactose free",
+       "name_fi": "12 x Arla T\u00e4ysmaitojuoma 1 L UHT laktoositon",
+       "brand": "Arla",
+       "vendor": "ARLA OY",
+       "category": "10400",
+       "sales_unit": "KI",
+       "content_amount": 12.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_LACTOSE"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": null,
+       "co2_kg_per_kg": 1.1,
+       "score": 12.3333
+      },
+      {
+       "id": "462775",
+       "gtin": "6413300011500",
+       "name": "Arla Milkdrink 1L lactose free fat free UHT Suomesta",
+       "name_fi": "Arla Maitojuoma 1L laktoositon rasvaton UHT Suomesta",
+       "brand": "Arla",
+       "vendor": "ARLA OY",
+       "category": "10400",
+       "sales_unit": "ST",
+       "content_amount": 1.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_FAT",
+        "FREE_FROM_LACTOSE"
+       ],
+       "labels": [
+        "FINNISH_HEART_SYMBOL",
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": null,
+       "co2_kg_per_kg": 1.1,
+       "score": 12.1429
+      },
+      {
+       "id": "464119",
+       "gtin": "6408430100866",
+       "name": "Valio skimmed milk 1 l lactose free UHT",
+       "name_fi": "Valio rasvaton maito 1 l laktoositon UHT",
+       "brand": "Valio",
+       "vendor": "VALIO OY TUORE",
+       "category": "10400",
+       "sales_unit": "KI",
+       "content_amount": 10.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_ADDITIVES",
+        "FREE_FROM_COLOURING_AGENTS",
+        "FREE_FROM_FAT",
+        "FREE_FROM_LACTOSE",
+        "FREE_FROM_PRESERVATIVES",
+        "FREE_FROM_SWEETENERS",
+        "LOW_SODIUM_SALT",
+        "NO_ADDED_SUGARS",
+        "VEGETARIAN"
+       ],
+       "labels": [
+        "FINNISH_HEART_SYMBOL",
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": 1.0,
+       "co2_kg_per_kg": 1.1,
+       "score": 12.1261
+      },
+      {
+       "id": "464201",
+       "gtin": "6408430011667",
+       "name": "Valio semi skimmed milk 1 l lactose free UHT",
+       "name_fi": "Valio kevytmaito 1 l laktoositon UHT",
+       "brand": "Valio",
+       "vendor": "VALIO OY TUORE",
+       "category": "10400",
+       "sales_unit": "ST",
+       "content_amount": 1.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_ADDITIVES",
+        "FREE_FROM_COLOURING_AGENTS",
+        "FREE_FROM_LACTOSE",
+        "FREE_FROM_PRESERVATIVES",
+        "FREE_FROM_SWEETENERS",
+        "LOW_FAT",
+        "LOW_SODIUM_SALT",
+        "NO_ADDED_SUGARS",
+        "VEGETARIAN"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": 1.0,
+       "co2_kg_per_kg": 1.1,
+       "score": 12.0462
+      },
+      {
+       "id": "465149",
+       "gtin": "6413300919080",
+       "name": "6 x Arla 5 dl lactose free low fat milk drink Suomi ESL",
+       "name_fi": "6 x Arla 5 dl laktoositon kevytmaitojuoma Suomi ESL",
+       "brand": "Arla",
+       "vendor": "ARLA OY",
+       "category": "10400",
+       "sales_unit": "KI",
+       "content_amount": 3.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_LACTOSE"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": null,
+       "co2_kg_per_kg": 1.1,
+       "score": 11.6033
+      },
+      {
+       "id": "464440",
+       "gtin": "6408430011643",
+       "name": "Valio semi skimmed milk 0,5 l lactose free UHT",
+       "name_fi": "Valio kevytmaito 0,5 l laktoositon UHT",
+       "brand": "Valio",
+       "vendor": "VALIO OY TUORE",
+       "category": "10400",
+       "sales_unit": "ST",
+       "content_amount": 0.5,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_ADDITIVES",
+        "FREE_FROM_COLOURING_AGENTS",
+        "FREE_FROM_LACTOSE",
+        "FREE_FROM_PRESERVATIVES",
+        "FREE_FROM_SWEETENERS",
+        "LOW_FAT",
+        "LOW_SODIUM_SALT",
+        "NO_ADDED_SUGARS",
+        "VEGETARIAN"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": null,
+       "co2_kg_per_kg": 1.1,
+       "score": 11.4623
+      },
+      {
+       "id": "469363",
+       "gtin": "6413300011517",
+       "name": "Arla Semi skimmed milkdrink 1 L UHT lactose free Suomesta",
+       "name_fi": "Arla Kevytmaitojuoma 1 L UHT laktoositon Suomesta",
+       "brand": "Arla",
+       "vendor": "ARLA OY",
+       "category": "10400",
+       "sales_unit": "ST",
+       "content_amount": 1.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_LACTOSE"
+       ],
+       "labels": [
+        "GOODS_FROM_FINLAND_BLUE_SWAN"
+       ],
+       "delivery_reliability": null,
+       "co2_kg_per_kg": 1.1,
+       "score": 11.3391
+      },
+      {
+       "id": "463203",
+       "gtin": "5760466959940",
+       "name": "Arla Portion milk 100x2 cl lactose free 1,5% UHT",
+       "name_fi": "Arla Annosmaito 100x2 cl laktoositon 1,5% UHT",
+       "brand": "Arla",
+       "vendor": "ARLA OY",
+       "category": "10400",
+       "sales_unit": "KI",
+       "content_amount": 2.0,
+       "content_unit": "L",
+       "claims": [
+        "FREE_FROM_LACTOSE"
+       ],
+       "labels": [],
+       "delivery_reliability": 0.998,
+       "co2_kg_per_kg": 1.1,
+       "score": 11.3288
+      }
+     ]
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 7,
+   "ts": "2026-11-15T05:38:00.751321+02:00",
+   "kind": "tool_call",
+   "title": "get_offers({\"product_ids\": [\"463038\", \"464201\", \"464119\", \"464073\", \"469363\"], \"requested_date\": \"2026-11-16\"})",
+   "data": {
+    "name": "get_offers",
+    "args": {
+     "product_ids": [
+      "463038",
+      "464201",
+      "464119",
+      "464073",
+      "469363"
+     ],
+     "requested_date": "2026-11-16"
+    },
+    "model": "gemini-3.8-flash",
+    "thinking": "LOW",
+    "latency_s": 2.5
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 8,
+   "ts": "2026-11-15T05:38:00.768839+02:00",
+   "kind": "tool_result",
+   "title": "get_offers: 5 offers",
+   "data": {
+    "name": "get_offers",
+    "latency_s": 0.02,
+    "result": {
+     "offers": [
+      {
+       "product_id": "463038",
+       "requested_date": "2026-11-16",
+       "available": false,
+       "available_amount": null,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-12T15:00:00+02:00",
+       "cutoff_passed": true,
+       "logistic_model": "Terminal",
+       "sales_block": false,
+       "sales_unit": "KI",
+       "unit_price": 31.31,
+       "unit_price_gross": 35.54,
+       "list_price": 36.83,
+       "comparison_price": 1.57,
+       "comparison_unit": "L",
+       "tax_rate": 13.5,
+       "currency": "EUR",
+       "price_valid_to": "9999-12-31T00:00:00+02:00",
+       "fetched_at": "2026-11-15T03:37:49.423175Z",
+       "issues": [
+        "terminal_unknown_qty",
+        "cutoff_passed"
+       ],
+       "provenance": {
+        "source": "valio-aimo-mock-api",
+        "upstream": "https://junction26.valioaimo.fi",
+        "endpoints": [
+         "/api/price",
+         "/api/availability"
+        ],
+        "served_from": "cache",
+        "fresh_requested": false,
+        "upstream_calls": 0,
+        "fetched_at": "2026-11-15T03:33:44.394122+00:00",
+        "valid_for_s": 300,
+        "upstream_time_now": "2026-11-15T05:37:49+0200",
+        "faults": null,
+        "clock": {
+         "mode": "real",
+         "now": "2026-11-15T03:38:00.762310+00:00",
+         "frozen": false
+        }
+       }
+      },
+      {
+       "product_id": "464201",
+       "requested_date": "2026-11-16",
+       "available": true,
+       "available_amount": 9999999999.0,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-15T17:00:00+02:00",
+       "cutoff_passed": false,
+       "logistic_model": "Stock",
+       "sales_block": false,
+       "sales_unit": "ST",
+       "unit_price": 1.56,
+       "unit_price_gross": 1.77,
+       "list_price": 1.83,
+       "comparison_price": 1.56,
+       "comparison_unit": "L",
+       "tax_rate": 13.5,
+       "currency": "EUR",
+       "price_valid_to": "9999-12-31T00:00:00+02:00",
+       "fetched_at": "2026-11-15T03:33:44.394122Z",
+       "issues": [],
+       "provenance": {
+        "source": "valio-aimo-mock-api",
+        "upstream": "https://junction26.valioaimo.fi",
+        "endpoints": [
+         "/api/price",
+         "/api/availability"
+        ],
+        "served_from": "cache",
+        "fresh_requested": false,
+        "upstream_calls": 0,
+        "fetched_at": "2026-11-15T03:33:44.394122+00:00",
+        "valid_for_s": 300,
+        "upstream_time_now": "2026-11-15T05:37:49+0200",
+        "faults": null,
+        "clock": {
+         "mode": "real",
+         "now": "2026-11-15T03:38:00.762310+00:00",
+         "frozen": false
+        }
+       }
+      },
+      {
+       "product_id": "464119",
+       "requested_date": "2026-11-16",
+       "available": false,
+       "available_amount": null,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-12T15:00:00+02:00",
+       "cutoff_passed": true,
+       "logistic_model": "Terminal",
+       "sales_block": false,
+       "sales_unit": "KI",
+       "unit_price": 13.32,
+       "unit_price_gross": 15.12,
+       "list_price": 18.11,
+       "comparison_price": 1.33,
+       "comparison_unit": "L",
+       "tax_rate": 13.5,
+       "currency": "EUR",
+       "price_valid_to": "2026-12-31T00:00:00+02:00",
+       "fetched_at": "2026-11-15T03:37:49.423175Z",
+       "issues": [
+        "terminal_unknown_qty",
+        "cutoff_passed"
+       ],
+       "provenance": {
+        "source": "valio-aimo-mock-api",
+        "upstream": "https://junction26.valioaimo.fi",
+        "endpoints": [
+         "/api/price",
+         "/api/availability"
+        ],
+        "served_from": "cache",
+        "fresh_requested": false,
+        "upstream_calls": 0,
+        "fetched_at": "2026-11-15T03:33:44.394122+00:00",
+        "valid_for_s": 300,
+        "upstream_time_now": "2026-11-15T05:37:49+0200",
+        "faults": null,
+        "clock": {
+         "mode": "real",
+         "now": "2026-11-15T03:38:00.762310+00:00",
+         "frozen": false
+        }
+       }
+      },
+      {
+       "product_id": "464073",
+       "requested_date": "2026-11-16",
+       "available": true,
+       "available_amount": 9999999999.0,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-15T17:00:00+02:00",
+       "cutoff_passed": false,
+       "logistic_model": "Stock",
+       "sales_block": false,
+       "sales_unit": "ST",
+       "unit_price": 1.64,
+       "unit_price_gross": 1.86,
+       "list_price": 1.95,
+       "comparison_price": 1.64,
+       "comparison_unit": "L",
+       "tax_rate": 13.5,
+       "currency": "EUR",
+       "price_valid_to": "2026-12-31T00:00:00+02:00",
+       "fetched_at": "2026-11-15T03:37:49.423175Z",
+       "issues": [],
+       "provenance": {
+        "source": "valio-aimo-mock-api",
+        "upstream": "https://junction26.valioaimo.fi",
+        "endpoints": [
+         "/api/price",
+         "/api/availability"
+        ],
+        "served_from": "cache",
+        "fresh_requested": false,
+        "upstream_calls": 0,
+        "fetched_at": "2026-11-15T03:33:44.394122+00:00",
+        "valid_for_s": 300,
+        "upstream_time_now": "2026-11-15T05:37:49+0200",
+        "faults": null,
+        "clock": {
+         "mode": "real",
+         "now": "2026-11-15T03:38:00.762310+00:00",
+         "frozen": false
+        }
+       }
+      },
+      {
+       "product_id": "469363",
+       "requested_date": "2026-11-16",
+       "available": true,
+       "available_amount": 384.0,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-15T17:00:00+02:00",
+       "cutoff_passed": false,
+       "logistic_model": "Stock",
+       "sales_block": false,
+       "sales_unit": "ST",
+       "unit_price": 2.48,
+       "unit_price_gross": 2.81,
+       "list_price": 2.92,
+       "comparison_price": 2.48,
+       "comparison_unit": "L",
+       "tax_rate": 13.5,
+       "currency": "EUR",
+       "price_valid_to": "9999-12-31T00:00:00+02:00",
+       "fetched_at": "2026-11-15T03:37:49.423175Z",
+       "issues": [
+        "limited_stock"
+       ],
+       "provenance": {
+        "source": "valio-aimo-mock-api",
+        "upstream": "https://junction26.valioaimo.fi",
+        "endpoints": [
+         "/api/price",
+         "/api/availability"
+        ],
+        "served_from": "cache",
+        "fresh_requested": false,
+        "upstream_calls": 0,
+        "fetched_at": "2026-11-15T03:33:44.394122+00:00",
+        "valid_for_s": 300,
+        "upstream_time_now": "2026-11-15T05:37:49+0200",
+        "faults": null,
+        "clock": {
+         "mode": "real",
+         "now": "2026-11-15T03:38:00.762310+00:00",
+         "frozen": false
+        }
+       }
+      }
+     ],
+     "provenance": {
+      "source": "valio-aimo-mock-api",
+      "upstream": "https://junction26.valioaimo.fi",
+      "endpoints": [
+       "/api/price",
+       "/api/availability"
+      ],
+      "served_from": "cache",
+      "fresh_requested": false,
+      "upstream_calls": 0,
+      "fetched_at": "2026-11-15T03:33:44.394122+00:00",
+      "valid_for_s": 300,
+      "upstream_time_now": "2026-11-15T05:37:49+0200",
+      "faults": null,
+      "clock": {
+       "mode": "real",
+       "now": "2026-11-15T03:38:00.762310+00:00",
+       "frozen": false
+      }
+     }
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 9,
+   "ts": "2026-11-15T05:38:03.378598+02:00",
+   "kind": "tool_call",
+   "title": "plan_need({\"need\": {\"raw_text\": \"We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.\", \"customer_id\": \"\u2026)",
+   "data": {
+    "name": "plan_need",
+    "args": {
+     "need": {
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "customer_id": "hotel-aurora",
+      "product_query": "lactose-free milk",
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ],
+      "excluded_allergens": [],
+      "quantity": 1000.0,
+      "unit": "L",
+      "delivery_by": "2026-11-16",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "preferences": {
+       "brand": "Valio",
+       "pack": "10 l novobox for the milk dispenser",
+       "fat_pct": 1.5
+      }
+     }
+    },
+    "model": "gemini-3.8-flash",
+    "thinking": "LOW",
+    "latency_s": 2.61
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 10,
+   "ts": "2026-11-15T05:38:04.130763+02:00",
+   "kind": "tool_result",
+   "title": "plan_need: ok",
+   "data": {
+    "name": "plan_need",
+    "latency_s": 0.75,
+    "result": {
+     "need": {
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "customer_id": "hotel-aurora",
+      "product_query": "lactose-free milk",
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ],
+      "excluded_allergens": [],
+      "quantity": 1000.0,
+      "unit": "L",
+      "delivery_by": "2026-11-16",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "preferences": {
+       "brand": "Valio",
+       "pack": "10 l novobox for the milk dispenser",
+       "fat_pct": 1.5
+      }
+     },
+     "lines": [
+      {
+       "product_id": "464306",
+       "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+       "tier": "best",
+       "qty_sales_units": 1000.0,
+       "sales_unit": "ST",
+       "covered_amount": 1000.0,
+       "unit_price": 1.01,
+       "line_total": 1010.0,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1000 x ST x 1 L = 1000 L; 1000 x \u20ac1.01 = \u20ac1,010.00",
+        "Gemini recipe check vs usual product: compatible (high): Both products are identical in fat content and lactose-free status, making them functionally interchangeable for your volume requirements. [inferred:gemini]"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      }
+     ],
+     "candidates": [
+      {
+       "product": {
+        "id": "464306",
+        "gtin": "6408430000487",
+        "name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae kevytmaitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.5402
+       },
+       "offer": {
+        "product_id": "464306",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.01,
+        "unit_price_gross": 1.15,
+        "list_price": 1.44,
+        "comparison_price": 1.01,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:38:01.891834Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 1.0,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1 L per ST",
+        "\u20ac1.01/L (\u20ac1.01 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464201",
+        "gtin": "6408430011667",
+        "name": "Valio semi skimmed milk 1 l lactose free UHT",
+        "name_fi": "Valio kevytmaito 1 l laktoositon UHT",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.886
+       },
+       "offer": {
+        "product_id": "464201",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.56,
+        "unit_price_gross": 1.77,
+        "list_price": 1.83,
+        "comparison_price": 1.56,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:33:44.394122Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 0.8237,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1 L per ST",
+        "\u20ac1.56/L (\u20ac1.56 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464398",
+        "gtin": "6408430011681",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 1 l UHT lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1 l UHT laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7601
+       },
+       "offer": {
+        "product_id": "464398",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.65,
+        "unit_price_gross": 1.87,
+        "list_price": 2.08,
+        "comparison_price": 1.65,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 0.8061,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1 L per ST",
+        "\u20ac1.65/L (\u20ac1.65 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "463779",
+        "gtin": "6408430100750",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 2,5 dl UHT lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 2,5 dl UHT laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 3.75,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 0.99,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7264
+       },
+       "offer": {
+        "product_id": "463779",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 666666666.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 10.71,
+        "unit_price_gross": 12.16,
+        "list_price": 12.6,
+        "comparison_price": 2.86,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 0.6746,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "15 x 0.25 L (3.75 L per KI)",
+        "\u20ac2.86/L (\u20ac10.71 per KI)",
+        "delivery reliability 0.99",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "469363",
+        "gtin": "6413300011517",
+        "name": "Arla Semi skimmed milkdrink 1 L UHT lactose free Suomesta",
+        "name_fi": "Arla Kevytmaitojuoma 1 L UHT laktoositon Suomesta",
+        "brand": "Arla",
+        "vendor": "ARLA OY",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_LACTOSE"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7975
+       },
+       "offer": {
+        "product_id": "469363",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 384.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 2.48,
+        "unit_price_gross": 2.81,
+        "list_price": 2.92,
+        "comparison_price": 2.48,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "limited_stock"
+        ],
+        "provenance": null
+       },
+       "tier": "better",
+       "rank_score": 0.612,
+       "reasons": [
+        "Same spec (1.5 % fat) as Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free, other brand (Arla)",
+        "1 L per ST",
+        "\u20ac2.48/L (\u20ac2.48 per ST)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00",
+        "only 384 ST in stock (= 384 L)"
+       ],
+       "flags": [
+        "outside_preference",
+        "partial_stock"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464401",
+        "gtin": "6408430000494",
+        "name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae rasvaton maitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.5878
+       },
+       "offer": {
+        "product_id": "464401",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.1,
+        "unit_price_gross": 1.25,
+        "list_price": 1.31,
+        "comparison_price": 1.1,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.9591,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac1.10/L (\u20ac1.10 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "463335",
+        "gtin": "6408430000296",
+        "name": "Valio Eila\u00ae 3 % milk drink 1 l lactose free",
+        "name_fi": "Valio Eila\u00ae 3 % maitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.8989
+       },
+       "offer": {
+        "product_id": "463335",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.4,
+        "unit_price_gross": 1.59,
+        "list_price": 2.02,
+        "comparison_price": 1.4,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.8607,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 3.0 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac1.40/L (\u20ac1.40 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464073",
+        "gtin": "6408430011674",
+        "name": "Valio whole milk 1 l lactose free UHT",
+        "name_fi": "Valio t\u00e4ysmaito 1 l laktoositon UHT",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.9357
+       },
+       "offer": {
+        "product_id": "464073",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.64,
+        "unit_price_gross": 1.86,
+        "list_price": 1.95,
+        "comparison_price": 1.64,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.8079,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 3.5 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac1.64/L (\u20ac1.64 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "462775",
+        "gtin": "6413300011500",
+        "name": "Arla Milkdrink 1L lactose free fat free UHT Suomesta",
+        "name_fi": "Arla Maitojuoma 1L laktoositon rasvaton UHT Suomesta",
+        "brand": "Arla",
+        "vendor": "ARLA OY",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.8393
+       },
+       "offer": {
+        "product_id": "462775",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 51.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 2.57,
+        "unit_price_gross": 2.92,
+        "list_price": 3.02,
+        "comparison_price": 2.57,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "limited_stock"
+        ],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.5716,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac2.57/L (\u20ac2.57 per ST)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00",
+        "only 51 ST in stock (= 51 L)"
+       ],
+       "flags": [
+        "outside_preference",
+        "partial_stock"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "463038",
+        "gtin": "6408430100330",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 10 l novobox laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 20.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.6973
+       },
+       "offer": {
+        "product_id": "463038",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 31.31,
+        "unit_price_gross": 35.54,
+        "list_price": 36.83,
+        "comparison_price": 1.57,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.7917,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Your usual product",
+        "2 x 10 L (20 L per KI)",
+        "\u20ac1.57/L (\u20ac31.31 per KI)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": false
+       }
+      },
+      {
+       "product": {
+        "id": "469119",
+        "gtin": "6408430000517",
+        "name": "Valio Eila\u00ae skimmed milk drink 1,75 l lactose free",
+        "name_fi": "Valio Eila\u00ae rasvaton maitojuoma 1,75 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.75,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.8122
+       },
+       "offer": {
+        "product_id": "469119",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 2.08,
+        "unit_price_gross": 2.36,
+        "list_price": 2.45,
+        "comparison_price": 1.19,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8944,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "1.75 L per ST",
+        "\u20ac1.19/L (\u20ac2.08 per ST)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464119",
+        "gtin": "6408430100866",
+        "name": "Valio skimmed milk 1 l lactose free UHT",
+        "name_fi": "Valio rasvaton maito 1 l laktoositon UHT",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 10.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.923
+       },
+       "offer": {
+        "product_id": "464119",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 13.32,
+        "unit_price_gross": 15.12,
+        "list_price": 18.11,
+        "comparison_price": 1.33,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8797,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "10 x 1 L (10 L per KI)",
+        "\u20ac1.33/L (\u20ac13.32 per KI)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "465039",
+        "gtin": "6408430100248",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 5.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7985
+       },
+       "offer": {
+        "product_id": "465039",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 6.86,
+        "unit_price_gross": 7.79,
+        "list_price": 9.75,
+        "comparison_price": 1.37,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8686,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "5 x 1 L (5 L per KI)",
+        "\u20ac1.37/L (\u20ac6.86 per KI)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "469287",
+        "gtin": "6408430101108",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 1,75 l lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1,75 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 21.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7647
+       },
+       "offer": {
+        "product_id": "469287",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 27.39,
+        "unit_price_gross": 31.09,
+        "list_price": 32.22,
+        "comparison_price": 1.3,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8585,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "12 x 1.75 L (21 L per KI)",
+        "\u20ac1.30/L (\u20ac27.39 per KI)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "476240",
+        "gtin": "6408430100224",
+        "name": "Valio Eila\u00ae skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Eila\u00ae rasvaton maitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 5.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.846
+       },
+       "offer": {
+        "product_id": "476240",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 7.62,
+        "unit_price_gross": 8.65,
+        "list_price": 8.96,
+        "comparison_price": 1.52,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8322,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "5 x 1 L (5 L per KI)",
+        "\u20ac1.52/L (\u20ac7.62 per KI)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      }
+     ],
+     "covered_amount": 1000.0,
+     "shortfall": 0.0,
+     "total_net": 1010.0,
+     "explanation": "1000 L: 1000 L Mon 16 Nov (Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free). Need: 1000 L of 'lactose-free milk' with FREE_FROM_LACTOSE, delivered by Mon 16 Nov 2026. Usual product Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (463038) cannot be used: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov. BEST: 1000 ST of Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free (464306) covers 1000 L for \u20ac1,010.00. Total 1000 L for \u20ac1,010.00 net. 6 candidate(s) rejected; see candidates[].reasons."
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 11,
+   "ts": "2026-11-15T05:38:06.752169+02:00",
+   "kind": "plan",
+   "title": "Plan: 1 line(s), EUR 1010.00, shortfall 0",
+   "data": {
+    "plan": {
+     "need": {
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "customer_id": "hotel-aurora",
+      "product_query": "lactose-free milk",
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ],
+      "excluded_allergens": [],
+      "quantity": 1000.0,
+      "unit": "L",
+      "delivery_by": "2026-11-16",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "preferences": {
+       "brand": "Valio",
+       "pack": "10 l novobox for the milk dispenser",
+       "fat_pct": 1.5
+      }
+     },
+     "lines": [
+      {
+       "product_id": "464306",
+       "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+       "tier": "best",
+       "qty_sales_units": 1000.0,
+       "sales_unit": "ST",
+       "covered_amount": 1000.0,
+       "unit_price": 1.01,
+       "line_total": 1010.0,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1000 x ST x 1 L = 1000 L; 1000 x \u20ac1.01 = \u20ac1,010.00",
+        "Gemini recipe check vs usual product: compatible (high): Both products are identical in fat content and lactose-free status, making them functionally interchangeable for your volume requirements. [inferred:gemini]"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      }
+     ],
+     "candidates": [
+      {
+       "product": {
+        "id": "464306",
+        "gtin": "6408430000487",
+        "name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae kevytmaitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.5402
+       },
+       "offer": {
+        "product_id": "464306",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.01,
+        "unit_price_gross": 1.15,
+        "list_price": 1.44,
+        "comparison_price": 1.01,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:38:01.891834Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 1.0,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1 L per ST",
+        "\u20ac1.01/L (\u20ac1.01 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464201",
+        "gtin": "6408430011667",
+        "name": "Valio semi skimmed milk 1 l lactose free UHT",
+        "name_fi": "Valio kevytmaito 1 l laktoositon UHT",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.886
+       },
+       "offer": {
+        "product_id": "464201",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.56,
+        "unit_price_gross": 1.77,
+        "list_price": 1.83,
+        "comparison_price": 1.56,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:33:44.394122Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 0.8237,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1 L per ST",
+        "\u20ac1.56/L (\u20ac1.56 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464398",
+        "gtin": "6408430011681",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 1 l UHT lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1 l UHT laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7601
+       },
+       "offer": {
+        "product_id": "464398",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.65,
+        "unit_price_gross": 1.87,
+        "list_price": 2.08,
+        "comparison_price": 1.65,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 0.8061,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "1 L per ST",
+        "\u20ac1.65/L (\u20ac1.65 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "463779",
+        "gtin": "6408430100750",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 2,5 dl UHT lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 2,5 dl UHT laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 3.75,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 0.99,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7264
+       },
+       "offer": {
+        "product_id": "463779",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 666666666.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 10.71,
+        "unit_price_gross": 12.16,
+        "list_price": 12.6,
+        "comparison_price": 2.86,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "best",
+       "rank_score": 0.6746,
+       "reasons": [
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "15 x 0.25 L (3.75 L per KI)",
+        "\u20ac2.86/L (\u20ac10.71 per KI)",
+        "delivery reliability 0.99",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "469363",
+        "gtin": "6413300011517",
+        "name": "Arla Semi skimmed milkdrink 1 L UHT lactose free Suomesta",
+        "name_fi": "Arla Kevytmaitojuoma 1 L UHT laktoositon Suomesta",
+        "brand": "Arla",
+        "vendor": "ARLA OY",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_LACTOSE"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7975
+       },
+       "offer": {
+        "product_id": "469363",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 384.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 2.48,
+        "unit_price_gross": 2.81,
+        "list_price": 2.92,
+        "comparison_price": 2.48,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "limited_stock"
+        ],
+        "provenance": null
+       },
+       "tier": "better",
+       "rank_score": 0.612,
+       "reasons": [
+        "Same spec (1.5 % fat) as Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free, other brand (Arla)",
+        "1 L per ST",
+        "\u20ac2.48/L (\u20ac2.48 per ST)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00",
+        "only 384 ST in stock (= 384 L)"
+       ],
+       "flags": [
+        "outside_preference",
+        "partial_stock"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464401",
+        "gtin": "6408430000494",
+        "name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae rasvaton maitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.5878
+       },
+       "offer": {
+        "product_id": "464401",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.1,
+        "unit_price_gross": 1.25,
+        "list_price": 1.31,
+        "comparison_price": 1.1,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.9591,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac1.10/L (\u20ac1.10 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "463335",
+        "gtin": "6408430000296",
+        "name": "Valio Eila\u00ae 3 % milk drink 1 l lactose free",
+        "name_fi": "Valio Eila\u00ae 3 % maitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.8989
+       },
+       "offer": {
+        "product_id": "463335",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.4,
+        "unit_price_gross": 1.59,
+        "list_price": 2.02,
+        "comparison_price": 1.4,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.8607,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 3.0 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac1.40/L (\u20ac1.40 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464073",
+        "gtin": "6408430011674",
+        "name": "Valio whole milk 1 l lactose free UHT",
+        "name_fi": "Valio t\u00e4ysmaito 1 l laktoositon UHT",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.9357
+       },
+       "offer": {
+        "product_id": "464073",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 9999999999.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 1.64,
+        "unit_price_gross": 1.86,
+        "list_price": 1.95,
+        "comparison_price": 1.64,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.8079,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 3.5 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac1.64/L (\u20ac1.64 per ST)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00"
+       ],
+       "flags": [
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "462775",
+        "gtin": "6413300011500",
+        "name": "Arla Milkdrink 1L lactose free fat free UHT Suomesta",
+        "name_fi": "Arla Maitojuoma 1L laktoositon rasvaton UHT Suomesta",
+        "brand": "Arla",
+        "vendor": "ARLA OY",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.8393
+       },
+       "offer": {
+        "product_id": "462775",
+        "requested_date": "2026-11-16",
+        "available": true,
+        "available_amount": 51.0,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-15T17:00:00+02:00",
+        "cutoff_passed": false,
+        "logistic_model": "Stock",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 2.57,
+        "unit_price_gross": 2.92,
+        "list_price": 3.02,
+        "comparison_price": 2.57,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "limited_stock"
+        ],
+        "provenance": null
+       },
+       "tier": "good",
+       "rank_score": 0.5716,
+       "reasons": [
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "1 L per ST",
+        "\u20ac2.57/L (\u20ac2.57 per ST)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Stock item, order by Sun 15 Nov 17:00",
+        "only 51 ST in stock (= 51 L)"
+       ],
+       "flags": [
+        "outside_preference",
+        "partial_stock"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "463038",
+        "gtin": "6408430100330",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 10 l novobox laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 20.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.6973
+       },
+       "offer": {
+        "product_id": "463038",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 31.31,
+        "unit_price_gross": 35.54,
+        "list_price": 36.83,
+        "comparison_price": 1.57,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.7917,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Your usual product",
+        "2 x 10 L (20 L per KI)",
+        "\u20ac1.57/L (\u20ac31.31 per KI)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": false
+       }
+      },
+      {
+       "product": {
+        "id": "469119",
+        "gtin": "6408430000517",
+        "name": "Valio Eila\u00ae skimmed milk drink 1,75 l lactose free",
+        "name_fi": "Valio Eila\u00ae rasvaton maitojuoma 1,75 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "ST",
+        "content_amount": 1.75,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.8122
+       },
+       "offer": {
+        "product_id": "469119",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "ST",
+        "unit_price": 2.08,
+        "unit_price_gross": 2.36,
+        "list_price": 2.45,
+        "comparison_price": 1.19,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8944,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "1.75 L per ST",
+        "\u20ac1.19/L (\u20ac2.08 per ST)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "464119",
+        "gtin": "6408430100866",
+        "name": "Valio skimmed milk 1 l lactose free UHT",
+        "name_fi": "Valio rasvaton maito 1 l laktoositon UHT",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 10.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.923
+       },
+       "offer": {
+        "product_id": "464119",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 13.32,
+        "unit_price_gross": 15.12,
+        "list_price": 18.11,
+        "comparison_price": 1.33,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8797,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "10 x 1 L (10 L per KI)",
+        "\u20ac1.33/L (\u20ac13.32 per KI)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "465039",
+        "gtin": "6408430100248",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 5.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7985
+       },
+       "offer": {
+        "product_id": "465039",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 6.86,
+        "unit_price_gross": 7.79,
+        "list_price": 9.75,
+        "comparison_price": 1.37,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "2026-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8686,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "5 x 1 L (5 L per KI)",
+        "\u20ac1.37/L (\u20ac6.86 per KI)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "469287",
+        "gtin": "6408430101108",
+        "name": "Valio Eila\u00ae semi skimmed milk drink 1,75 l lactose free",
+        "name_fi": "Valio Eila\u00ae kevytmaitojuoma 1,75 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 21.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_FAT",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": null,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.7647
+       },
+       "offer": {
+        "product_id": "469287",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 27.39,
+        "unit_price_gross": 31.09,
+        "list_price": 32.22,
+        "comparison_price": 1.3,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8585,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+        "12 x 1.75 L (21 L per KI)",
+        "\u20ac1.30/L (\u20ac27.39 per KI)",
+        "delivery reliability: no data",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      },
+      {
+       "product": {
+        "id": "476240",
+        "gtin": "6408430100224",
+        "name": "Valio Eila\u00ae skimmed milk drink 1 l lactose free",
+        "name_fi": "Valio Eila\u00ae rasvaton maitojuoma 1 l laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10400",
+        "sales_unit": "KI",
+        "content_amount": 5.0,
+        "content_unit": "L",
+        "claims": [
+         "FREE_FROM_ADDITIVES",
+         "FREE_FROM_COLOURING_AGENTS",
+         "FREE_FROM_FAT",
+         "FREE_FROM_LACTOSE",
+         "FREE_FROM_PRESERVATIVES",
+         "FREE_FROM_SWEETENERS",
+         "LOW_SODIUM_SALT",
+         "NO_ADDED_SUGARS",
+         "VEGETARIAN"
+        ],
+        "labels": [
+         "FINNISH_HEART_SYMBOL",
+         "GOODS_FROM_FINLAND_BLUE_SWAN"
+        ],
+        "delivery_reliability": 1.0,
+        "co2_kg_per_kg": 1.1,
+        "score": 15.846
+       },
+       "offer": {
+        "product_id": "476240",
+        "requested_date": "2026-11-16",
+        "available": false,
+        "available_amount": null,
+        "available_date": "2026-11-16",
+        "closing_time": "2026-11-12T15:00:00+02:00",
+        "cutoff_passed": true,
+        "logistic_model": "Terminal",
+        "sales_block": false,
+        "sales_unit": "KI",
+        "unit_price": 7.62,
+        "unit_price_gross": 8.65,
+        "list_price": 8.96,
+        "comparison_price": 1.52,
+        "comparison_unit": "L",
+        "tax_rate": 13.5,
+        "currency": "EUR",
+        "price_valid_to": "9999-12-31T00:00:00+02:00",
+        "fetched_at": "2026-11-15T03:37:49.423175Z",
+        "issues": [
+         "terminal_unknown_qty",
+         "cutoff_passed"
+        ],
+        "provenance": null
+       },
+       "tier": "rejected",
+       "rank_score": 0.8322,
+       "reasons": [
+        "Rejected: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov",
+        "Meets the hard constraints; differs: fat 0.0 % vs 1.5 %",
+        "5 x 1 L (5 L per KI)",
+        "\u20ac1.52/L (\u20ac7.62 per KI)",
+        "delivery reliability 1.00",
+        "CO2 1.10 kg CO2e/kg (category average)",
+        "has FREE_FROM_LACTOSE",
+        "Terminal item"
+       ],
+       "flags": [
+        "cutoff_passed",
+        "outside_preference"
+       ],
+       "injection_screen": {
+        "suspicious": false,
+        "reasons": [],
+        "screened": true
+       }
+      }
+     ],
+     "covered_amount": 1000.0,
+     "shortfall": 0.0,
+     "total_net": 1010.0,
+     "explanation": "1000 L: 1000 L Mon 16 Nov (Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free). Need: 1000 L of 'lactose-free milk' with FREE_FROM_LACTOSE, delivered by Mon 16 Nov 2026. Usual product Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (463038) cannot be used: order cut-off passed (Thu 12 Nov 15:00) for delivery Mon 16 Nov. BEST: 1000 ST of Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free (464306) covers 1000 L for \u20ac1,010.00. Total 1000 L for \u20ac1,010.00 net. 6 candidate(s) rejected; see candidates[].reasons."
+    },
+    "rationale": "The usual product, Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free, was rejected because its order cut-off passed for delivery Mon 16 Nov. The selected best-tier option is Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free at a unit price of 1.01 to cover 1000.0 L, offering the same brand and fat level as your usual product. Other alternatives include better-tier Arla Semi skimmed milkdrink 1 L UHT lactose free Suomesta at 2.48, which matches the 1.5 % fat spec under a different brand, and good-tier options like Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae skimmed milk drink 1 l lactose free at 1.10 that meet hard constraints but differ in fat content.",
+    "item_index": 0
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 12,
+   "ts": "2026-11-15T05:38:06.756001+02:00",
+   "kind": "thought",
+   "title": "Substitution decision needed: escalating to gemini-4-hydrogen (thinking HIGH)",
+   "data": {
+    "model": "gemini-4-hydrogen",
+    "thinking": "HIGH"
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 13,
+   "ts": "2026-11-15T05:38:09.951926+02:00",
+   "kind": "tool_call",
+   "title": "create_quote({\"need\": {\"product_query\": \"lactose-free milk\", \"customer_id\": \"hotel-aurora\", \"excluded_allergens\": [], \"unit\": \"L\", \"\u2026)",
+   "data": {
+    "name": "create_quote",
+    "args": {
+     "need": {
+      "product_query": "lactose-free milk",
+      "customer_id": "hotel-aurora",
+      "excluded_allergens": [],
+      "unit": "L",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "delivery_by": "2026-11-16",
+      "quantity": 1000,
+      "preferences": {
+       "parsed_by": "gemini",
+       "brand": "Valio",
+       "standing_order_ratio": 3.33,
+       "standing_order_qty_per_week": 300,
+       "fat_pct": 1.5,
+       "pack": "10 l novobox for the milk dispenser",
+       "site": "Hotel Aurora Helsinki"
+      },
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ]
+     },
+     "lines": [
+      {
+       "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+       "qty_sales_units": 1000,
+       "flags": [
+        "outside_preference"
+       ],
+       "tier": "best",
+       "product_id": "464306"
+      }
+     ],
+     "delivery_date": "2026-11-16"
+    },
+    "model": "gemini-4-hydrogen",
+    "thinking": "HIGH",
+    "latency_s": 3.19
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 14,
+   "ts": "2026-11-15T05:38:10.347224+02:00",
+   "kind": "tool_result",
+   "title": "create_quote: Q-20261115-964294b6 EUR 1010.0",
+   "data": {
+    "name": "create_quote",
+    "latency_s": 0.39,
+    "result": {
+     "quote_id": "Q-20261115-964294b6",
+     "customer_id": "hotel-aurora",
+     "agent_id": "buyer-1",
+     "delivery_date": "2026-11-16",
+     "lines": [
+      {
+       "product_id": "464306",
+       "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+       "qty_sales_units": 1000.0,
+       "sales_unit": "ST",
+       "unit_price": 1.01,
+       "line_total": 1010.0,
+       "tier": "best",
+       "flags": [
+        "outside_preference"
+       ]
+      }
+     ],
+     "total_net": 1010.0,
+     "total_gross": 1150.0,
+     "currency": "EUR",
+     "created_at": "2026-11-15T03:38:10Z",
+     "expires_at": "2026-11-15T03:53:10Z",
+     "need": {
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "customer_id": "hotel-aurora",
+      "product_query": "lactose-free milk",
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ],
+      "excluded_allergens": [],
+      "quantity": 1000.0,
+      "unit": "L",
+      "delivery_by": "2026-11-16",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "preferences": {
+       "parsed_by": "gemini",
+       "brand": "Valio",
+       "standing_order_ratio": 3.33,
+       "standing_order_qty_per_week": 300,
+       "fat_pct": 1.5,
+       "pack": "10 l novobox for the milk dispenser",
+       "site": "Hotel Aurora Helsinki"
+      }
+     },
+     "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+     "signature": "eyJhbGciOiJFZERTQSIsImtpZCI6IkNJYk1qZHVwN3hlamhpelF2MmVTMXNLZEVaX3JJT2RldEQ0VTFELVhhdmMiLCJ0eXAiOiJxdW90ZStqd3MifQ.eyJhZ2VudF9pZCI6ImJ1eWVyLTEiLCJjdXJyZW5jeSI6IkVVUiIsImN1c3RvbWVyX2lkIjoiaG90ZWwtYXVyb3JhIiwiZXhwIjoxNzk0NzE0NzkwLCJpYXQiOjE3OTQ3MTM4OTAsImlzcyI6InZhbGlvLWFpbW8tdHJ1c3RlZC10cmFkZSIsInF1b3RlX2hhc2giOiI2ZGVmN2RhZTE2M2YyMzMyNGZiOTcwMzcwMDBhYzlhYjdmYTcyNzY5NzFlZWFkMTIwMDY5ZTA5ZjMyNzBmYmRhIiwicXVvdGVfaWQiOiJRLTIwMjYxMTE1LTk2NDI5NGI2IiwidG90YWxfbmV0IjoxMDEwLCJ0eXAiOiJxdW90ZSJ9.-n7kj1Feu6E5cSWGBgBp46-5b2VFqfTGQBbKnSxljaa9ToVrTWusFhIrd9XqiS4inM4P2f3tBrGW5mKOXxZ1Cg",
+     "kid": "CIbMjdup7xejhizQv2eS1sKdEZ_rIOdetD4U1D-Xavc",
+     "provenance": {
+      "source": "valio-aimo-mock-api",
+      "upstream": "https://junction26.valioaimo.fi",
+      "endpoints": [
+       "/api/price",
+       "/api/availability"
+      ],
+      "served_from": "live",
+      "fresh_requested": true,
+      "upstream_calls": 2,
+      "fetched_at": "2026-11-15T03:38:10.230958+00:00",
+      "valid_for_s": 300,
+      "upstream_time_now": "2026-11-15T05:38:10+0200",
+      "faults": null,
+      "clock": {
+       "mode": "real",
+       "now": "2026-11-15T03:38:10.293090+00:00",
+       "frozen": false
+      },
+      "price_locked_until": "2026-11-15T03:53:10+00:00",
+      "line_verification": {
+       "464306": {
+        "tier": "best",
+        "method": "catalog.rank_substitutes",
+        "reasons": [
+         "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+         "1 L per ST",
+         "\u20ac1.01/L (\u20ac1.01 per ST)"
+        ],
+        "reference": "463038"
+       }
+      },
+      "client_claims": [
+       {
+        "product_id": "464306",
+        "tier": "best",
+        "flags": [
+         "outside_preference"
+        ]
+       }
+      ]
+     },
+     "availability_snapshot": [
+      {
+       "product_id": "464306",
+       "available_amount": 9999999999.0,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-15T17:00:00+02:00",
+       "logistic_model": "Stock",
+       "unit_price": 1.01,
+       "issues": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 15,
+   "ts": "2026-11-15T05:38:10.347485+02:00",
+   "kind": "quote",
+   "title": "Quote Q-20261115-964294b6: EUR 1010.00, hash 6def7dae163f\u2026",
+   "data": {
+    "quote": {
+     "quote_id": "Q-20261115-964294b6",
+     "customer_id": "hotel-aurora",
+     "agent_id": "buyer-1",
+     "delivery_date": "2026-11-16",
+     "lines": [
+      {
+       "product_id": "464306",
+       "product_name": "Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free",
+       "qty_sales_units": 1000.0,
+       "sales_unit": "ST",
+       "unit_price": 1.01,
+       "line_total": 1010.0,
+       "tier": "best",
+       "flags": [
+        "outside_preference"
+       ]
+      }
+     ],
+     "total_net": 1010.0,
+     "total_gross": 1150.0,
+     "currency": "EUR",
+     "created_at": "2026-11-15T03:38:10Z",
+     "expires_at": "2026-11-15T03:53:10Z",
+     "need": {
+      "raw_text": "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+      "customer_id": "hotel-aurora",
+      "product_query": "lactose-free milk",
+      "required_claims": [
+       "FREE_FROM_LACTOSE"
+      ],
+      "excluded_allergens": [],
+      "quantity": 1000.0,
+      "unit": "L",
+      "delivery_by": "2026-11-16",
+      "preferred_product_ids": [
+       "463038"
+      ],
+      "preferences": {
+       "parsed_by": "gemini",
+       "brand": "Valio",
+       "standing_order_ratio": 3.33,
+       "standing_order_qty_per_week": 300,
+       "fat_pct": 1.5,
+       "pack": "10 l novobox for the milk dispenser",
+       "site": "Hotel Aurora Helsinki"
+      }
+     },
+     "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+     "signature": "eyJhbGciOiJFZERTQSIsImtpZCI6IkNJYk1qZHVwN3hlamhpelF2MmVTMXNLZEVaX3JJT2RldEQ0VTFELVhhdmMiLCJ0eXAiOiJxdW90ZStqd3MifQ.eyJhZ2VudF9pZCI6ImJ1eWVyLTEiLCJjdXJyZW5jeSI6IkVVUiIsImN1c3RvbWVyX2lkIjoiaG90ZWwtYXVyb3JhIiwiZXhwIjoxNzk0NzE0NzkwLCJpYXQiOjE3OTQ3MTM4OTAsImlzcyI6InZhbGlvLWFpbW8tdHJ1c3RlZC10cmFkZSIsInF1b3RlX2hhc2giOiI2ZGVmN2RhZTE2M2YyMzMyNGZiOTcwMzcwMDBhYzlhYjdmYTcyNzY5NzFlZWFkMTIwMDY5ZTA5ZjMyNzBmYmRhIiwicXVvdGVfaWQiOiJRLTIwMjYxMTE1LTk2NDI5NGI2IiwidG90YWxfbmV0IjoxMDEwLCJ0eXAiOiJxdW90ZSJ9.-n7kj1Feu6E5cSWGBgBp46-5b2VFqfTGQBbKnSxljaa9ToVrTWusFhIrd9XqiS4inM4P2f3tBrGW5mKOXxZ1Cg",
+     "kid": "CIbMjdup7xejhizQv2eS1sKdEZ_rIOdetD4U1D-Xavc",
+     "provenance": {
+      "source": "valio-aimo-mock-api",
+      "upstream": "https://junction26.valioaimo.fi",
+      "endpoints": [
+       "/api/price",
+       "/api/availability"
+      ],
+      "served_from": "live",
+      "fresh_requested": true,
+      "upstream_calls": 2,
+      "fetched_at": "2026-11-15T03:38:10.230958+00:00",
+      "valid_for_s": 300,
+      "upstream_time_now": "2026-11-15T05:38:10+0200",
+      "faults": null,
+      "clock": {
+       "mode": "real",
+       "now": "2026-11-15T03:38:10.293090+00:00",
+       "frozen": false
+      },
+      "price_locked_until": "2026-11-15T03:53:10+00:00",
+      "line_verification": {
+       "464306": {
+        "tier": "best",
+        "method": "catalog.rank_substitutes",
+        "reasons": [
+         "Same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free (2 x 10 L (20 L per KI)); different pack",
+         "1 L per ST",
+         "\u20ac1.01/L (\u20ac1.01 per ST)"
+        ],
+        "reference": "463038"
+       }
+      },
+      "client_claims": [
+       {
+        "product_id": "464306",
+        "tier": "best",
+        "flags": [
+         "outside_preference"
+        ]
+       }
+      ]
+     },
+     "availability_snapshot": [
+      {
+       "product_id": "464306",
+       "available_amount": 9999999999.0,
+       "available_date": "2026-11-16",
+       "closing_time": "2026-11-15T17:00:00+02:00",
+       "logistic_model": "Stock",
+       "unit_price": 1.01,
+       "issues": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 16,
+   "ts": "2026-11-15T05:38:12.362891+02:00",
+   "kind": "tool_call",
+   "title": "place_order({\"quote_id\": \"Q-20261115-964294b6\", \"quote_hash\": \"6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda\"})",
+   "data": {
+    "name": "place_order",
+    "args": {
+     "quote_id": "Q-20261115-964294b6",
+     "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda"
+    },
+    "model": "gemini-3.8-flash",
+    "thinking": "LOW",
+    "latency_s": 2.01
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 17,
+   "ts": "2026-11-15T05:38:12.417542+02:00",
+   "kind": "tool_result",
+   "title": "place_order: pending_approval",
+   "data": {
+    "name": "place_order",
+    "latency_s": 0.05,
+    "result": {
+     "order_id": "ORD-20261115-06eda13d",
+     "quote_id": "Q-20261115-964294b6",
+     "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+     "customer_id": "hotel-aurora",
+     "agent_id": "buyer-1",
+     "status": "pending_approval",
+     "decision": {
+      "outcome": "needs_approval",
+      "approver_role": "procurement_manager",
+      "hits": [
+       {
+        "rule_id": "quote_integrity",
+        "outcome": "allow",
+        "message": "Quote arithmetic checks out (1 line(s), \u20ac1,010.00); signed by Valio Aimo and unmodified."
+       },
+       {
+        "rule_id": "mandate_scope",
+        "outcome": "allow",
+        "message": "Agent hotel-aurora/buyer-1 holds a valid mandate from Hotel Aurora Helsinki to submit orders."
+       },
+       {
+        "rule_id": "quote_freshness",
+        "outcome": "allow",
+        "message": "Prices are locked until 05:53 (Helsinki time)."
+       },
+       {
+        "rule_id": "spend",
+        "outcome": "needs_approval",
+        "message": "Order total \u20ac1,010.00 is above the \u20ac500.00 auto-approve limit, so a procurement manager must approve it."
+       },
+       {
+        "rule_id": "weekly_budget",
+        "outcome": "allow",
+        "message": "Spending in the last 7 days would be \u20ac1,010.00 of the \u20ac8,000.00 weekly budget."
+       },
+       {
+        "rule_id": "category_scope",
+        "outcome": "allow",
+        "message": "All lines are within the allowed categories (dairy and chilled, fresh bakery, chilled food and produce, dry goods, frozen food)."
+       },
+       {
+        "rule_id": "substitution:464306",
+        "outcome": "allow",
+        "message": "'Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free' (464306) is a substitute: same brand and spec in a different pack (tier best), verified as a customer-approved alternative in the profile. Allowed automatically by this policy."
+       },
+       {
+        "rule_id": "allergens",
+        "outcome": "allow",
+        "message": "This mandate has no allergen exclusions."
+       },
+       {
+        "rule_id": "delivery",
+        "outcome": "allow",
+        "message": "Delivery Mon 16 Nov meets the requested date (Mon 16 Nov) and no line is past its order cut-off."
+       },
+       {
+        "rule_id": "quantity_drift:milk",
+        "outcome": "needs_approval",
+        "message": "This is 3.3\u00d7 your usual weekly volume of milk (1,000 L vs about 300 L a week). A procurement manager must confirm the quantity."
+       },
+       {
+        "rule_id": "split_order",
+        "outcome": "allow",
+        "message": "This order is above the auto-approve limit on its own; the spend rule decides."
+       },
+       {
+        "rule_id": "price_jump",
+        "outcome": "allow",
+        "message": "No line is more than 15% above the last price paid."
+       },
+       {
+        "rule_id": "injection",
+        "outcome": "allow",
+        "message": "No prompt-injection signals in the request or supplier text."
+       }
+      ],
+      "policy_id": "hotel-aurora",
+      "policy_version": "1.2.0"
+     },
+     "approved_by": null,
+     "approval_note": null,
+     "response_code": null,
+     "response_lines": [],
+     "created_at": "2026-11-15T03:38:12.402504Z",
+     "updated_at": "2026-11-15T03:38:12.402504Z",
+     "provenance": null,
+     "approver_role": null
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 18,
+   "ts": "2026-11-15T05:38:12.417638+02:00",
+   "kind": "decision",
+   "title": "Policy decision: needs_approval",
+   "data": {
+    "order_id": "ORD-20261115-06eda13d",
+    "status": "pending_approval",
+    "decision": {
+     "outcome": "needs_approval",
+     "approver_role": "procurement_manager",
+     "hits": [
+      {
+       "rule_id": "quote_integrity",
+       "outcome": "allow",
+       "message": "Quote arithmetic checks out (1 line(s), \u20ac1,010.00); signed by Valio Aimo and unmodified."
+      },
+      {
+       "rule_id": "mandate_scope",
+       "outcome": "allow",
+       "message": "Agent hotel-aurora/buyer-1 holds a valid mandate from Hotel Aurora Helsinki to submit orders."
+      },
+      {
+       "rule_id": "quote_freshness",
+       "outcome": "allow",
+       "message": "Prices are locked until 05:53 (Helsinki time)."
+      },
+      {
+       "rule_id": "spend",
+       "outcome": "needs_approval",
+       "message": "Order total \u20ac1,010.00 is above the \u20ac500.00 auto-approve limit, so a procurement manager must approve it."
+      },
+      {
+       "rule_id": "weekly_budget",
+       "outcome": "allow",
+       "message": "Spending in the last 7 days would be \u20ac1,010.00 of the \u20ac8,000.00 weekly budget."
+      },
+      {
+       "rule_id": "category_scope",
+       "outcome": "allow",
+       "message": "All lines are within the allowed categories (dairy and chilled, fresh bakery, chilled food and produce, dry goods, frozen food)."
+      },
+      {
+       "rule_id": "substitution:464306",
+       "outcome": "allow",
+       "message": "'Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free' (464306) is a substitute: same brand and spec in a different pack (tier best), verified as a customer-approved alternative in the profile. Allowed automatically by this policy."
+      },
+      {
+       "rule_id": "allergens",
+       "outcome": "allow",
+       "message": "This mandate has no allergen exclusions."
+      },
+      {
+       "rule_id": "delivery",
+       "outcome": "allow",
+       "message": "Delivery Mon 16 Nov meets the requested date (Mon 16 Nov) and no line is past its order cut-off."
+      },
+      {
+       "rule_id": "quantity_drift:milk",
+       "outcome": "needs_approval",
+       "message": "This is 3.3\u00d7 your usual weekly volume of milk (1,000 L vs about 300 L a week). A procurement manager must confirm the quantity."
+      },
+      {
+       "rule_id": "split_order",
+       "outcome": "allow",
+       "message": "This order is above the auto-approve limit on its own; the spend rule decides."
+      },
+      {
+       "rule_id": "price_jump",
+       "outcome": "allow",
+       "message": "No line is more than 15% above the last price paid."
+      },
+      {
+       "rule_id": "injection",
+       "outcome": "allow",
+       "message": "No prompt-injection signals in the request or supplier text."
+      }
+     ],
+     "policy_id": "hotel-aurora",
+     "policy_version": "1.2.0"
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 19,
+   "ts": "2026-11-15T05:38:12.418193+02:00",
+   "kind": "approval_wait",
+   "title": "Waiting for procurement_manager to approve order ORD-20261115-06eda13d",
+   "data": {
+    "order_id": "ORD-20261115-06eda13d",
+    "approver_role": "procurement_manager",
+    "quote_id": "Q-20261115-964294b6",
+    "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+    "hits": [
+     {
+      "rule_id": "quote_integrity",
+      "outcome": "allow",
+      "message": "Quote arithmetic checks out (1 line(s), \u20ac1,010.00); signed by Valio Aimo and unmodified."
+     },
+     {
+      "rule_id": "mandate_scope",
+      "outcome": "allow",
+      "message": "Agent hotel-aurora/buyer-1 holds a valid mandate from Hotel Aurora Helsinki to submit orders."
+     },
+     {
+      "rule_id": "quote_freshness",
+      "outcome": "allow",
+      "message": "Prices are locked until 05:53 (Helsinki time)."
+     },
+     {
+      "rule_id": "spend",
+      "outcome": "needs_approval",
+      "message": "Order total \u20ac1,010.00 is above the \u20ac500.00 auto-approve limit, so a procurement manager must approve it."
+     },
+     {
+      "rule_id": "weekly_budget",
+      "outcome": "allow",
+      "message": "Spending in the last 7 days would be \u20ac1,010.00 of the \u20ac8,000.00 weekly budget."
+     },
+     {
+      "rule_id": "category_scope",
+      "outcome": "allow",
+      "message": "All lines are within the allowed categories (dairy and chilled, fresh bakery, chilled food and produce, dry goods, frozen food)."
+     },
+     {
+      "rule_id": "substitution:464306",
+      "outcome": "allow",
+      "message": "'Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free' (464306) is a substitute: same brand and spec in a different pack (tier best), verified as a customer-approved alternative in the profile. Allowed automatically by this policy."
+     },
+     {
+      "rule_id": "allergens",
+      "outcome": "allow",
+      "message": "This mandate has no allergen exclusions."
+     },
+     {
+      "rule_id": "delivery",
+      "outcome": "allow",
+      "message": "Delivery Mon 16 Nov meets the requested date (Mon 16 Nov) and no line is past its order cut-off."
+     },
+     {
+      "rule_id": "quantity_drift:milk",
+      "outcome": "needs_approval",
+      "message": "This is 3.3\u00d7 your usual weekly volume of milk (1,000 L vs about 300 L a week). A procurement manager must confirm the quantity."
+     },
+     {
+      "rule_id": "split_order",
+      "outcome": "allow",
+      "message": "This order is above the auto-approve limit on its own; the spend rule decides."
+     },
+     {
+      "rule_id": "price_jump",
+      "outcome": "allow",
+      "message": "No line is more than 15% above the last price paid."
+     },
+     {
+      "rule_id": "injection",
+      "outcome": "allow",
+      "message": "No prompt-injection signals in the request or supplier text."
+     }
+    ],
+    "poll_s": 2.0
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 20,
+   "ts": "2026-11-15T05:38:16.506433+02:00",
+   "kind": "order",
+   "title": "Order ORD-20261115-06eda13d placed (human decision by anna@hotel-aurora.example)",
+   "data": {
+    "order": {
+     "order_id": "ORD-20261115-06eda13d",
+     "quote_id": "Q-20261115-964294b6",
+     "quote_hash": "6def7dae163f23324fb97037000ac9ab7fa7276971eead120069e09f3270fbda",
+     "customer_id": "hotel-aurora",
+     "agent_id": "buyer-1",
+     "status": "placed",
+     "decision": {
+      "outcome": "needs_approval",
+      "approver_role": "procurement_manager",
+      "hits": [
+       {
+        "rule_id": "quote_integrity",
+        "outcome": "allow",
+        "message": "Quote arithmetic checks out (1 line(s), \u20ac1,010.00); signed by Valio Aimo and unmodified."
+       },
+       {
+        "rule_id": "mandate_scope",
+        "outcome": "allow",
+        "message": "Agent hotel-aurora/buyer-1 holds a valid mandate from Hotel Aurora Helsinki to submit orders."
+       },
+       {
+        "rule_id": "quote_freshness",
+        "outcome": "allow",
+        "message": "Prices are locked until 05:53 (Helsinki time)."
+       },
+       {
+        "rule_id": "spend",
+        "outcome": "needs_approval",
+        "message": "Order total \u20ac1,010.00 is above the \u20ac500.00 auto-approve limit, so a procurement manager must approve it."
+       },
+       {
+        "rule_id": "weekly_budget",
+        "outcome": "allow",
+        "message": "Spending in the last 7 days would be \u20ac1,010.00 of the \u20ac8,000.00 weekly budget."
+       },
+       {
+        "rule_id": "category_scope",
+        "outcome": "allow",
+        "message": "All lines are within the allowed categories (dairy and chilled, fresh bakery, chilled food and produce, dry goods, frozen food)."
+       },
+       {
+        "rule_id": "substitution:464306",
+        "outcome": "allow",
+        "message": "'Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free' (464306) is a substitute: same brand and spec in a different pack (tier best), verified as a customer-approved alternative in the profile. Allowed automatically by this policy."
+       },
+       {
+        "rule_id": "allergens",
+        "outcome": "allow",
+        "message": "This mandate has no allergen exclusions."
+       },
+       {
+        "rule_id": "delivery",
+        "outcome": "allow",
+        "message": "Delivery Mon 16 Nov meets the requested date (Mon 16 Nov) and no line is past its order cut-off."
+       },
+       {
+        "rule_id": "quantity_drift:milk",
+        "outcome": "needs_approval",
+        "message": "This is 3.3\u00d7 your usual weekly volume of milk (1,000 L vs about 300 L a week). A procurement manager must confirm the quantity."
+       },
+       {
+        "rule_id": "split_order",
+        "outcome": "allow",
+        "message": "This order is above the auto-approve limit on its own; the spend rule decides."
+       },
+       {
+        "rule_id": "price_jump",
+        "outcome": "allow",
+        "message": "No line is more than 15% above the last price paid."
+       },
+       {
+        "rule_id": "injection",
+        "outcome": "allow",
+        "message": "No prompt-injection signals in the request or supplier text."
+       }
+      ],
+      "policy_id": "hotel-aurora",
+      "policy_version": "1.2.0"
+     },
+     "approved_by": "anna@hotel-aurora.example",
+     "approval_note": "Approved from the terminal demo",
+     "response_code": "AP",
+     "response_lines": [
+      {
+       "product_id": "464306",
+       "code": "AP",
+       "qty_confirmed": 1000.0,
+       "note": "confirmed"
+      }
+     ],
+     "created_at": "2026-11-15T03:38:12.402504Z",
+     "updated_at": "2026-11-15T03:38:16.033905Z",
+     "provenance": {
+      "source": "valio-aimo-mock-api",
+      "upstream": "https://junction26.valioaimo.fi",
+      "endpoints": [
+       "/api/price",
+       "/api/availability"
+      ],
+      "served_from": "live",
+      "fresh_requested": true,
+      "upstream_calls": 2,
+      "fetched_at": "2026-11-15T03:38:15.920761+00:00",
+      "valid_for_s": 300,
+      "upstream_time_now": "2026-11-15T05:38:16+0200",
+      "faults": null,
+      "clock": {
+       "mode": "real",
+       "now": "2026-11-15T03:38:16.031439+00:00",
+       "frozen": false
+      }
+     },
+     "approver_role": "procurement_manager"
+    }
+   }
+  },
+  {
+   "run_id": "run-b9690772fe",
+   "seq": 21,
+   "ts": "2026-11-15T05:38:18.809528+02:00",
+   "kind": "final",
+   "title": "Done: placed",
+   "data": {
+    "summary": "An order was placed for 1,000 units (1,000 L) of Valio Hyv\u00e4 suomalainen Arki\u00ae Eila\u00ae semi skimmed milk drink 1 l lactose free for a total net amount of \u20ac1,010.00. This substitution was selected because it shares the same brand and fat level as your usual Valio Eila\u00ae semi skimmed milk drink 10 l novobox lactose free, differing only in packaging. The policy required approval due to spend exceeding the \u20ac500.00 limit and milk volume exceeding your usual weekly amount, which human approver anna@hotel-aurora.example approved. You can view the full details at http://localhost:8041/v1/audit/report/ORD-20261115-06eda13d.",
+    "status": "placed",
+    "agent_text": "",
+    "audit_report": "http://localhost:8041/v1/audit/report/ORD-20261115-06eda13d",
+    "latency_s": 24.53,
+    "models_used": [
+     {
+      "step": 0,
+      "model": "gemini-3.8-flash",
+      "thinking": "LOW",
+      "latency_s": 1.62
+     },
+     {
+      "step": 1,
+      "model": "gemini-3.8-flash",
+      "thinking": "LOW",
+      "latency_s": 2.5
+     },
+     {
+      "step": 2,
+      "model": "gemini-3.8-flash",
+      "thinking": "LOW",
+      "latency_s": 2.61
+     },
+     {
+      "step": 3,
+      "model": "gemini-4-hydrogen",
+      "thinking": "HIGH",
+      "latency_s": 3.19
+     },
+     {
+      "step": 4,
+      "model": "gemini-3.8-flash",
+      "thinking": "LOW",
+      "latency_s": 2.01
+     }
+    ],
+    "escalated": true,
+    "injections": []
+   }
+  }
+ ],
+ "transport": "mcp",
+ "scenario": "happy",
+ "customer_id": "hotel-aurora"
+}

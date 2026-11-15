@@ -21,14 +21,12 @@ PROFILES: dict[str, dict[str, Any]] = {
         "policy_id": "hotel-aurora",
         "site": "Hotel Aurora Helsinki, breakfast kitchen",
         "approver": "anna@aurora (Procurement Manager)",
-        # 463038 = "Valio Eila semi skimmed milk drink 10 l novobox lactose free" (product data JSON)
         "preferred_product_ids": ["463038"],
         "usual_match": r"^(?!.*\b(?:oat|kaura\w*|havre\w*|soy|soija\w*|almond|manteli\w*|coconut|kookos\w*|rice|riisi\w*)\b).*(?:milk|mai[dt]o|mjölk|eila)",
         "preferences": {"brand": "Valio", "pack": "10 l novobox for the milk dispenser",
                         "fat_pct": 1.5},
         "excluded_allergens": [],
-        "standing_order": {"product_id": "463038", "qty_per_week": 300, "unit": "L"},  # = trust policies/hotel-aurora.yaml standing_orders.milk
-        # From docs/interfaces.md "Demo customers" (owned by trust). Fallback only.
+        "standing_order": {"product_id": "463038", "qty_per_week": 300, "unit": "L"},
         "mandate_summary": (
             "Auto-approve orders up to EUR 500 net. EUR 500-5,000 needs the procurement_manager. "
             "Over EUR 5,000 is rejected. Substitutions must keep the same claims; tier 'best' is "
@@ -71,14 +69,23 @@ PROFILES: dict[str, dict[str, Any]] = {
 
 
 def get_profile(customer_id: str) -> dict[str, Any]:
-    if customer_id in PROFILES:
-        return PROFILES[customer_id]
-    # Unknown customer: minimal profile, no preferences, identity derived from the id.
-    return {"customer_id": customer_id, "name": customer_id, "segment": "unknown",
-            "agent_id": f"{customer_id}/buyer-1", "policy_id": customer_id, "site": customer_id,
-            "approver": "a human approver", "preferred_product_ids": [], "preferences": {},
-            "excluded_allergens": [], "standing_order": None,
-            "mandate_summary": "Unknown: call list_policies."}
+    cid = customer_id if isinstance(customer_id, str) else str(customer_id or "").strip()
+    if cid in PROFILES:
+        return PROFILES[cid]
+    return {
+        "customer_id": cid,
+        "name": cid,
+        "segment": "unknown",
+        "agent_id": f"{cid}/buyer-1",
+        "policy_id": cid,
+        "site": cid,
+        "approver": "a human approver",
+        "preferred_product_ids": [],
+        "preferences": {},
+        "excluded_allergens": [],
+        "standing_order": None,
+        "mandate_summary": "Unknown: call list_policies.",
+    }
 
 
 def mandate_for(customer_id: str) -> Mandate:
