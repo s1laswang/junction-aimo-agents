@@ -47,6 +47,7 @@ BINARY_SUFFIXES = {
     ".ico",
     ".woff",
     ".woff2",
+    ".gz",
 }
 
 
@@ -153,7 +154,7 @@ def test_pytest_pass_counts_match_across_readme_numbers_and_submission():
 
 
 def test_zero_em_dashes_in_docs():
-    em_dash = "\u2014"
+    em_dash = chr(0x2014)
     doc_files = _doc_files()
     rel_prefixes = {p.relative_to(ROOT).parts[:2] for p in doc_files if len(p.relative_to(ROOT).parts) >= 2}
     for sub in (("docs", "reports"), ("docs", "evidence"), ("docs", "peppol"), ("docs", "pitch")):
@@ -261,3 +262,58 @@ def test_montage_stats_reproduces_documented_numbers():
     submission_text = (ROOT / "docs" / "SUBMISSION.md").read_text(encoding="utf-8")
     for expected in ("$0.0822", "$0.0339", "31%"):
         assert expected in submission_text, f"docs/SUBMISSION.md missing montage stat {expected!r}"
+
+
+def test_no_stray_artifacts_or_conflict_markers_in_tracked_files():
+    tracked = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
+    assert tracked
+
+    root_conformance = [
+        rel
+        for rel in tracked
+        if "/" not in rel and rel.startswith("conformance-") and rel.endswith(".json")
+    ]
+    assert root_conformance == [], f"Stray root conformance JSON in git: {root_conformance}"
+
+    stray_conformance = [
+        rel
+        for rel in tracked
+        if pathlib.PurePosixPath(rel).name.startswith("conformance-")
+        and rel.endswith(".json")
+        and not rel.startswith("docs/openness/")
+    ]
+    assert stray_conformance == [], f"Stray conformance JSON outside docs/openness/: {stray_conformance}"
+
+    allowed_conformance = [
+        rel
+        for rel in tracked
+        if rel.startswith("docs/openness/conformance-") and rel.endswith(".json")
+    ]
+    assert len(allowed_conformance) >= 2
+
+    forbidden_suffixes = (".pyc", ".sqlite", ".DS_Store", ".pem")
+    forbidden_tracked = [
+        rel
+        for rel in tracked
+        if pathlib.PurePosixPath(rel).name == ".DS_Store" or rel.endswith(forbidden_suffixes)
+    ]
+    assert forbidden_tracked == [], f"Forbidden artifact tracked in git: {forbidden_tracked}"
+
+    conflict_re = re.compile(r"^(?:<{7}|>{7}) ", re.MULTILINE)
+    conflict_hits: list[str] = []
+    for rel in tracked:
+        fp = ROOT / rel
+        if not fp.is_file() or fp.suffix.lower() in BINARY_SUFFIXES:
+            continue
+        raw = fp.read_bytes()
+        if b"\x00" in raw:
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if conflict_re.search(text):
+            conflict_hits.append(rel)
+
+    assert conflict_hits == [], f"Git merge conflict markers found in tracked files: {conflict_hits}"
+

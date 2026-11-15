@@ -78,12 +78,12 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Rejected:** silently dropping lines (the buyer gets less than asked without noticing, which violates "solves the user need"); partial quotes with warnings (agents ignore warnings; humans would approve a quote that doesn't cover the need).
 - **Evidence:** gateway report; s4 re-quote gets 409 naming the product, then a re-plan covers 200 L (docs/SCENARIOS.md).
 
-## D11. Hosting: a tunnel from the demo laptop, replay mode as fallback
-- **Status:** Open at the freeze (replay snapshot and Dockerfile shipped). If a tunnel URL is up, it goes into the "Public URL" row of [SUBMISSION.md](SUBMISSION.md); otherwise the submission says "runs locally with one command" and judges use `make accept` plus replay mode.
-- **Context:** judges should be able to connect their own MCP client; we have no shared cloud project, and the mock API key and Gemini key must not leave the team's machines.
-- **Decision:** a cloudflared tunnel from the demo laptop to `aimo serve`, with replay mode (recorded mock-API responses) as the fallback if the venue network fails (PLAN, decided with Silas).
-- **Rejected:** Cloud Run or similar (needs a GCP project and secret handling we can't set up safely in time); localhost only (judges can't try it); a recorded video only (not a working demo).
-- **Evidence:** PLAN "Questions for Silas" item 2; the Dockerfile exists for a later cloud deploy (port report).
+## D11. Hosting: one-command keyless replay locally, with optional laptop tunnel
+- **Status:** Accepted (replay snapshot `tests/fixtures/snapshot/replay/` with its 669-product gzipped catalog subset and `Dockerfile` shipped; [SUBMISSION.md](SUBMISSION.md) documents the one-command keyless `make accept` verification and `uv run aimo serve` local run, with an optional `cloudflared` laptop tunnel for live venue sharing).
+- **Context:** judges should be able to run the full system or connect their own MCP client with zero setup; we have no shared cloud project, and the mock API key and Gemini key must not leave the team's machines.
+- **Decision:** ship automatic keyless replay (`tests/fixtures/snapshot/replay/`: 669 product ids + 669-product catalog subset across `2026-11-16`..`2026-11-20`) so a fresh clone with an empty `.env` runs `make accept` and `uv run aimo serve` locally with one command, paired with an optional `cloudflared` tunnel from the demo laptop for live venue sharing (PLAN, decided with Silas). `Dockerfile` also bundles `tests/fixtures/snapshot` so a keyless container image boots directly into automatic replay mode (`served_from: replay`) with the 669-product catalog subset out of the box.
+- **Rejected:** Cloud Run or similar (needs a GCP project and secret handling we can't set up safely in time); keyed-only localhost (judges without keys or downloaded `data/` couldn't try it); a recorded video only (not a working demo).
+- **Evidence:** [SUBMISSION.md](SUBMISSION.md) "Public URL", [reports/replay.md](reports/replay.md) (`make accept` keyless `PASS=16 FAIL=0 SKIP=4`, `scenarios.run_all` 8/8, `conformance` 44/44), and `Dockerfile` (`COPY tests/fixtures/snapshot tests/fixtures/snapshot`, [reports/port.md](reports/port.md)).
 
 ---
 

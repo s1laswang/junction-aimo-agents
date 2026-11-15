@@ -33,6 +33,7 @@ COPY web web
 COPY scenarios scenarios
 COPY conformance conformance
 COPY toywholesaler toywholesaler
+COPY tests/fixtures/snapshot tests/fixtures/snapshot
 RUN uv sync --frozen --no-dev
 
 RUN useradd -r -u 10001 aimo && mkdir -p /app/data && chown -R aimo /app/data
