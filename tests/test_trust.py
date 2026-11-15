@@ -183,6 +183,11 @@ def test_injection_in_supplier_text_needs_approval():
     assert d.outcome == "needs_approval" and by_rule(d, "injection")[0].outcome == "needs_approval"
 
 
+def test_day_text_is_portable():
+    from aimo.trust.policy import day_text
+    assert day_text(date(2026, 11, 2)) == "Mon 2 Nov"
+
+
 def test_catalog_absent_fails_closed():
     q = signing.sign_quote(make_quote(customer="school-tampere", qty=10, tier="preferred"))
     d = evaluate(q, get_mandate("school-tampere", "buyer-1"), now=NOW, audit_log=AuditLog(config.STATE_DB))

@@ -97,6 +97,16 @@ def _local(ts: datetime, fmt: str = "%H:%M:%S") -> str:
         return ts.strftime(fmt)
 
 
+def _local_date(ts: datetime) -> str:
+    """'Sun 15 Nov 2026' without %-d (glibc/BSD-only; fails on Windows)."""
+    try:
+        from zoneinfo import ZoneInfo
+        t = ts.astimezone(ZoneInfo("Europe/Helsinki"))
+    except Exception:  # noqa: BLE001
+        t = ts
+    return f"{t.strftime('%a')} {t.day} {t.strftime('%b %Y')}"
+
+
 def actor_text(actor: str) -> str:
     kind, _, who = actor.partition(":")
     return {"agent": f"Buyer agent {who}", "human": who, "system": f"System ({who})"}.get(kind, actor) if who else actor
@@ -254,7 +264,7 @@ class AuditLog:
         if not evs:
             lines.append("_No events recorded for this subject._")
         else:
-            lines.append(f"_{_local(evs[0].ts, '%a %-d %b %Y')}, times in Helsinki ({_local(evs[0].ts, '%Z')}), "
+            lines.append(f"_{_local_date(evs[0].ts)}, times in Helsinki ({_local(evs[0].ts, '%Z')}), "
                          f"{clock_label(evs)}._")
             lines.append("")
             mixed = clock_label(evs).startswith("mixed")

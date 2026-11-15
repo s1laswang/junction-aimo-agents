@@ -45,7 +45,7 @@ def role_text(role: Optional[str]) -> str:
 
 
 def day_text(d: date) -> str:
-    return d.strftime("%a %-d %b")
+    return f"{d.strftime('%a')} {d.day} {d.strftime('%b')}"  # no %-d: it is glibc/BSD-only (fails on Windows)
 
 
 def qty_text(x: float) -> str:
