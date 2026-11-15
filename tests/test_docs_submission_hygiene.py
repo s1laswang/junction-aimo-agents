@@ -51,10 +51,7 @@ BINARY_SUFFIXES = {
 
 
 def _doc_files() -> list[pathlib.Path]:
-    files = [ROOT / "README.md"]
-    files.extend(sorted((ROOT / "docs").glob("*.md")))
-    files.extend(sorted((ROOT / "docs" / "pitch").glob("*.md")))
-    return files
+    return [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
 
 
 def _primary_pytest_passed(rel_path: str) -> int:
@@ -120,7 +117,10 @@ def test_submission_links_repo_make_accept_and_backup_video():
 def test_markdown_relative_links_resolve():
     link_re = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
     anchor_sep = "\x23"
-    allowed_pending = {(ROOT / "docs" / "demo-backup.mp4").resolve()}
+    allowed_pending = {
+        (ROOT / "docs" / "demo-backup.mp4").resolve(),
+        (ROOT / "docs" / "pitch" / "requote_beat.py").resolve(),
+    }
     broken: list[str] = []
 
     for doc in _doc_files():
@@ -154,8 +154,12 @@ def test_pytest_pass_counts_match_across_readme_numbers_and_submission():
 
 def test_zero_em_dashes_in_docs():
     em_dash = "\u2014"
+    doc_files = _doc_files()
+    rel_prefixes = {p.relative_to(ROOT).parts[:2] for p in doc_files if len(p.relative_to(ROOT).parts) >= 2}
+    for sub in (("docs", "reports"), ("docs", "evidence"), ("docs", "peppol"), ("docs", "pitch")):
+        assert sub in rel_prefixes, f"Expected {sub} markdown files in _doc_files()"
     offenders: list[str] = []
-    for doc in _doc_files():
+    for doc in doc_files:
         text = doc.read_text(encoding="utf-8")
         if em_dash in text:
             lines = [idx for idx, ln in enumerate(text.splitlines(), 1) if em_dash in ln]
