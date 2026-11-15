@@ -14,7 +14,7 @@ Environment variables (names only; copy `.env.example` to `.env` and fill them i
 
 | Variable | Required for | If missing |
 |---|---|---|
-| `AIMO_API_KEY` | live Valio Aimo mock API, and `aimo serve` / `aimo fetch-data` downloading the full catalog `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs) | **Replay mode, automatically:** prices and stock come from the recorded snapshot and the catalog from a committed 669-product subset, so the gateway, UI, scenarios, conformance and milk flow all run. Tests that need the full catalog are marked `needs_data` and skip (keyless: 261 passed, 0 failed). |
+| `AIMO_API_KEY` | live Valio Aimo mock API, and `aimo serve` / `aimo fetch-data` downloading the full catalog `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs) | **Replay mode, automatically:** prices and stock come from the recorded snapshot and the catalog from a committed 669-product subset, so the gateway, UI, scenarios, conformance and milk flow all run. Tests that need the full catalog are marked `needs_data` and skip (keyless: 265 passed, 0 failed). |
 | `AIMO_PORTAL_URL`, `AIMO_PORTAL_PASSWORD` | portal login to obtain a mock-API key if you do not already have `AIMO_API_KEY` | leave blank if you already have a key |
 | `GEMINI_API_KEY` | `uv run aimo demo` (Gemini buyer), embeddings / allergen hints, wind-tunnel live runs | The UI's agent runs on a deterministic mock model; `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` runs the flow with no LLM. `aimo serve --no-build` skips Gemini catalog builds. |
 | `AIMO_APPROVER_PIN` | the **human approver credential** (see [Approving as a human](#approving-as-a-human)) | Generated once into `data/keys/approver_pin` (a random 12-character passphrase). No API route or MCP tool ever returns it. |
@@ -22,7 +22,7 @@ Environment variables (names only; copy `.env.example` to `.env` and fill them i
 | `ELEVENLABS_API_KEY` | optional: ElevenLabs voice for **Decide by voice** | The browser's own speech synthesis and recognition are used instead. |
 | `AIMO_NOW` | simulated clock, e.g. `AIMO_NOW=2026-11-15T10:00:00+02:00` (add `AIMO_NOW_FROZEN=1` to stop it running forward) | Real clock. Replay mode anchors the clock at the snapshot's recording time (Sat 14 Nov 23:50 Helsinki) unless `AIMO_NOW` is set. |
 
-Do not put real values in the README. A judge machine with none of these variables set runs `make accept` end to end in replay mode: on a fresh clone with an empty `.env` it gives `RESULT: PASS` (PASS=17 FAIL=0 SKIP=3, Sun 15 Nov 05:10 on d4b0b41: keyless pytest 261 passed / 0 failed, scenarios 8/8 in replay, conformance 44/44, the milk flow places an order answered with Peppol AP, audit verify ok). The three skips are the two key checks and the live Gemini demo.
+Do not put real values in the README. A judge machine with none of these variables set runs `make accept` end to end in replay mode: on a fresh clone with an empty `.env` it gives `RESULT: PASS` (PASS=17 FAIL=0 SKIP=3, Sun 15 Nov 05:10 on d4b0b41: keyless pytest 265 passed / 0 failed, scenarios 8/8 in replay, conformance 44/44, the milk flow places an order answered with Peppol AP, audit verify ok). The three skips are the two key checks and the live Gemini demo.
 
 One-command check:
 
@@ -76,7 +76,7 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **362 passed, 7 skipped, 1 xfailed, 1 xpassed** (main at d4b0b41, Sun 15 Nov 05:10). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (8/8 with the live mock API). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `uv run --extra dev pytest -q`. With the challenge product JSON: **366 passed, 7 skipped, 1 xfailed, 1 xpassed** (main at 7c290cf, Sun 15 Nov 05:15). Without that file, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (8/8 with the live mock API). Run `uv run aimo fetch-data` (needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
 
 ## Exceptions: what happens, and how to see it
 
