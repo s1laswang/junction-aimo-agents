@@ -113,6 +113,12 @@ def mcp_url_for(base_url: str | None = None) -> str:
     return "http://localhost:8000/mcp"
 
 
+def demo_faults_enabled() -> bool:
+    from aimo.backend import clock
+
+    return clock.request_overrides_allowed(True)
+
+
 MAX_RUNS = _parse_max_runs()
 _sem = threading.BoundedSemaphore(MAX_RUNS)
 
@@ -356,17 +362,43 @@ async def create_run(request: Request):
         return _bad("customer_mismatch", "X-Customer-Id disagrees with body customer_id.", 403)
     eff_cust = hdr_cust or raw_cust
     req = req.model_copy(update={"customer_id": eff_cust})
-    if getattr(registry.start, "__func__", None) is RunRegistry.start and req.transport != "fake":
+    if getattr(registry.start, "__func__", None) is RunRegistry.start:
         if not is_known_customer(eff_cust):
             return _bad("unknown_customer", f"unknown customer {_strip_surrogates(eff_cust[:80])!r}", 403)
     try:
         check_agent_key(eff_cust, request.headers.get("x-agent-key"))
     except Exception as exc:
         return _bad(getattr(exc, "code", "invalid_agent_key"), getattr(exc, "message", str(exc)), getattr(exc, "status", 403))
+    ignored: list[str] = []
+    norm_transport = req.transport.strip().lower() if isinstance(req.transport, str) else ""
+    if not demo_faults_enabled():
+        if req.faults:
+            ignored.append("faults")
+        if norm_transport in ("inproc", "fake"):
+            ignored.append("transport")
+        if ignored:
+            req = req.model_copy(
+                update={
+                    "faults": None,
+                    "transport": None if "transport" in ignored else req.transport,
+                }
+            )
     base_mcp = mcp_url_for(str(request.base_url))
     run = registry.start(req.model_copy(update={"image_b64": None}), image=image, mcp_url=base_mcp)
-    return {"run_id": run.run_id, "events_url": f"/v1/agent/runs/{run.run_id}/events",
-            "answer_url": f"/v1/agent/runs/{run.run_id}/answer"}
+    out: dict[str, Any] = {
+        "run_id": run.run_id,
+        "events_url": f"/v1/agent/runs/{run.run_id}/events",
+        "answer_url": f"/v1/agent/runs/{run.run_id}/answer",
+    }
+    if ignored:
+        out["ignored"] = ignored
+        out["message"] = (
+            "Ignored "
+            + " and ".join(ignored)
+            + ": fault injection and test transports are operator-only "
+            "(start the gateway with AIMO_DEMO_FAULTS=1)."
+        )
+    return out
 
 
 @router.post("/runs/{run_id}/answer")
@@ -389,7 +421,7 @@ def answer_run(run_id: str, ans: AnswerRequest, request: Request):
     with registry.lock:
         run = None if bad_id else registry.runs.get(run_id)
     if eff_cust:
-        if unpatched_real and (run is None or run.req.transport != "fake") and not is_known_customer(eff_cust):
+        if unpatched_real and not is_known_customer(eff_cust):
             return _bad("unknown_customer", f"unknown customer {_strip_surrogates(eff_cust[:80])!r}", 403)
         try:
             check_agent_key(eff_cust, request.headers.get("x-agent-key"))
@@ -402,7 +434,7 @@ def answer_run(run_id: str, ans: AnswerRequest, request: Request):
         if run is not None and eff_cust != run.req.customer_id:
             return _bad("customer_mismatch", "caller customer_id does not match this run", 403)
     else:
-        if unpatched_real and (run is None or run.req.transport != "fake"):
+        if unpatched_real:
             return _bad(
                 "identity_required",
                 "POST /v1/agent/runs/{run_id}/answer requires X-Customer-Id or customer_id.",

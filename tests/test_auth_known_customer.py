@@ -469,7 +469,7 @@ def test_buyer_runs_bare_app_and_monkeypatched_start(monkeypatch):
         "/v1/agent/runs",
         json={"text": "20 L milk", "customer_id": "cafe-x", "transport": "fake"},
     )
-    assert r_fake_transport.status_code == 200
+    assert r_fake_transport.status_code == 403 and r_fake_transport.json()["error"] == "unknown_customer"
 
     r_hdr_only = client.post(
         "/v1/agent/runs",
