@@ -62,10 +62,46 @@ def event_core(ev: AuditEvent | dict) -> dict:
     return {k: v for k, v in d.items() if k not in HASH_EXCLUDE}
 
 
+def _clock_now() -> tuple[datetime, dict | None]:
+    real = datetime.now(timezone.utc)
+    try:
+        from aimo.backend import clock
+        if clock.simulated():
+            return clock.now(), {"mode": clock.describe().get("mode"), "wall_ts": real.isoformat()}
+    except Exception:
+        pass
+    return real, None
+
+
+def _event_clock_mode(ev: Any) -> str | None:
+    d = getattr(ev, "data", None)
+    if not isinstance(d, dict):
+        return None
+    clk = d.get("clock")
+    if not isinstance(clk, dict):
+        return None
+    mode = clk.get("mode")
+    return str(mode) if isinstance(mode, str) and mode else None
+
+
+def clock_label(evs: list) -> str:
+    modes = {_event_clock_mode(e) for e in evs}
+    if not modes or modes == {None}:
+        return "real clock"
+    sim = sorted(m for m in modes if m)
+    if not sim:
+        return "real clock"
+    src = {"env": "AIMO_NOW", "header": "X-Aimo-Now", "replay": "replay snapshot"}
+    what = ", ".join(src.get(m, m) for m in sim)
+    if None in modes:
+        return f"mixed clocks: events marked (sim) use the simulated clock ({what}), the rest real time"
+    return f"simulated clock ({what}); real wall time is in each event's data.clock.wall_ts"
+
+
 def _local(ts: datetime, fmt: str = "%H:%M:%S") -> str:
     try:
         from zoneinfo import ZoneInfo
-        return ts.astimezone(ZoneInfo("Europe/Helsinki")).strftime(fmt)
+        return (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo("Europe/Helsinki")).strftime(fmt)
     except Exception:
         return ts.strftime(fmt)
 
@@ -73,7 +109,7 @@ def _local(ts: datetime, fmt: str = "%H:%M:%S") -> str:
 def _local_date(ts: datetime) -> str:
     try:
         from zoneinfo import ZoneInfo
-        dt = ts.astimezone(ZoneInfo("Europe/Helsinki"))
+        dt = (ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo("Europe/Helsinki"))
     except Exception:
         dt = ts
     return f"{dt.strftime('%a')} {dt.day} {dt.strftime('%b %Y')}"
@@ -124,10 +160,13 @@ class AuditLog:
                 con.execute("BEGIN IMMEDIATE")
                 row = con.execute("SELECT seq, hash FROM audit_events ORDER BY seq DESC LIMIT 1").fetchone()
                 seq, prev = (row["seq"] + 1, row["hash"]) if row else (1, GENESIS)
-                draft = AuditEvent(seq=seq, ts=datetime.now(timezone.utc), actor=actor, action=action,
+                ts, clk = _clock_now()
+                if clk:
+                    data = {**data, "clock": clk}
+                draft = AuditEvent(seq=seq, ts=ts, actor=actor, action=action,
                                    subject_id=subject_id, summary=summary, data=data, prev_hash=prev,
                                    hash="", signature="", kid="")
-                core = event_core(draft)  # JSON-normalized (datetimes -> strings)
+                core = event_core(draft)
                 h = _event_hash(prev, core)
                 sig = sign_jws({"typ": "audit-event", "seq": seq, "hash": h}, typ="audit+jws")
                 ev = AuditEvent(**{**core, "hash": h, "signature": sig, "kid": kid()})
@@ -160,8 +199,11 @@ class AuditLog:
 
     def related_subjects(self, subject_id: str, max_hops: int = 4) -> set[str]:
         """Subject ids connected to subject_id through related_ids links (both directions)."""
+        if not isinstance(subject_id, str) or not subject_id.strip():
+            return set()
+        hops = 0 if isinstance(max_hops, bool) or not isinstance(max_hops, int) else max(0, min(max_hops, 32))
         ids, frontier = {subject_id}, {subject_id}
-        for _ in range(max_hops):
+        for _ in range(hops):
             if not frontier:
                 break
             ph = ",".join("?" * len(frontier))
@@ -180,6 +222,8 @@ class AuditLog:
         if subject_id is None:
             return [self._row(r) for r in self._rows("SELECT * FROM audit_events ORDER BY seq")]
         ids = tuple(self.related_subjects(subject_id))
+        if not ids:
+            return []
         ph = ",".join("?" * len(ids))
         rows = self._rows(f"SELECT * FROM audit_events WHERE subject_id IN ({ph}) OR seq IN "
                           f"(SELECT seq FROM audit_links WHERE subject_id IN ({ph})) ORDER BY seq", ids + ids)
@@ -233,10 +277,13 @@ class AuditLog:
         if not evs:
             lines.append("_No events recorded for this subject._")
         else:
-            lines.append(f"_{_local_date(evs[0].ts)}, times in Helsinki (EET)._")
+            lbl = clock_label(evs)
+            lines.append(f"_{_local_date(evs[0].ts)}, times in Helsinki ({_local(evs[0].ts, '%Z')}), {lbl}._")
             lines.append("")
+            mixed = lbl.startswith("mixed")
             for e in evs:
-                lines.append(f"- **{_local(e.ts)}**, {e.summary}  `#{e.seq} {e.action}`")
+                sim = " (sim)" if mixed and _event_clock_mode(e) is not None else ""
+                lines.append(f"- **{_local(e.ts)}**{sim}, {e.summary}  `#{e.seq} {e.action}`")
         decisions = [e for e in evs if isinstance(e.data.get("decision"), dict)]
         if decisions:
             d = decisions[-1].data["decision"]
@@ -284,7 +331,7 @@ class AuditLog:
         decision = next((e.data["decision"] for e in reversed(evs) if isinstance(e.data.get("decision"), dict)), None)
         return {
             "subject_id": subject_id,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": _clock_now()[0].isoformat(),
             "events": [e.model_dump(mode="json") for e in evs],
             "quote": quote,
             "decision": decision,
@@ -309,6 +356,8 @@ class AuditLog:
         AIMO_ENV=production."""
         if os.environ.get("AIMO_ENV", "dev").lower() in ("prod", "production"):
             raise PermissionError("tamper_for_demo is disabled in production")
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1 or seq > (1 << 62):
+            raise KeyError(f"no audit event #{seq}")
         with self._lock:
             con = self._conn()
             try:
@@ -330,6 +379,10 @@ class AuditLog:
 
     def untamper_for_demo(self, seq: int) -> bool:
         """DEV ONLY: restore an event changed by tamper_for_demo."""
+        if os.environ.get("AIMO_ENV", "dev").lower() in ("prod", "production"):
+            raise PermissionError("untamper_for_demo is disabled in production")
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1 or seq > (1 << 62):
+            raise KeyError(f"no audit event #{seq}")
         with self._lock:
             con = self._conn()
             try:
