@@ -78,8 +78,8 @@ MAX_ALLERGEN_ITEMS = 128
 MAX_ALLERGEN_LEN = 128
 MAX_ON_HAND_ITEMS = 500
 MAX_ON_HAND_KEY_LEN = 256
-_NUM_TOKEN = r"(?<![\w.:/-])(?<!\d,)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:[.,]\d+)?)(?![-./:%\d])(?![.,]\d)"
-_POST_X_NUM_TOKEN = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:[.,]\d+)?)(?![-./:%\w])(?![.,]\d)"
+_NUM_TOKEN = r"(?<![\w.:/-])(?<!\d,)(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:[.,]\d+)?)(?![-/:%\d])(?![.,]\w)"
+_POST_X_NUM_TOKEN = r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:[.,]\d+)?)(?![-/:%\w])(?![.,]\w)"
 
 
 def _has_ctrl(value: str) -> bool:
