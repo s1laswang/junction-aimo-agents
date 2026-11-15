@@ -207,13 +207,15 @@ def test_m1_flow_offers_quote_order_approve(api):
     assert o["order_id"] in api.get(f"/v1/audit/report/{o['order_id']}").text
 
 
-def test_approval_with_partial_stock_gives_ca(api):
+def test_partial_stock_at_approval_requotes_instead_of_silently_less(api):
     q = _quote(api, [{"product_id": "464306", "qty_sales_units": 1000, "tier": "best"}]).json()
     o = api.post("/v1/orders", headers=H, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
     r = api.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Aimo-Faults": "partial:464306:600"},
                  json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
-    assert r.status_code == 200, r.text
-    assert r.json()["response_code"] == "CA" and r.json()["response_lines"][0]["qty_confirmed"] == 600
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "requote_needed" and r.json()["detail"]["reason"] == "partial_stock"
+    old = api.get(f"/v1/orders/{o['order_id']}", headers=H).json()
+    assert old["status"] == "expired" and not old.get("response_lines")
 
 
 def test_expired_quote_needs_requote(api, monkeypatch):
