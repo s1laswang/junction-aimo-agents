@@ -37,6 +37,99 @@ _INJECTION_RE = re.compile(
     r"ignore (all |your |previous |the )*(instructions|limits|rules|policy)|system (note|prompt|message)|"
     r"to (ai|llm) agents?|approval is not required|disregard|you are now|order \d[\d,. ]* (units|pcs)",
     re.I)
+_BUYER_INJ_RE = re.compile(
+    r"\b(?:system\s*(?:prompt|note|message|override|instruction|mode)\b"
+    r"|(?:system|developer|admin|assistant)\s*:"
+    r"|(?:developer|admin)\s*(?:prompt|note|message|override|instruction|mode)\b"
+    r"|(?:note|message|attention|p\.?s\.?)\s+(?:to|for)\s+(?:ai|a\.i\.|llm|gpt|gemini|claude|assistant|agent|bot|automated|buying|purchasing|buyer)\b"
+    r"|to\s+(?:ai|llm)\s+agents?\b"
+    r"|new\s+instructions?\b"
+    r"|(?:ignore|disregard|bypass|override|forget)\s+(?:all\s+|your\s+|previous\s+|prior\s+|the\s+|any\s+|these\s+)*(?:instructions?|limits?|rules?|polic\w*|allerg\w*|guardrails?|checks?|budget|restrictions?|approv\w*)"
+    r"|approval\s+is\s+not\s+required\b"
+    r"|you\s+are\s+now\b)",
+    re.I,
+)
+
+
+def _screen_fast(text: str) -> dict:
+    txt = text or ""
+    try:
+        from aimo.trust.screening import screen_text as trust_screen
+        r = trust_screen(txt, use_gemini=False)
+        if isinstance(r, dict) and r.get("suspicious"):
+            return r
+    except Exception:
+        pass
+    hits = [m.group(0)[:80] for m in _BUYER_INJ_RE.finditer(txt)]
+    if hits:
+        return {"suspicious": True, "reasons": hits[:3], "strong_reasons": hits[:3], "screen": "buyer-regex"}
+    hits_fb = [m.group(0)[:80] for m in _INJECTION_RE.finditer(txt)]
+    if hits_fb and not re.fullmatch(r"order\s+[\d,. ]+\s+(?:units|pcs)", hits_fb[0], re.I):
+        return {"suspicious": True, "reasons": hits_fb[:3], "strong_reasons": hits_fb[:3], "screen": "buyer-local"}
+    return {"suspicious": False, "reasons": [], "strong_reasons": []}
+
+
+def _strip_request_injections(text: str) -> str:
+    if not text or not _screen_fast(text).get("suspicious"):
+        return text
+    cleaned = text
+    for pat in (r"\[[^\[\]]+\]", r"\([^\(\)]+\)", r"\{[^\{\}]+\}", r"<[^<>]+>"):
+        cleaned = re.sub(pat, lambda m: " " if _screen_fast(m.group(0)).get("suspicious") else m.group(0), cleaned)
+    strong_rxs: list[Any] = []
+    try:
+        from aimo.trust import screening as ts
+        strong_rxs = [rx for _, rx in getattr(ts, "_S", [])]
+    except Exception:
+        strong_rxs = []
+    kept: list[str] = []
+    for seg in re.split(r"(?<!\d)[.;!?\n]+(?!\d)", cleaned):
+        s = re.sub(r"\s+", " ", seg).strip()
+        if not s:
+            continue
+        if not _screen_fast(s).get("suspicious"):
+            kept.append(s)
+            continue
+        cut = len(s)
+        m0 = _BUYER_INJ_RE.search(s)
+        if m0:
+            cut = min(cut, m0.start())
+        for rx in strong_rxs:
+            ms = rx.search(s)
+            if ms:
+                cut = min(cut, ms.start())
+        prefix = s[:cut].strip(" -,:;\t")
+        if prefix and not _screen_fast(prefix).get("suspicious"):
+            kept.append(prefix)
+    out = ". ".join(kept).strip()
+    return out
+
+
+def _extract_quote_patch(candidate: Any, *, prefix: str = "") -> dict[str, Any]:
+    if not isinstance(candidate, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k in ("quote_id", "quote_hash"):
+        v = candidate.get(f"{prefix}{k}")
+        if isinstance(v, str) and v.strip():
+            out[k] = v.strip()
+    lines = candidate.get(f"{prefix}lines")
+    if isinstance(lines, list) and lines and all(isinstance(x, dict) for x in lines):
+        out["lines"] = [dict(x) for x in lines]
+    for k in ("total_net", "total_gross"):
+        v = candidate.get(f"{prefix}{k}")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = float(v)
+    for k in ("delivery_date", "expires_at"):
+        v = candidate.get(f"{prefix}{k}")
+        if hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+        elif isinstance(v, str) and v.strip():
+            out[k] = v.strip()
+    if not prefix and "signature" in candidate:
+        for k in ("signature", "kid", "created_at", "currency", "provenance", "availability_snapshot", "need", "customer_id", "agent_id"):
+            if candidate.get(k) is not None:
+                out[k] = candidate[k]
+    return out
 
 
 def screen_text(text: str) -> dict:
@@ -67,7 +160,7 @@ def _compact_order(o: Any) -> Any:
     if not isinstance(o, dict) or "order_id" not in o:
         return o
     out = _pick(o, ("order_id", "quote_id", "quote_hash", "status", "approved_by", "approver_role",
-                    "approval_note", "response_code", "timed_out"))
+                    "approval_note", "response_code", "response_lines", "timed_out"))
     dec = o.get("decision") or {}
     out["decision"] = {**_pick(dec, ("outcome", "approver_role")),
                        "hits": [{"rule_id": h.get("rule_id"), "outcome": h.get("outcome"), "message": str(h.get("message", ""))[:160]}
@@ -203,6 +296,7 @@ class BuyerAgent:
         self.plan: Optional[dict] = None          # merged view over self.plans
         self.plans: dict[int, dict] = {}          # need index -> Plan
         self._plan_idx = 0
+        self._replan_needed = False
         self.quote: Optional[dict] = None
         self.order: Optional[dict] = None
         self.orders_submitted = 0
@@ -289,7 +383,11 @@ class BuyerAgent:
                           escalated=False, injections=[])
                 return self.result(summary, status="no_order")
         t = time.time()
-        self.needs = parse_request(text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
+        parse_text = _strip_request_injections(text)
+        self.needs = [
+            x.model_copy(update={"raw_text": text})
+            for x in parse_request(parse_text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
+        ]
         self.need = n = self.needs[0]
         items = "; ".join(f"{x.quantity:g} {x.unit} {x.product_query}" for x in self.needs)
         self.emit("thought", f"Parsed need: {items}, delivery by {n.delivery_by}",
@@ -351,7 +449,10 @@ class BuyerAgent:
         def search(q: str, claims: list[str]) -> Any:
             return self._tool("search_products", {"query": q, "claims": claims, "limit": 10})
 
-        questions = find_questions(self.needs, self.profile, text, now, search)
+        clean_text = _strip_request_injections(text)
+        raw_acc = text
+        clean_acc = clean_text
+        questions = find_questions(self.needs, self.profile, clean_text, now, search)
         for q in questions:
             public = {k: v for k, v in q.items() if k != "options"}
             public["options"] = [{k: v for k, v in o.items() if k != "patch"} for o in q["options"]]
@@ -361,18 +462,30 @@ class BuyerAgent:
             if self.answer_fn is not None:
                 try:
                     answer = self.answer_fn(public)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     answer = None
             if not answer:
                 self.clarifications.append({**public, "answer": None})
                 self._pending_question = public
                 return False
-            self.needs, label = apply_answer(self.needs, q, answer)
-            if not label and answer.get("text"):
-                # free text that matches no option: re-parse the request with the answer appended
-                self.needs = parse_request(f"{text} ({answer['text']})", self.profile, now,
-                                           use_gemini=self.use_gemini_parse, run_id=self.run_id)
-                label = f"free text: {answer['text']}"
+            ans_text = str(answer.get("text") or "").strip()
+            clean_ans_text = _strip_request_injections(ans_text) if ans_text else ""
+            eff_answer = {**answer, "text": clean_ans_text} if ans_text else answer
+            if ans_text:
+                raw_acc = f"{raw_acc} ({ans_text})"
+                if clean_ans_text:
+                    clean_acc = f"{clean_acc} ({clean_ans_text})"
+            self.needs, label = apply_answer(self.needs, q, eff_answer)
+            if not label and clean_ans_text:
+                self.needs = [
+                    x.model_copy(update={"raw_text": raw_acc})
+                    for x in parse_request(clean_acc, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
+                ]
+                label = f"free text: {clean_ans_text}"
+            elif ans_text:
+                self.needs = [x.model_copy(update={"raw_text": raw_acc}) for x in self.needs]
+                if not label:
+                    label = "free text: (ignored untrusted instructions)"
             self.clarifications.append({**public, "answer": answer, "resolved": label})
             self.emit("thought", f"Clarified: {label}", question_id=q["question_id"], answer=answer,
                       needs=[x.model_dump(mode="json") for x in self.needs])
@@ -419,8 +532,21 @@ class BuyerAgent:
                     continue
                 raise
             dt = round(time.time() - t, 2)
+            escalated_step = model != self.model
+            if self._generate is None:
+                from aimo import gemini
+                last_fn = getattr(gemini, "last_model", None)
+                answered = (last_fn(model) if last_fn else model) or model
+                if answered != model:
+                    noted = getattr(self, "_fallback_noted", set())
+                    if (model, answered) not in noted:
+                        noted.add((model, answered))
+                        self._fallback_noted = noted
+                        self.emit("thought", f"{model} was unavailable (quota); {answered} answers instead",
+                                  fallback_from=model, model=answered)
+                    model = answered
             self.models_used.append({"step": step, "model": model, "thinking": level, "latency_s": dt})
-            if model != self.model:
+            if escalated_step:
                 self.escalate_next = False
                 self.escalated = True
             content = r.candidates[0].content if getattr(r, "candidates", None) else None
@@ -488,6 +614,8 @@ class BuyerAgent:
                 status = getattr(e, "status", None)
                 if isinstance(status, int) and status < 500:  # a business error, not infrastructure
                     body = e.to_dict() if hasattr(e, "to_dict") else {"error": str(e)[:300]}
+                    if name == "create_quote" and body.get("error") in ("lines_unavailable", "lot_size_mismatch", "fractional_quantity"):
+                        self._replan_needed = True
                     self.emit("tool_result", f"{name}: refused ({body.get('error')})", name=name, result=body)
                     return body
                 if attempt == 0:
@@ -517,30 +645,76 @@ class BuyerAgent:
                                     "confirm the quantity before any order is placed. Stop and report.")}
         if n is None:
             return args
+        if name == "place_order":
+            if not isinstance(self.quote, dict) or not self.quote.get("quote_id") or not self.quote.get("quote_hash"):
+                return {"__blocked__": "Call create_quote first: an order requires a signed quote from this run."}
+            return {"quote_id": self.quote["quote_id"], "quote_hash": self.quote["quote_hash"]}
         if name == "plan_need":
             given = args.get("need") if isinstance(args.get("need"), dict) else {}
             self._plan_idx = idx = self._match_need(given)
-            locked = self.needs[idx].model_dump(mode="json") if self.needs else n.model_dump(mode="json")
-            merged = {**locked, **{k: v for k, v in given.items() if k in ("product_query", "preferences")}}
-            prefs = {**locked.get("preferences", {}), **(given.get("preferences") or {})}
-            # Only spec preferences go to the planner; bookkeeping (parsed_by, notes, site, drift ratios)
-            # made the catalog drop its top-hit reference and return 0 candidates (reported to catalog).
-            merged["preferences"] = {k: v for k, v in prefs.items() if k in PLANNER_PREF_KEYS}
-            # quantity/unit/date and the hard constraints may only come from the parsed need
+            base_need = self.needs[idx] if self.needs else n
+            locked = base_need.model_dump(mode="json")
+            locked["customer_id"] = self.customer_id
+            locked["excluded_allergens"] = list(dict.fromkeys([
+                *(locked.get("excluded_allergens") or []),
+                *(self.profile.get("excluded_allergens") or []),
+            ]))
+            raw_pq = str(locked.get("product_query") or "")
+            clean_locked_pq = _strip_request_injections(raw_pq).strip() or raw_pq
+            if clean_locked_pq != raw_pq and not locked.get("raw_text"):
+                locked["raw_text"] = raw_pq
+            locked["product_query"] = clean_locked_pq
+            given_pq = given.get("product_query").strip() if isinstance(given.get("product_query"), str) else ""
+            has_inj = bool(self.injections or self._request_injection_flags() or _screen_fast(given_pq).get("suspicious"))
+            if given_pq and not _screen_fast(given_pq).get("suspicious"):
+                if not has_inj:
+                    chosen_pq = given_pq
+                else:
+                    base_tokens = {w for w in re.findall(r"[a-zA-ZåäöÅÄÖ]{3,}", clean_locked_pq.lower())}
+                    given_tokens = {w for w in re.findall(r"[a-zA-ZåäöÅÄÖ]{3,}", given_pq.lower())}
+                    chosen_pq = given_pq if (base_tokens and (base_tokens & given_tokens)) else clean_locked_pq
+            else:
+                chosen_pq = clean_locked_pq
+            given_prefs = given.get("preferences") if isinstance(given.get("preferences"), dict) else {}
+            prefs_src = (locked.get("preferences") or {}) if has_inj else {**(locked.get("preferences") or {}), **given_prefs}
+            merged = {
+                **locked,
+                "product_query": chosen_pq,
+                "preferences": {k: v for k, v in prefs_src.items() if k in PLANNER_PREF_KEYS},
+            }
             return {"need": merged}
         if name == "create_quote":
-            args = dict(args)
-            quote_need = self._quote_need()
-            args.setdefault("need", quote_need)
-            if isinstance(args.get("need"), dict):
-                args["need"] = {**args["need"], **{k: v for k, v in quote_need.items()
-                                                   if k in ("customer_id", "required_claims", "excluded_allergens", "raw_text")}}
-            args.setdefault("delivery_date", min(x.delivery_by for x in self.needs).isoformat() if self.needs else n.delivery_by.isoformat())
-            if self.injections and isinstance(args.get("need"), dict):
-                # trust convention (docs/interfaces.md): screen results go to need.preferences
-                prefs = dict(args["need"].get("preferences") or {})
-                prefs["injection_flags"] = self._injection_flags()
-                args["need"] = {**args["need"], "preferences": prefs}
+            args = dict(args) if isinstance(args, dict) else {}
+            quote_need = dict(self._quote_need())
+            quote_need["customer_id"] = self.customer_id
+            quote_need["excluded_allergens"] = list(dict.fromkeys([
+                *(quote_need.get("excluded_allergens") or []),
+                *(self.profile.get("excluded_allergens") or []),
+            ]))
+            given_need = args.get("need") if isinstance(args.get("need"), dict) else {}
+            locked_keys = (
+                "customer_id",
+                "product_query",
+                "required_claims",
+                "excluded_allergens",
+                "quantity",
+                "unit",
+                "delivery_by",
+                "preferred_product_ids",
+                "raw_text",
+            )
+            merged_need = {**given_need, **{k: quote_need[k] for k in locked_keys if k in quote_need}}
+            prefs = dict(quote_need.get("preferences") or {})
+            inj_flags = list(dict.fromkeys([*self._injection_flags(), *self._request_injection_flags()]))
+            if inj_flags:
+                prefs["injection_flags"] = inj_flags
+            merged_need["preferences"] = prefs
+            args["need"] = merged_need
+            args["delivery_date"] = (
+                min(x.delivery_by for x in self.needs).isoformat()
+                if self.needs
+                else n.delivery_by.isoformat()
+            )
             return self._enforce_plan_lines(args)
         return args
 
@@ -550,6 +724,8 @@ class BuyerAgent:
         and logged as a thought, so the Plan and the Quote/Approval views always agree."""
         if not self.plans:
             return {"__blocked__": "Call plan_need first: quote lines must come from the planner."}
+        if getattr(self, "_replan_needed", False):
+            return {"__blocked__": "Call plan_need again before re-quoting: the previous plan's lines were refused by the gateway."}
         unplanned = [x.product_query for i, x in enumerate(self.needs) if i not in self.plans]
         if unplanned:
             return {"__blocked__": f"Call plan_need for every item first (not planned yet: {unplanned})."}
@@ -570,16 +746,29 @@ class BuyerAgent:
             return {"__blocked__": "The plan has no orderable lines (full shortfall), so there is nothing to quote. "
                                    "Report the shortfall and its reasons to the buyer."}
 
-        def key(ls):
-            return sorted((str(l.get("product_id")), round(float(l.get("qty_sales_units") or 0), 4)) for l in ls)
+        def _safe_qty(val: Any) -> float:
+            try:
+                return round(float(val or 0), 4)
+            except (TypeError, ValueError):
+                return -1.0
 
-        proposed = args.get("lines") or []
-        if key(proposed) != key(plan_lines):
+        def key(ls: Any) -> list[tuple[str, float]]:
+            if not isinstance(ls, list):
+                return []
+            return sorted((str(l.get("product_id")), _safe_qty(l.get("qty_sales_units"))) for l in ls if isinstance(l, dict))
+
+        raw_proposed = args.get("lines")
+        valid_list = isinstance(raw_proposed, list) and all(isinstance(l, dict) for l in raw_proposed)
+        if not valid_list or key(raw_proposed) != key(plan_lines):
+            shown = (
+                [{"product_id": l.get("product_id"), "qty_sales_units": l.get("qty_sales_units")}
+                 for l in raw_proposed if isinstance(l, dict)]
+                if isinstance(raw_proposed, list)
+                else []
+            )
             self.emit("thought", "Quote lines corrected to the planner's lines (quantities never come from the model)",
-                      proposed=[{"product_id": l.get("product_id"), "qty_sales_units": l.get("qty_sales_units")}
-                                for l in proposed], plan_lines=plan_lines)
-            args = {**args, "lines": plan_lines}
-        return args
+                      proposed=shown, plan_lines=plan_lines)
+        return {**args, "lines": [dict(l) for l in plan_lines]}
 
     def _match_need(self, given: dict) -> int:
         """Which parsed item a plan_need call is about: by product_query, else the next unplanned one."""
@@ -671,10 +860,28 @@ class BuyerAgent:
             out.append(f"{f.get('product_id') or f.get('tool')} {key[1]}: {', '.join(f.get('reasons') or [])}")
         return out
 
+    def _request_injection_flags(self) -> list[str]:
+        items = self.needs or ([self.need] if self.need is not None else [])
+        seen: set[str] = set()
+        out: list[str] = []
+        for x in items:
+            for field_name, val in (("raw_text", x.raw_text), ("product_query", x.product_query)):
+                if not val:
+                    continue
+                s = _screen_fast(val)
+                if s.get("suspicious"):
+                    rs = list(dict.fromkeys(s.get("strong_reasons") or s.get("reasons") or ["suspicious buyer text"]))
+                    entry = f"buyer {field_name}: {', '.join(str(r) for r in rs[:3])}"
+                    if entry not in seen:
+                        seen.add(entry)
+                        out.append(entry)
+        return out
+
     def _after(self, name: str, args: dict, result: Any) -> Any:
         if not isinstance(result, dict):
             return result
         if name == "plan_need" and "lines" in result:
+            self._replan_needed = False
             self.plans[self._plan_idx] = result
             self.plan = self._merge_plans()
             rationale = self._explain(result) if self.explain_enabled else ""
@@ -692,6 +899,8 @@ class BuyerAgent:
                           model=self.reasoning_model, thinking=self.reasoning_thinking)
             if rationale:
                 result = {**result, "explanation": result.get("explanation") or rationale}
+        elif name == "create_quote" and result.get("error") in ("lines_unavailable", "lot_size_mismatch", "fractional_quantity"):
+            self._replan_needed = True
         elif name == "create_quote" and "quote_id" in result:
             self.quote = result
             self.emit("quote", f"Quote {result['quote_id']}: EUR {result.get('total_net', 0):.2f}, "
@@ -717,27 +926,130 @@ class BuyerAgent:
             self.done = True  # one order per request: nothing left for the model to do
         return result
 
+    def _sync_quote_from_order(self, cur: Any, *, handoff: bool = False) -> bool:
+        if not isinstance(self.quote, dict) or not isinstance(cur, dict):
+            return False
+        prov = cur.get("provenance") if isinstance(cur.get("provenance"), dict) else {}
+        patch: dict[str, Any] = {}
+        if handoff:
+            old_qid = cur.get("quote_id")
+            rq_id = prov.get("requote_quote_id")
+            for nk in ("requote_quote", "new_quote", "quote"):
+                nq = prov.get(nk)
+                if isinstance(nq, dict) and (nk != "quote" or not old_qid or nq.get("quote_id") != old_qid):
+                    patch.update(_extract_quote_patch(nq))
+            cq = cur.get("quote")
+            if isinstance(cq, dict) and (
+                (isinstance(rq_id, str) and rq_id and cq.get("quote_id") == rq_id)
+                or (old_qid and cq.get("quote_id") and cq.get("quote_id") != old_qid)
+            ):
+                patch.update(_extract_quote_patch(cq))
+            patch.update(_extract_quote_patch(prov, prefix="requote_"))
+        else:
+            cur_qid = cur.get("quote_id")
+            if cur.get("status") != "expired" and prov.get("requote_quote_id") in (None, "", cur_qid):
+                prov_patch = _extract_quote_patch(prov, prefix="requote_")
+                if cur_qid:
+                    prov_patch.pop("quote_id", None)
+                patch.update(prov_patch)
+            for nk in ("quote", "new_quote", "requote_quote"):
+                nq = prov.get(nk)
+                if isinstance(nq, dict) and (not cur_qid or not nq.get("quote_id") or nq.get("quote_id") == cur_qid):
+                    if cur.get("status") != "expired" or nq.get("quote_id") == cur_qid:
+                        patch.update(_extract_quote_patch(nq))
+            cq = cur.get("quote")
+            if isinstance(cq, dict) and (not cur_qid or not cq.get("quote_id") or cq.get("quote_id") == cur_qid):
+                patch.update(_extract_quote_patch(cq))
+            patch.update(_extract_quote_patch(cur))
+        if patch.get("quote_id") and patch["quote_id"] != self.quote.get("quote_id") and "quote_hash" not in patch:
+            patch["quote_hash"] = None
+        if patch:
+            self.quote = {**self.quote, **patch}
+        return bool("lines" in patch and "total_net" in patch)
+
+    def _sync_quote_from_audit(self, quote_id: str, order_id: str) -> bool:
+        if not isinstance(self.quote, dict) or not quote_id:
+            return False
+        try:
+            trail = self.t.call("get_audit_trail", {"subject_id": quote_id})
+        except Exception:
+            return False
+        events = trail.get("events") if isinstance(trail, dict) else (trail if isinstance(trail, list) else [])
+        if not isinstance(events, list):
+            return False
+        patch: dict[str, Any] = {}
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("subject_id") not in (quote_id, order_id) and ev.get("action") != "quote.created":
+                continue
+            data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+            nq = data.get("quote")
+            if isinstance(nq, dict) and nq.get("quote_id") in (None, quote_id):
+                patch.update(_extract_quote_patch(nq))
+            if ev.get("action") == "quote.created" and ev.get("subject_id") == quote_id:
+                patch.update(_extract_quote_patch({"quote_id": quote_id, **data}))
+        if patch:
+            self.quote = {**self.quote, **patch}
+        return bool("lines" in patch and "total_net" in patch)
+
+    def _finalize_replacement_quote_sync(
+        self,
+        cur: Any,
+        initial_qid: str | None,
+        full_synced_qids: set[str],
+        audit_tried_qids: set[str],
+        order_id: str,
+    ) -> None:
+        if isinstance(cur, dict) and self._sync_quote_from_order(cur, handoff=False):
+            qid_now = (self.quote or {}).get("quote_id")
+            if isinstance(qid_now, str) and qid_now:
+                full_synced_qids.add(qid_now)
+        target_qid = (self.quote or {}).get("quote_id") if isinstance(self.quote, dict) else None
+        if (
+            isinstance(target_qid, str)
+            and target_qid
+            and target_qid != initial_qid
+            and target_qid not in full_synced_qids
+            and target_qid not in audit_tried_qids
+        ):
+            audit_tried_qids.add(target_qid)
+            if self._sync_quote_from_audit(target_qid, order_id):
+                full_synced_qids.add(target_qid)
+
     def _wait_for_approval(self, order: dict) -> dict:
         dec = order.get("decision") or {}
         oid = order["order_id"]
         seen_orders = {oid}
         self._approved_polls = 0
+        initial_qid = (self.quote or {}).get("quote_id") if isinstance(self.quote, dict) else order.get("quote_id")
+        full_synced_qids: set[str] = {initial_qid} if isinstance(initial_qid, str) and initial_qid else set()
+        audit_tried_qids: set[str] = set()
+        self.order = order
         self.emit("approval_wait", f"Waiting for {dec.get('approver_role') or 'a human'} to approve order {oid}",
                   order_id=oid, approver_role=dec.get("approver_role"), quote_id=order.get("quote_id"),
                   quote_hash=order.get("quote_hash"), hits=dec.get("hits", []), poll_s=self.poll_s)
         deadline = time.time() + self.approval_timeout_s
         cur = order
+        stale_handoff_keys = {
+            "quote", "lines", "total_net", "total_gross", "expires_at",
+            "response_code", "response_lines", "approved_by", "approval_note",
+        }
         while time.time() < deadline:
             time.sleep(self.poll_s)
             try:
                 cur = self.t.call("get_order_status", {"order_id": oid})
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self.emit("error", f"get_order_status failed ({type(e).__name__}); still waiting", error=str(e)[:200])
                 continue
             if isinstance(cur, dict) and cur.get("status") == "approved":
-                # gateway round 2: approved -> placement follows; give it a few polls to reach placed
+                if self._sync_quote_from_order(cur, handoff=False):
+                    qid_cur = (self.quote or {}).get("quote_id")
+                    if isinstance(qid_cur, str) and qid_cur:
+                        full_synced_qids.add(qid_cur)
+                self.order = cur
                 self._approved_polls = getattr(self, "_approved_polls", 0) + 1
-                if self._approved_polls < 15:  # up to ~30 s for placement
+                if self._approved_polls < 15:
                     continue
                 break
             if isinstance(cur, dict) and cur.get("status") == "expired":
@@ -750,15 +1062,26 @@ class BuyerAgent:
                     oid = next_oid
                     rq_id = prov.get("requote_quote_id") if isinstance(prov, dict) else None
                     rq_hash = prov.get("requote_quote_hash") if isinstance(prov, dict) else None
-                    if isinstance(self.quote, dict) and isinstance(rq_id, str) and rq_id:
-                        q_upd: dict[str, Any] = {"quote_id": rq_id}
-                        if isinstance(rq_hash, str) and rq_hash:
-                            q_upd["quote_hash"] = rq_hash
-                        elif rq_id != self.quote.get("quote_id"):
-                            q_upd["quote_hash"] = None
-                        self.quote = {**self.quote, **q_upd}
+                    if self._sync_quote_from_order(cur, handoff=True):
+                        qid_cur = (self.quote or {}).get("quote_id")
+                        if isinstance(qid_cur, str) and qid_cur:
+                            full_synced_qids.add(qid_cur)
                     reason = (prov.get("requote_reason") if isinstance(prov, dict) else None) or "requote_needed"
                     dec = cur.get("decision") or dec
+                    eff_qid = rq_id if isinstance(rq_id, str) and rq_id else (self.quote or {}).get("quote_id")
+                    eff_qhash = rq_hash if isinstance(rq_hash, str) and rq_hash else (self.quote or {}).get("quote_hash")
+                    base_cur = {k: v for k, v in cur.items() if k not in stale_handoff_keys}
+                    cur = {
+                        **base_cur,
+                        "order_id": oid,
+                        "status": "pending_approval",
+                        **(
+                            {"quote_id": eff_qid, "quote_hash": eff_qhash if isinstance(eff_qhash, str) and eff_qhash else None}
+                            if isinstance(eff_qid, str) and eff_qid
+                            else {}
+                        ),
+                    }
+                    self.order = cur
                     self.emit(
                         "approval_wait",
                         f"Order re-quoted ({old_oid} -> {oid}); waiting for {dec.get('approver_role') or 'a human'} to approve order {oid}",
@@ -766,36 +1089,30 @@ class BuyerAgent:
                         old_order_id=old_oid,
                         requote_reason=reason,
                         approver_role=dec.get("approver_role"),
-                        quote_id=rq_id if isinstance(rq_id, str) and rq_id else (self.quote or {}).get("quote_id"),
-                        quote_hash=rq_hash if isinstance(rq_hash, str) and rq_hash else (self.quote or {}).get("quote_hash"),
+                        quote_id=eff_qid,
+                        quote_hash=eff_qhash,
                         hits=dec.get("hits", []),
                         poll_s=self.poll_s,
                     )
-                    cur = {
-                        **cur,
-                        "order_id": oid,
-                        "status": "pending_approval",
-                        **(
-                            {"quote_id": rq_id, "quote_hash": rq_hash if isinstance(rq_hash, str) and rq_hash else None}
-                            if isinstance(rq_id, str) and rq_id
-                            else {}
-                        ),
-                    }
                     continue
                 break
+            if isinstance(cur, dict):
+                if self._sync_quote_from_order(cur, handoff=False):
+                    qid_cur = (self.quote or {}).get("quote_id")
+                    if isinstance(qid_cur, str) and qid_cur:
+                        full_synced_qids.add(qid_cur)
+                self.order = cur
             if isinstance(cur, dict) and cur.get("status") != "pending_approval":
                 break
         else:
-            if isinstance(cur, dict) and isinstance(self.quote, dict):
-                q_sync = {k: cur[k] for k in ("quote_id", "quote_hash") if isinstance(cur.get(k), str) and cur.get(k)}
-                if q_sync:
-                    self.quote = {**self.quote, **q_sync}
+            self._finalize_replacement_quote_sync(cur, initial_qid, full_synced_qids, audit_tried_qids, oid)
+            timed_out = {**cur, "status": cur.get("status", "pending_approval"), "timed_out": True} if isinstance(cur, dict) else {"order_id": oid, "status": "pending_approval", "timed_out": True}
+            self.order = timed_out
             self.emit("error", f"No human decision within {self.approval_timeout_s:.0f}s", order_id=oid)
-            return {**cur, "status": cur.get("status", "pending_approval"), "timed_out": True}
-        if isinstance(cur, dict) and isinstance(self.quote, dict):
-            q_sync = {k: cur[k] for k in ("quote_id", "quote_hash") if isinstance(cur.get(k), str) and cur.get(k)}
-            if q_sync:
-                self.quote = {**self.quote, **q_sync}
+            return timed_out
+        self._finalize_replacement_quote_sync(cur, initial_qid, full_synced_qids, audit_tried_qids, oid)
+        if isinstance(cur, dict):
+            self.order = cur
         who = cur.get("approved_by") or "the approver"
         self.emit("order", f"Order {oid} {cur.get('status')} (human decision by {who})", order=cur)
         return cur
@@ -836,11 +1153,13 @@ class BuyerAgent:
             "shortfall": (self.plan or {}).get("shortfall"),
             "quote": {k: (self.quote or {}).get(k) for k in ("quote_id", "total_net")} if self.quote else None,
             "order_status": status,
+            "response_code": (self.order or {}).get("response_code"),
+            "response_lines": (self.order or {}).get("response_lines") or None,
             "policy_decision": (_compact_order(self.order) or {}).get("decision") if self.order else None,
             "approved_by": (self.order or {}).get("approved_by"),
             "approval_note": (self.order or {}).get("approval_note"),
             "drift_hold": self.drift,
-            "injections_flagged": self._injection_flags(),
+            "injections_flagged": list(dict.fromkeys([*self._injection_flags(), *self._request_injection_flags()])),
             "agent_final_text": agent_text,
             "audit_report_link": self._audit_link(),
         }
