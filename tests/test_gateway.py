@@ -57,6 +57,11 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "state.sqlite")
     monkeypatch.setattr(config, "STATE_DB", tmp_path / "state.sqlite")
     monkeypatch.delenv("AIMO_FAULTS", raising=False)
+    for k in ("AIMO_NOW", "AIMO_REPLAY", "AIMO_REPLAY_FALLBACK", "AIMO_ENV", "AIMO_REQUIRE_AUTH"):
+        monkeypatch.delenv(k, raising=False)
+    from aimo.gateway import budget
+
+    budget.reset()
     bc.set_client(FixtureClient())
     yield
     bc.set_client(None)
@@ -854,3 +859,46 @@ def test_chaos_concurrent_duplicate_submits_make_one_order(api):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert len({r["order_id"] for r in results}) == 1 and len(store.list_orders()) == 1
+
+
+# ------------------------------------------------------------------ round 5: confidentiality
+def test_price_lookup_budget_blocks_scraping(api, monkeypatch):
+    from aimo.gateway import budget
+
+    budget.reset()
+    monkeypatch.setenv("AIMO_OFFER_BUDGET", "3")
+    ids3 = ["463038", "464306", "469363"]
+    body = lambda ids: {"product_ids": ids, "requested_date": "2026-11-16"}  # noqa: E731
+    assert api.post("/v1/offers", headers=H, json=body(ids3)).status_code == 200
+    assert api.post("/v1/offers", headers=H, json=body(ids3[:2])).status_code == 200      # re-checks are free
+    r = api.post("/v1/offers", headers=H, json=body(["462775"]))
+    assert r.status_code == 429 and r.json()["error"] == "query_budget_exceeded"
+    assert "scraping" in r.json()["message"] and int(r.headers["retry-after"]) >= 1
+    other = {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "planner-1"}
+    assert api.post("/v1/offers", headers=other, json=body(["462775"])).status_code == 200  # per agent
+    with pytest.raises(service.ServiceError) as e:                                        # MCP / in-process too
+        service.get_offers(["462775"], "2026-11-16", identity={"customer_id": "hotel-aurora", "agent_id": "buyer-1"})
+    assert e.value.status == 429
+    budget.reset()
+
+
+def test_customers_only_see_their_own_quotes_orders_and_trails(api):
+    q, o = _pending_order(api)
+    school = {"X-Customer-Id": "school-tampere", "X-Agent-Id": "buyer-1"}
+    assert api.get(f"/v1/quotes/{q['quote_id']}", headers=school).status_code == 404
+    assert api.get(f"/v1/orders/{o['order_id']}", headers=school).status_code == 404
+    assert api.get(f"/v1/quotes/{q['quote_id']}", headers=H).status_code == 200
+    assert api.get(f"/v1/orders/{o['order_id']}").status_code == 200                      # anonymous approval UI
+    sid = {"customer_id": "school-tampere", "agent_id": "buyer-1"}
+    for fn, arg in ((service.get_order_status, o["order_id"]), (service.get_audit_trail, o["order_id"]),
+                    (service.get_audit_trail, q["quote_id"])):
+        with pytest.raises(service.ServiceError) as e:
+            fn(arg, identity=sid)
+        assert e.value.status == 404
+    assert service.get_audit_trail(o["order_id"], identity={"customer_id": "hotel-aurora", "agent_id": "buyer-1"})["events"]
+
+
+def test_plan_uses_callers_customer_only(api):
+    need = {**MILK_NEED, "customer_id": "hotel-aurora"}
+    r = api.post("/v1/plan", headers={"X-Customer-Id": "school-tampere", "X-Agent-Id": "buyer-1"}, json=need)
+    assert r.status_code == 403 and r.json()["error"] == "customer_mismatch"

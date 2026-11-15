@@ -168,13 +168,13 @@ def build_mcp() -> MCPServer:
     def get_order_status(order_id: str, ctx: Context = None) -> dict[str, Any]:
         """Current state of an order: status (pending_approval, approved, placed, rejected, expired),
         policy decision with rule hits, approver, and the Peppol-style order response (AP/CA/RE per line)."""
-        return _call(ctx, service.get_order_status, order_id)
+        return _call(ctx, service.get_order_status, order_id, identity=_identity(ctx))
 
     @mcp.tool()
     def get_audit_trail(subject_id: str, ctx: Context = None) -> dict[str, Any]:
         """Signed, hash-chained audit trail for a quote or order id (an order's trail includes its quote).
         Returns {"events": [...], "report": markdown narrative, "verify": chain verification result}."""
-        return _call(ctx, service.get_audit_trail, subject_id)
+        return _call(ctx, service.get_audit_trail, subject_id, identity=_identity(ctx))
 
     @mcp.tool()
     def list_policies(ctx: Context = None) -> dict[str, Any]:

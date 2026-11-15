@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from aimo.backend import clock
-from aimo.gateway import resilience
+from aimo.gateway import budget, resilience
 from aimo.backend import orders as store
 from aimo.backend.client import INJECTION_TEXT, UpstreamError, current_faults, get_offers_with_meta
 from aimo.models import (
@@ -492,12 +492,14 @@ def _upstream(e: UpstreamError) -> ServiceError:
 
 
 def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str | None = None,
-               quantities: dict[str, float] | None = None) -> tuple[list[Offer], dict[str, Any]]:
+                 quantities: dict[str, float] | None = None, agent_id: str | None = None) -> tuple[list[Offer], dict[str, Any]]:
     ids = [str(p).strip() for p in product_ids if str(p).strip()]
     if not ids:
         raise ServiceError(400, "no_products", "product_ids must contain at least one id")
     if len(ids) > 1000:
         raise ServiceError(400, "too_many_products", "max 1,000 product ids per call (upstream limit)")
+    if agent_id is not None:  # agent-facing lookups count against the agent's anti-scraping budget
+        budget.charge(customer_id or DEFAULT_CUSTOMER, agent_id, ids)
     try:
         offers, meta = get_offers_with_meta(ids, requested_date, customer_id, quantities)
     except UpstreamError as e:
@@ -507,7 +509,20 @@ def fetch_offers(product_ids: list[str], requested_date: date, customer_id: str 
 
 
 def plan_need(need: Any, identity: Any = None, customer_id: str | None = None, **_: Any) -> Plan:
-    need = _as_need(need, resolve_identity(identity, None, customer_id))
+    ident = resolve_identity(identity, None, customer_id)
+    need = _as_need(need, ident)
+    if need.customer_id != ident.customer_id:
+        need = need.model_copy(update={"customer_id": ident.customer_id})  # prices are always the caller's own
+    if identity is not None:
+        budget.charge(ident.customer_id, ident.agent_id, [], check_only=True)
+    plan = _plan(need)
+    if identity is not None:
+        budget.charge(ident.customer_id, ident.agent_id,
+                      [c.product.id for c in plan.candidates if c.offer is not None and c.offer.unit_price is not None])
+    return plan
+
+
+def _plan(need: Need) -> Plan:
     cat = _catalog()
     if cat is None or not hasattr(cat, "plan_need"):
         raise ServiceError(501, "plan_unavailable", "planner (aimo.catalog.plan_need) is not available yet")
@@ -584,6 +599,7 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
         pid = str(ln["product_id"])
         qty_by[pid] = qty_by.get(pid, 0) + q
     _require_scope(ident, "quote:create")
+    budget.charge(ident.customer_id, ident.agent_id, list(qty_by))
     if need is not None and need.customer_id != ident.customer_id:
         need = need.model_copy(update={"customer_id": ident.customer_id})
 
@@ -689,10 +705,18 @@ def make_quote(ident: Identity, delivery_date: date, lines: list[dict[str, Any]]
     return quote
 
 
-def get_quote(quote_id: str) -> Quote:
+def _visible_to(owner_customer: str, viewer: Identity | None, what: str, oid: str) -> None:
+    """Confidentiality: an agent only ever sees its own customer's quotes, orders and prices. Another
+    customer's object is reported as not found (no existence oracle)."""
+    if viewer is not None and viewer.customer_id != owner_customer:
+        raise ServiceError(404, f"{what}_not_found", f"{what} {oid!r} not found")
+
+
+def get_quote(quote_id: str, viewer: Identity | None = None) -> Quote:
     q = store.get_quote(quote_id)
     if q is None:
         raise ServiceError(404, "quote_not_found", f"quote {quote_id!r} not found")
+    _visible_to(q.customer_id, viewer, "quote", quote_id)
     return q
 
 
@@ -814,10 +838,11 @@ def _submit_order(ident: Identity, quote_id: str, quote_hash: str) -> Order:
     return _finalize(order, quote, ident.actor)
 
 
-def get_order(order_id: str) -> Order:
+def get_order(order_id: str, viewer: Identity | None = None) -> Order:
     o = store.get_order(order_id)
     if o is None:
         raise ServiceError(404, "order_not_found", f"order {order_id!r} not found")
+    _visible_to(o.customer_id, viewer, "order", order_id)
     return o
 
 
@@ -1203,7 +1228,7 @@ def search_products(query: str, claims: list[str] | None = None, limit: int = 10
 def get_offers(product_ids: list[str], requested_date: Any, customer_id: str | None = None, identity: Any = None,
                agent_id: str | None = None, **_: Any) -> dict[str, Any]:
     ident = resolve_identity(identity, agent_id, customer_id)
-    offers, meta = fetch_offers(product_ids, _as_date(requested_date), ident.customer_id)
+    offers, meta = fetch_offers(product_ids, _as_date(requested_date), ident.customer_id, agent_id=ident.agent_id)
     return {"offers": _j(offers), "provenance": meta}
 
 
@@ -1219,11 +1244,17 @@ def place_order(quote_id: str, quote_hash: str, identity: Any = None, agent_id: 
     return _j(submit_order(resolve_identity(identity, agent_id, customer_id), quote_id, quote_hash))
 
 
-def get_order_status(order_id: str, **_: Any) -> dict[str, Any]:
-    return _j(get_order(order_id))
+def get_order_status(order_id: str, identity: Any = None, **_: Any) -> dict[str, Any]:
+    return _j(get_order(order_id, resolve_identity(identity) if identity is not None else None))
 
 
-def get_audit_trail(subject_id: str, **_: Any) -> dict[str, Any]:
+def get_audit_trail(subject_id: str, identity: Any = None, **_: Any) -> dict[str, Any]:
+    if identity is not None:
+        viewer = resolve_identity(identity)
+        o, q = store.get_order(subject_id), store.get_quote(subject_id)
+        owner = o.customer_id if o else q.customer_id if q else None
+        if owner is None or owner != viewer.customer_id:
+            raise ServiceError(404, "subject_not_found", f"no quote or order {subject_id!r} for {viewer.customer_id}")
     return {"events": audit_events(subject_id), "report": audit_report(subject_id), "verify": audit_verify()}
 
 

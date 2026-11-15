@@ -73,6 +73,15 @@ def identity(
     return ident
 
 
+def optional_identity(
+    x_agent_id: Optional[str] = Header(None), x_customer_id: Optional[str] = Header(None),
+) -> Optional[service.Identity]:
+    """The caller's identity if it sent one (agents); None for the anonymous demo UI."""
+    if not x_customer_id:
+        return None
+    return service.Identity(agent_id=x_agent_id or service.DEFAULT_AGENT, customer_id=x_customer_id)
+
+
 def _with_body_claims(ident: service.Identity, customer_id: Optional[str], agent_id: Optional[str]) -> service.Identity:
     """Headers win: a body customer_id/agent_id that disagrees with a header is 403. Without the header
     (demo convenience) the body value is used."""
@@ -182,12 +191,13 @@ def build_router() -> APIRouter:
         product's order closing time is already past (it cannot make the requested date). Provenance is in
         each offer's `provenance` and in the `X-Aimo-*` response headers."""
         who = _with_body_claims(ident, body.customer_id, None)
-        res, meta = service.fetch_offers(body.product_ids, body.requested_date, who.customer_id)
+        res, meta = service.fetch_offers(body.product_ids, body.requested_date, who.customer_id, agent_id=who.agent_id)
         return JSONResponse([o.model_dump(mode="json") for o in res], headers=_prov_headers(meta))
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
-    def plan(need: Need):
-        return service.plan_need(need)
+    def plan(need: Need, ident: service.Identity = Depends(identity)):
+        who = _with_body_claims(ident, need.customer_id, None)
+        return service.plan_need(need, identity=who)
 
     # ---------------------------------------------------------- quotes
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
@@ -199,8 +209,9 @@ def build_router() -> APIRouter:
         return service.make_quote(who, body.delivery_date, [l.model_dump() for l in body.lines], body.need)
 
     @r.get("/v1/quotes/{quote_id}", tags=["quotes"], summary="Get a quote", response_model=Quote, responses=ERR)
-    def get_quote(quote_id: str):
-        return service.get_quote(quote_id)
+    def get_quote(quote_id: str, viewer: Optional[service.Identity] = Depends(optional_identity)):
+        """Visible only to the quote's own customer (404 otherwise) when the caller identifies itself."""
+        return service.get_quote(quote_id, viewer)
 
     # ---------------------------------------------------------- orders
     @r.post("/v1/orders", tags=["orders"], summary="Place an order for a signed quote", response_model=Order, responses=ERR)
@@ -210,8 +221,9 @@ def build_router() -> APIRouter:
         return service.submit_order(ident, body.quote_id, body.quote_hash)
 
     @r.get("/v1/orders/{order_id}", tags=["orders"], summary="Order status", response_model=Order, responses=ERR)
-    def get_order(order_id: str):
-        return service.get_order(order_id)
+    def get_order(order_id: str, viewer: Optional[service.Identity] = Depends(optional_identity)):
+        """Visible only to the order's own customer (404 otherwise) when the caller identifies itself."""
+        return service.get_order(order_id, viewer)
 
     # ---------------------------------------------------------- approvals
     @r.get("/v1/approvals", tags=["approvals"], summary="Approval inbox")
@@ -302,7 +314,7 @@ def create_app(with_mcp: bool = True) -> FastAPI:
     @app.exception_handler(service.ServiceError)
     async def _svc_err(_: Request, e: service.ServiceError):
         headers = {}
-        if e.status == 503 and isinstance(e.detail, dict) and e.detail.get("retry_after"):
+        if e.status in (429, 503) and isinstance(e.detail, dict) and e.detail.get("retry_after"):
             headers["Retry-After"] = str(int(e.detail["retry_after"]))
         return JSONResponse(e.to_dict(), status_code=e.status, headers=headers)
 
