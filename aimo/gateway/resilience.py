@@ -13,7 +13,9 @@ Env: AIMO_SEARCH_TIMEOUT_S (4), AIMO_PLAN_TIMEOUT_S (20), AIMO_SCREEN_TIMEOUT_S 
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
+import math
 import os
 import threading
 import time
@@ -26,19 +28,83 @@ log = logging.getLogger("aimo.gateway.resilience")
 _pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="aimo-guard")
 
 
-def timeout_for(name: str, default: float) -> float:
-    key = {"catalog.search": "AIMO_SEARCH_TIMEOUT_S", "catalog.plan_need": "AIMO_PLAN_TIMEOUT_S",
-           "trust.screen_text": "AIMO_SCREEN_TIMEOUT_S"}.get(name, "")
+def _parse_positive_float(raw: Any, default: float) -> float:
+    safe_default = (
+        float(default)
+        if (not isinstance(default, bool) and isinstance(default, (int, float)) and math.isfinite(default) and default > 0)
+        else 5.0
+    )
+    if raw is None or isinstance(raw, bool):
+        return safe_default
     try:
-        return float(os.environ.get(key, default)) if key else default
-    except ValueError:
+        val = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return safe_default
+    if not math.isfinite(val) or val <= 0:
+        return safe_default
+    return val
+
+
+def timeout_for(name: str, default: float) -> float:
+    safe_default = _parse_positive_float(None, default)
+    key = {"catalog.search": "AIMO_SEARCH_TIMEOUT_S", "catalog.plan_need": "AIMO_PLAN_TIMEOUT_S",
+           "trust.screen_text": "AIMO_SCREEN_TIMEOUT_S"}.get(name if isinstance(name, str) else "", "")
+    if not key:
+        return safe_default
+    raw = os.environ.get(key)
+    if raw is None or isinstance(raw, bool):
+        return safe_default
+    try:
+        val = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return safe_default
+    if not math.isfinite(val) or val <= 0:
+        return safe_default
+    return min(300.0, max(0.05, val))
+
+
+def _parse_reset_s(raw: Any, default: float = 60.0) -> float:
+    if raw is None or isinstance(raw, bool):
         return default
+    try:
+        val = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(val) or val <= 0:
+        return default
+    return min(86400.0, val)
+
+
+def _parse_fail_max(raw: Any, default: int = 2) -> int:
+    if raw is None or isinstance(raw, bool):
+        return default
+    if isinstance(raw, float):
+        if not math.isfinite(raw) or raw < 1 or int(raw) != raw:
+            return default
+        return min(1000, int(raw))
+    if isinstance(raw, int):
+        return min(1000, raw) if raw >= 1 else default
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return default
+        try:
+            val = int(s)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return min(1000, val) if val >= 1 else default
+    return default
 
 
 class Breaker:
     def __init__(self, name: str, fail_max: int = 2, reset_s: float | None = None):
-        self.name, self.fail_max = name, fail_max
-        self.reset_s = reset_s if reset_s is not None else float(os.environ.get("AIMO_BREAKER_RESET_S", "60"))
+        self.name = str(name)
+        self.fail_max = _parse_fail_max(fail_max)
+        self.reset_s = (
+            _parse_reset_s(reset_s)
+            if reset_s is not None
+            else _parse_reset_s(os.environ.get("AIMO_BREAKER_RESET_S"))
+        )
         self.failures = 0
         self.open_until = 0.0
         self.last_error: str | None = None
@@ -64,7 +130,9 @@ class Breaker:
                 log.warning("breaker %s opened for %.0fs (%s)", self.name, self.reset_s, why)
 
     def state(self) -> dict[str, Any]:
-        return {"open": self.is_open(), "retry_in_s": max(0, round(self.open_until - time.time())),
+        rem = self.open_until - time.time()
+        retry_in = max(0, round(rem)) if math.isfinite(rem) else 0
+        return {"open": self.is_open(), "retry_in_s": retry_in,
                 "last_error": self.last_error, **self.stats}
 
     def reset(self) -> None:
@@ -89,21 +157,26 @@ def guarded(name: str, primary: Callable[[], Any], fallback: Callable[[], Any], 
     if b.is_open():
         b.stats["fallback"] += 1
         return fallback(), "fallback:circuit_open"
-    ctx = contextvars.copy_context()  # keep per-request faults / clock in the worker thread
+    eff_timeout = min(300.0, _parse_positive_float(timeout_s, 5.0))
+    ctx = contextvars.copy_context()
     fut = _pool.submit(ctx.run, primary)
     try:
-        res = fut.result(timeout=timeout_s)
+        res = fut.result(timeout=eff_timeout)
         b.ok()
         return res, "primary"
     except FutTimeout:
         b.stats["timeouts"] += 1
-        b.fail(f"timeout after {timeout_s:g}s")
+        b.fail(f"timeout after {eff_timeout:g}s")
         path = "fallback:timeout"
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
+        from pydantic import ValidationError
+
         from aimo.backend.client import UpstreamError
         from aimo.gateway.service import ServiceError
 
-        if isinstance(e, (ServiceError, UpstreamError)):  # a real answer / upstream problem, not a Gemini failure
+        if isinstance(e, (ServiceError, UpstreamError, ValidationError)) or (
+            isinstance(e, ValueError) and not isinstance(e, json.JSONDecodeError)
+        ):
             b.ok()
             raise
         b.stats["errors"] += 1
