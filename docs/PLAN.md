@@ -14,7 +14,7 @@ Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **
 6. **ElevenLabs: approved (Sat 20:30). Still needed: put the key in `.env` as `ELEVENLABS_API_KEY`** (never commit it). The voice engineer is building it on team/voice, with a Web Speech fallback until the key lands. Use: a voice approval call. The procurement manager gets a phone-style voice prompt, "Approve €1,010 lactose-free milk for Monday?", answers by voice, and the approval is still bound to the quote hash and audited. ElevenLabs does speech-to-text and text-to-speech; Gemini stays the brain. It's optional and scores on "autonomy and controls" plus the demo. If you don't want it, we skip it.
 
 ## Scoring checklist (official rubric, JUDGING.md)
-Tick a box only with evidence: a command, a test or a file. Updated Sun 15 Nov 00:45 Helsinki.
+Tick a box only with evidence: a command, a test or a file. Updated Sun 15 Nov 02:48 Helsinki.
 
 **Must-haves**
 - [x] Product, price and availability lookup in structured form: `/v1/products/search`, `/v1/offers`, and MCP `search_products`/`get_offers`, hitting the live mock API.
@@ -86,13 +86,13 @@ Done: Momin010, ivarakerholm-wq and Chintufp are invited as collaborators. **Sil
 Everything else is decided below. Change it here if you disagree.
 
 ## Status (Sun 15 Nov, Helsinki)
-- **On `main` (`2a68792`) and `combined` / `fr8/valio/*` (`aad9653` / `2e6ae66`), verified:**
+- **On `main` (`738c93a`) and `combined` / `fr8/valio/*` (`627c692` / `6973c2d`), verified:**
   - full hero flow in browser and over REST/MCP, plus keyless scripted buyer fallback in `uv run aimo demo`;
   - human-only approvals with per-approver 12-char passphrases (`approver_pins.json`), `X-Approver-Session`, per-`(approver, client)` lockout, known-customer enforcement, quote ownership, server-verified tiers, and `409 requote_needed` diff flow;
   - customer policy allergen hard-blocks enforced inside `plan_need`, pre-planning quantity validation (`quantity <= 0` -> 4xx) and `/v1` fuzzing (`tests/test_fuzz.py`), and `injection_screen` surfaced on `PlanLine` and `Candidate`;
   - Gemini buyer montage 6/6 PASS at $0.0339 per order (`docs/demo-montage.md`), `s0-s7` acceptance suite 8/8 PASS live and keyless in replay (`docs/SCENARIOS.md`), and `otap/0.1` conformance 44/44 on both Valio Aimo and Nordic Bakery Supply (`docs/OPENNESS.md`);
   - wind tunnel `wt640` (640 Gemini scenarios: 0 policy and 0 allergen violations, 99.7% recall, 68.2% precision after S3 policy update, vs 372 policy and 193 allergen violations for the naive baseline) and `wt2560` folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md` and `NUMBERS.md`;
-  - 814 pytest checks in `tests/` (`707 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline on `2e6ae66`, `743 passed` with full catalog JSON on `2468bdd`; S1 replay bundles a 669-product catalog subset so `scenarios.run_all` passes 8/8 keyless).
+  - 1,257 collected pytest checks in `tests/` (`1,150 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline on `6973c2d`, `1,146 passed` across `1,253` collected on `fr8/valio/main` `627c692`, `743 passed, 7 skipped, 2 xfailed` with full 17,546-product catalog JSON on `2468bdd`, and `344 passed, 7 skipped, 1 xfailed, 1 xpassed` keyed on standalone `main` `738c93a`; S1 replay bundles a 669-product catalog subset so `scenarios.run_all` passes 8/8 keyless across 88 checks).
 - **Remaining before freeze (Sun 06:00, tag `aimo-v1`):**
   - final sync between `fr8/valio/main`, `combined` and `main` (see [docs/COMBINE.md](COMBINE.md));
   - committed headless Playwright backup video `docs/demo-backup.mp4` (`uv run python scripts/record_demo_video.py`) and one-command local/replay run (`make accept`, `uv run aimo serve` -> `http://localhost:8000/ui`) documented in `docs/SUBMISSION.md`.

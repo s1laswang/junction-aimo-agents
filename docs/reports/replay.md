@@ -39,11 +39,11 @@ timing; the assertion is unchanged.
   `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit`). The two fuzz 500s main has keyless
   are gone (503 catalog_missing). `make accept` reports keyless pytest as SKIP (catalog missing), as before.
 
-### Verification on `fr8/valio/docs` (`2e6ae66`, Sun 15 Nov 01:56 Helsinki)
+### Verification on `fr8/valio/docs` (`6973c2d` on `fr8/valio/main` `627c692`, Sun 15 Nov Helsinki)
 
-- `PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m scenarios.run_all` (keyless, fresh gateway on bundled replay snapshot): **8/8 passed** across 88 checks (`s0_guardrails` 12, `s1_milk` 11, `s2_recipe_order` 11, `s3_event_substitution` 9, `s4_stockout` 8, `s5_allergen_safe` 10, `s6_proactive_seller` 14, `s7_drift` 13).
-- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m pytest -q tests/test_docs_submission_hygiene.py tests/test_replay_port.py`: **14 passed in 1.24s** (replay modes, gzipped snapshot, `next_delivery_day`, fixture catalog subset, and 503 `catalog_missing` after known-customer auth).
-- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m pytest -q`: **707 passed, 105 skipped, 1 xfailed, 1 xpassed in 79.06s** (0 failures keyless offline).
+- `AIMO_REPLAY=1 AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m scenarios.run_all` (keyless, fresh gateway on bundled replay snapshot): **8/8 passed** across 88 checks (`s0_guardrails` 12, `s1_milk` 11, `s2_recipe_order` 11, `s3_event_substitution` 9, `s4_stockout` 8, `s5_allergen_safe` 10, `s6_proactive_seller` 14, `s7_drift` 13).
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/pytest -q tests/test_docs_submission_hygiene.py tests/test_numbers_reproducibility.py`: **18 passed in 1.22s** (replay modes, gzipped 669-product snapshot + catalog subset, 92-id snapshot, MCP/OTAP/Peppol/windtunnel reproducibility, and doc hygiene).
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/pytest -q`: **1,150 passed, 105 skipped, 1 xfailed, 1 xpassed in 117.61s** across `1,257` collected keyless offline tests, including `tests/test_fuzz.py` and `tests/test_replay_port.py` (0 failures keyless offline: all catalog-dependent tests skip cleanly without `data/valio_aimo_junction26_product_data.json`; `627c692` on `fr8/valio/main` had `1,146 passed` across `1,253` collected; full 17,546-product catalog JSON on `2468bdd` had `743 passed, 7 skipped, 2 xfailed`).
 
 ## Files touched outside the S1 ownership list (small, needed for items 2 and 4)
 
@@ -60,7 +60,7 @@ timing; the assertion is unchanged.
 
 ## Open items / requests
 
-- S2 / S3: mark the 8 tests above `@pytest.mark.needs_data` (or give them the replay catalog) so keyless pytest is clean on standalone `main` (clean on `fr8/valio` `2e6ae66`: 707 passed, 105 skipped, 1 xfailed, 1 xpassed).
+- S2 / S3: mark the 8 tests above `@pytest.mark.needs_data` (or give them the replay catalog) so keyless pytest is clean on standalone `main` (`738c93a` on `2a68792`; already clean with 0 failures on `fr8/valio/docs` `6973c2d` / `fr8/valio/main` `627c692`: `1,150 passed, 105 skipped, 1 xfailed, 1 xpassed` across `1,257` collected tests).
 - S5 (`ui`): the replay badge lives in `web/app.js` right after the mode pill; keep it when you restyle the header.
 - S4 (`submit`): README/DEMO can say "no key needed: `make accept` and `uv run aimo serve` run the recorded
   snapshot (served_from: replay)". Re-record with `uv run python scripts/record_replay.py` (needs the key).

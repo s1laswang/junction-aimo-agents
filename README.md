@@ -38,7 +38,7 @@ cp .env.example .env    # fill keys if you have them
 make accept             # or: uv run bash scripts/judge_accept.sh
 ```
 
-`make accept` runs pytest, runs `scenarios.run_all` (8/8 PASS, live when keyed or off `tests/fixtures/snapshot/replay` when keyless), starts the gateway on a free port with a fresh approver credential, checks the discovery and docs endpoints, runs the conformance suite (44/44), `qa_milk_flow.py` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → human approval → Peppol AP → audit verify, printing the order id, Peppol `OrderResponseCode`, and audit verify status), and (when keyless) `uv run aimo demo` via the scripted buyer. It prints a PASS/FAIL/SKIP table and ends in `RESULT: PASS` or `RESULT: FAIL`.
+`make accept` runs pytest, runs `scenarios.run_all` (8/8 PASS, live when keyed or off `tests/fixtures/snapshot/replay` when keyless), starts the gateway on a free port with a fresh approver credential, checks the discovery and docs endpoints, runs the conformance suite (44/44), `qa_milk_flow.py` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → human approval → Peppol AP → audit verify, printing the order id, Peppol `OrderResponseCode`, and audit verify status), `requote_beat.py` when present (`409 requote_needed` on an expired price-moved quote → replacement signed quote → human approval → Peppol AP + audit verify), and (when keyless) `uv run aimo demo` via the scripted buyer. It prints a PASS/FAIL/SKIP table and ends in `RESULT: PASS` or `RESULT: FAIL`.
 
 ### Keyless vs keyed
 
@@ -59,7 +59,7 @@ cp .env.example .env    # optional: fill AIMO_API_KEY and GEMINI_API_KEY for liv
 uv run aimo serve       # or `make serve`: downloads the 17.5k catalog when AIMO_API_KEY is set, or serves the bundled 669-product replay snapshot on :8000
 ```
 
-With an empty `.env` (no `AIMO_API_KEY`, no `GEMINI_API_KEY`), `aimo serve` automatically activates replay mode (`/healthz` shows `replay.mode: "auto"`, `clock.mode: "replay"`, and responses carry `served_from: replay`) over the bundled 669-product snapshot and catalog subset in `tests/fixtures/snapshot/replay/`, so `/ui`, `uv run python -m scenarios.run_all` (8/8 PASS, 88 checks), `conformance` (44/44), `qa_milk_flow.py`, and `uv run aimo demo` all work out of the box. Only the live Valio upstream and full-catalog offline `pytest` cases (17,546 products) need `data/valio_aimo_junction26_product_data.json` (via `AIMO_API_KEY` + `uv run aimo fetch-data`).
+With an empty `.env` (no `AIMO_API_KEY`, no `GEMINI_API_KEY`), `aimo serve` automatically activates replay mode (`/healthz` shows `replay.mode: "auto"`, `clock.mode: "replay"`, and responses carry `served_from: replay`) over the bundled 669-product snapshot and catalog subset in `tests/fixtures/snapshot/replay/`, so `/ui`, `uv run python -m scenarios.run_all` (8/8 PASS, 88 checks), `conformance` (44/44), `qa_milk_flow.py`, and `uv run aimo demo` all work out of the box (`Dockerfile` copies `tests/fixtures/snapshot` into the image as well, so keyless Docker containers boot straight into replay mode on `:8000`). Only the live Valio upstream and full-catalog offline `pytest` cases (17,546 products) need `data/valio_aimo_junction26_product_data.json` (via `AIMO_API_KEY` + `uv run aimo fetch-data`).
 
 Then open:
 
@@ -82,7 +82,7 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (or `make test`). Result: **743 passed, 7 skipped, 2 xfailed** with the full 17,546-product catalog JSON (`707 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline on `fr8/valio/docs` `2e6ae66` across 814 collected tests in `tests/`; standalone `main` `2a68792`: `344 passed, 7 skipped` keyed). Without `data/valio_aimo_junction26_product_data.json`, full-catalog offline `pytest` cases skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8 PASS, 88 checks** both against the live mock API and keyless off `tests/fixtures/snapshot/replay/`). Conformance suite: `uv run python -m conformance` or `make conformance` (**44/44** checks on both Valio Aimo in live or keyless replay mode and `toywholesaler`, plus offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (or `make fetch-data`, needs `AIMO_API_KEY`) once, then re-run pytest for the full-catalog count.
+Tests: `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (or `make test`). Result: **1150 passed, 105 skipped, 1 xfailed, 1 xpassed** keyless offline across 1,257 collected tests in `tests/` on `6973c2d` (0 failures without keys; `743 passed, 7 skipped, 2 xfailed` with the 87 MB full 17,546-product catalog JSON on `2468bdd` prior to the S2 fuzz, input-validation, buyer and doc-contract suites; standalone `main` `2a68792` / `738c93a`: `344 passed, 7 skipped` keyed). Without `data/valio_aimo_junction26_product_data.json`, full-catalog offline `pytest` cases skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8 PASS, 88 checks** both against the live mock API and keyless off `tests/fixtures/snapshot/replay/`). Conformance suite: `uv run python -m conformance` or `make conformance` (**44/44** checks on both Valio Aimo in live or keyless replay mode and `toywholesaler`, plus offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (or `make fetch-data`, needs `AIMO_API_KEY`) once, then re-run pytest to include the 105 full-catalog cases.
 
 ### Approving as a human
 
@@ -226,7 +226,7 @@ curl -s -X POST http://localhost:8000/v1/approvals/ORD-.../decision -H "Content-
 curl -s http://localhost:8000/v1/audit/report/ORD-...
 curl -s http://localhost:8000/v1/audit/verify
 ```
-Steps 4–8 were re-run on Sat 14 Nov 23:10 against `AIMO_REPLAY=tests/fixtures/snapshot uv run aimo serve`: quote €1,010, `pending_approval`, agent 403, session approval → `placed`, report shows `#11 approval.refused`, verify `ok: true`.
+Steps 4–8 were re-run on Sat 14 Nov 23:10 against `AIMO_REPLAY=tests/fixtures/snapshot uv run aimo serve` (the earlier 92-product snapshot; keyless `make accept` and `uv run aimo serve` now run the same flow automatically on `tests/fixtures/snapshot/replay/`): quote €1,010, `pending_approval`, agent 403, session approval → `placed`, report shows `#11 approval.refused`, verify `ok: true`.
 The same flow as one script with checks: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000`.
 
 Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULTS`): `stockout:<id|*>`, `partial:<id|*>:<n>`, `price_shock:<id|*>:<factor>`, `cutoff:<id|*>`, `error_rate:<p>`, `rate_limit:<p>`, `latency_ms:<n>`. See [docs/interfaces.md](docs/interfaces.md).
@@ -287,7 +287,8 @@ Pilot KPIs:
 | `web/` | No-build approval UI served at `/ui` (approver sign-in, voice confirm, recipes, Valio ops, `?mock=1` offline mode) |
 | `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline ([results](docs/windtunnel-results.md)) |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | 814 collected pytest cases across gateway, catalog, trust, buyer, voice, replay, per-approver and known-customer auth, input/quantity validation, docs hygiene, openness and scenarios (plus `/v1` route fuzzing in `main` `81e730d` / `2a68792`); `tests/fixtures/snapshot/replay/` holds the 669-id replay snapshot and 669-product gzipped catalog subset (alongside the 92-id `tests/fixtures/snapshot`) |
+| `tests/` | 1,257 collected pytest cases across gateway, catalog, trust, buyer (including scripted mock edge cases and `fake_server`), voice, replay, `judge_accept` gate checks, per-approver and known-customer auth, plan/quantity input validation, `/v1` route fuzzing (`test_fuzz.py`), docs hygiene and reproducibility contracts, openness and scenarios; `tests/fixtures/snapshot/replay/` holds the 669-id replay snapshot and 669-product gzipped catalog subset (alongside the 92-id `tests/fixtures/snapshot`) |
+| `Dockerfile` | Slim Python 3.12 container image (port 8000, non-root `aimo` user, `/app/data` volume, `/healthz` check, copies `tests/fixtures/snapshot` so keyless containers boot straight into replay mode) |
 | `docs/evidence/` | Sanitized Gemini ledgers behind the montage cost numbers (`montage_stats.py`) |
 | `docs/` | [OPENNESS](docs/OPENNESS.md), [COMBINE](docs/COMBINE.md), [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [QA](docs/pitch/QA.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 
