@@ -2,7 +2,7 @@
 
 > **From Sat 14 Nov 23:25 the submit session (S4, [submit.md](submit.md)) and `fr8/valio/docs` coordinate these docs.** Gate runs and sanitized montage evidence: [submit.md](submit.md).
 
-Branch `team/pitch` / `fr8/valio/docs`. Last updated Sun 15 Nov 2026, 00:20 Helsinki. Round 4+ truth pass: reconciled all docs against merged `main` + `fr8/valio/main` `2468bdd` (per-approver 12-char passphrases in `approver_pins.json` / `AIMO_APPROVER_PINS` + `X-Approver-Session` with per-identity lockout, known-customer enforcement across `/v1`, catalog search, MCP and buyer runs, `injection_screen` on plan lines and candidates, 13 MCP tools, `743 passed, 7 skipped, 2 xfailed` across 752 pytest checks, `8/8` scenarios across 88 checks, 44/44 conformance on two wholesalers, keyless scripted buyer fallback in 5.95 s, `409 requote_needed` price-change beat, S5 UI/voice approval, wind tunnel `wt640` + `wt2560` tables, and `docs/pitch/QA.md`).
+Branch `team/pitch` / `fr8/valio/docs`. Last updated Sun 15 Nov 2026, 01:56 Helsinki. Round 4+ truth pass: reconciled all docs against merged `main` (`81e730d`, `2a68792`) + `fr8/valio/main` (`2468bdd`, `2e6ae66`) (per-approver 12-char passphrases in `approver_pins.json` / `AIMO_APPROVER_PINS` + `X-Approver-Session` with per-identity lockout, known-customer enforcement across `/v1`, catalog search, MCP and buyer runs, `injection_screen` on plan lines and candidates, 13 MCP tools, `743 passed, 7 skipped, 2 xfailed` with catalog JSON on `2468bdd` and `707 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline on `2e6ae66` vs `344 passed, 7 skipped, 1 xfailed, 1 xpassed` on standalone `main` `81e730d`, `8/8` scenarios across 88 checks live and keyless replay, 44/44 conformance on two wholesalers, S1 bundled replay snapshot + catalog subset, keyless scripted buyer fallback in 5.95 s, `409 requote_needed` price-change beat, S5 UI/voice approval, S3 wind tunnel `wt640` 0 policy / 0 allergen violations at 68.2% precision / 99.7% recall + `wt2560` tables, and `docs/pitch/QA.md`).
 
 ## Status
 | Deliverable | File | State |
@@ -87,12 +87,14 @@ All reproduced over HTTP on merged main with headers `X-Customer-Id: hotel-auror
 8. **[demo risk] The weekly budget remembers rehearsals.** The `weekly_budget` rule sums `order.placed` events over 7 days. After three test runs the 7-day spend already read €2,700.40; after about seven approved 1,000 L runs it passes €8,000 and adds another needs-approval reason. Mitigation is in DEMO.md (fresh `AIMO_DATA_DIR` with only the state DB removed). A `aimo serve --fresh-state` flag or a demo reset route would be safer.
 
 ## Decisions for Silas
-1. **Cut-off clock.** 464306's order cut-off for Monday 16 Nov delivery is **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). If the live pitch or judging is after about 16:30 on Sunday, the hero request "by Monday" will not plan 464306. Please confirm the pitch slot. If it is late, we demo in mock mode or change the request date.
+1. **Cut-off clock.** 464306's order cut-off for Monday 16 Nov delivery is **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). If the live pitch or judging is after about 16:30 on Sunday, the hero request "by Monday" will not plan 464306 on the real wall clock. Mitigated in S1 `replay` (`14d6939` / `2a68792`, ported on `2e6ae66`): replay mode anchors the clock at the snapshot's recorded `timeNow` (`2026-11-14T23:50:28+0200`) and `aimo.backend.clock.next_delivery_day()` computes the next weekday whose Stock cut-off is still ahead on `AIMO_NOW` / replay clock.
 2. ~~Fix issues 1 and 2 before the freeze?~~ Done in round 2 and verified.
 3. Public repo link, video link and whether there is a live URL, for `docs/SUBMISSION.md`.
 
-## Closed in Round 4
-- Wind tunnel numbers folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md`, and `NUMBERS.md` from `docs/windtunnel-results.md`.
+## Closed in Round 4 and S1–S5 gate updates (`81e730d`, `2a68792`, `2e6ae66`)
+- Wind tunnel numbers folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md`, and `NUMBERS.md` from `docs/windtunnel-results.md`, including S3 `need` v2 (`89bc3db` / `81e730d`): `wt640` gateway **0 policy / 0 allergen violations**, recall **99.7%**, precision **68.2%** (from 54.0%), outcome accuracy **73.4%**.
+- S2 `harden` (`81e730d`): ~2,600 fuzzed `/v1` requests with 0 server errors, fractional count-unit / implausible quantity 422s, and simulated clock labels on audit reports folded into docs.
+- S1 `replay` (`2a68792` on `origin/main`, ported in `2e6ae66` on `fr8/valio/docs`): bundled gzipped snapshot (`tests/fixtures/snapshot/replay/`, 669 ids x 16–20 Nov + catalog subset), keyless `make accept` `RESULT: PASS` (`PASS=16 FAIL=0 SKIP=4`, `ORD-20261114-762250e2` Peppol `AP`, audit verify 20 events), keyless `scenarios.run_all` **8/8 passed** (88 checks), and keyless offline pytest **707 passed, 105 skipped, 1 xfailed, 1 xpassed** on `2e6ae66`.
 - Note on run times: `docs/demo-montage.md` measures 22.13-36.85 s (drift stops before ordering at 22.13 s); docs quote 22-37 s.
 - Reconciled test and conformance counts across all docs (`pytest -q`, `scenarios.run_all` 8/8, `conformance` 44/44 on two wholesalers).
 - Human-only slots remaining for freeze: backup video URL and live `cloudflared` tunnel URL in `docs/SUBMISSION.md`.
