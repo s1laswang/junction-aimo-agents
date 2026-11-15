@@ -109,7 +109,7 @@ async function boot() {
   // Demo/recording helpers: ?autorun=1 starts the run, &autoapprove=1 approves when the agent waits, &tab=audit opens a tab.
   if (params.get("autorun") === "1") startRun();
   else if (params.get("tab")) setTab(params.get("tab"));
-  if (!MOCK) setInterval(() => { if (S.tab === "approvals" && !S.deciding && !S.voice) refreshApprovals(true); }, 5000);
+  if (!MOCK) setInterval(() => { if (S.tab === "approvals" && !S.deciding && !S.voice && !S.requote) refreshApprovals(true); }, 5000);
 }
 
 function banner(msg, actions = [], kind = "") {
@@ -625,7 +625,7 @@ async function startRun() {
     });
   } catch (e) {
     S.run.status = "error";
-    S.run.error = e.message;
+    S.run.error = e.code === "signin_cancelled" ? "Sign in as an approver to instruct the buying agent." : e.message;
     renderRequest(); renderTimeline(); renderPlan();
   }
 }
@@ -958,7 +958,7 @@ function renderPlan() {
     return;
   }
 
-  const reqWarn = planRequestScreenWarnEl(p.explanation);
+  const reqWarn = planRequestScreenWarnEl(p.explanation, p.need || r.need);
   if (reqWarn) parts.push(reqWarn);
   if (p.explanation) parts.push(h("p", { class: "sm", style: { maxWidth: "80ch" } }, p.explanation));
   parts.push(planLines(p));
@@ -1008,17 +1008,56 @@ function perL(c) {
 }
 
 const REQ_SCREEN_WARN_PREFIX = "Warning: the request contains instructions aimed at AI agents";
+const REQ_APPROVAL_RX = "(?:approv\\w*|sign[- ]?off|signed off|human review|review step|verification|human check|checks?|guardrails?)";
+const REQ_SCREEN_RULES = [
+  ["instruction override", /\b(?:ignore|disregard|forget|override|bypass|skip)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|all|any|your|the|these|my)\b[^.\n]{0,30}\b(?:instructions?|rules?|prompts?|limits?|guardrails?|polic(?:y|ies)|checks?|restrictions?|budget)|\bignore your\b|\bdisregard (?:the|your|all)\b|\b(?:unohda|ohita|sivuuta|älä välitä)\b[^.\n]{0,40}\b(?:ohje\w*|sään\w*|raj\w*|hyväksyn\w*|tarkist\w*|budje\w*)|\b(?:ignorera|glöm|bortse från|strunta i)\b[^.\n]{0,40}\b(?:instruktion\w*|regl\w*|gräns\w*|godkänn\w*|granskning\w*)/i],
+  ["limit bypass", /\b(?:ignore|bypass|skip|disable|remove|lift)\s+(?:the\s+|your\s+|all\s+|any\s+)?(?:spending\s+|spend\s+|order\s+|approval\s+|budget\s+)?(?:limits?|caps?|thresholds?|guardrails?|restrictions?)\b/i],
+  ["approval bypass", new RegExp("\\b(?:skip|bypass|avoid|waive[ds]?|disable[ds]?|remove|without)\\b[^.\\n]{0,30}\\b" + REQ_APPROVAL_RX + "|" + REQ_APPROVAL_RX + "[^.\\n]{0,40}\\b(?:has been |is |was )?(?:waived|skipped|not (?:needed|required|necessary)|disabled|unnecessary|optional)\\b|\\bno (?:need|reason) (?:for|to)\\b[^.\\n]{0,30}\\b(?:approv\\w*|human|review|ask|check)|\\b(?:nobody|no one|no human) (?:has|needs|will have) to (?:approve|review|check|see)|\\bapproval[_ ]required\\s*[=:]\\s*(?:false|0|no)|\\bpolicy\\s*[=:]\\s*(?:none|off|false)|\\brequires?_approval\\s*[=:]\\s*false|\\bauto[- ]?approv\\w*|\\bapprove (?:it|this|everything|all|the order) (?:automatically|directly|now|immediately)", "i")],
+  ["fake approval", /\b(?:pre[- ]?approved|pre[- ]?authori[sz]ed|pre[- ]?cleared|already (?:been )?(?:approved|authori[sz]ed|signed off|cleared|verified))\b|\b(?:has|have) (?:already )?signed off\b|\bauthori[sz]ed by (?:the|our|your) (?:cfo|ceo|cto|coo|director|manager|board|owner|boss)|\bmark (?:it|this|the order|the quote|them) as (?:verified|approved|pre-?approved|safe|allergen[- ]?safe)|\b(?:jo|valmiiksi|etukäteen) hyväksy\w*|\bhyväksyn\w* (?:on )?(?:jo )?(?:annettu|saatu)|\bhyväksyntää ei (?:tarvita|tarvitse)|\bälä lähetä\b[^.\n]{0,30}hyväksy\w*|\bei tarvitse hyväksy\w*|\b(?:redan|förhands)\s?godkän\w*|\bhoppa över\b[^.\n]{0,30}\b(?:godkänn\w*|granskning\w*|kontroll\w*)|\bingen\b[^.\n]{0,30}\b(?:godkänn\w*|granskning)[^.\n]{0,20}\b(?:behövs|krävs)/i],
+  ["allergen override", /\ballerg\w*[^.\n]{0,40}\b(?:do(?:es)?n'?t|do(?:es)? not|no longer|never) (?:apply|matter|count)|\b(?:mark|treat|label|consider|report|flag|list)\s+(?:it|this|them|the product|this product|the item|this item|these)(?:\s+as)?\s+(?:an? )?(?:allergen|gluten|nut|milk|lactose|dairy)[- ]?(?:safe|free)\b/i],
+  ["role injection", /["']role["']\s*:\s*["'](?:system|developer|assistant|tool)["']|\[\s*(?:system|developer|assistant instruction|admin)\b[^\]]{0,40}\]|<\s*\/?\s*(?:system|developer|instructions?)\s*>|\b(?:system|developer|admin)\s+(?:override|notice|message|instruction|mode)\b|\b(?:developer|admin|god|debug|maintenance) mode\b|\byou are now\b|\bact as (?:an? |the )?(?:admin|administrator|developer|system|root)\b|\bnew instructions?\b|\bjailbreak\b|\bdan mode\b|(?:^|\n)\s*(?:assistant|system)\s*:|\bpolicy engine\b[^.\n]{0,30}\b(?:disabled|offline|off|down|bypassed|suspended)\b/im],
+  ["prompt probing", /\b(?:system|developer|hidden)\s*(?:prompt|message|instructions?)\b/i],
+  ["exfiltration", /\b(?:reveal|disclose|print|output|repeat|send|share|leak)\b[^.\n]{0,40}\b(?:mandate|approval limits?|spending limits?|system prompt|instructions|api[_ ]?keys?|passwords?|credentials|policy)\b/i],
+  ["tool call injection", /\bplace_order\b|\bcreate_quote\b|\bquote_hash\s*=|"?(?:function_call|tool_call|tool_use)"?\s*:|\bcall (?:the )?(?:tool|function)\b/i],
+  ["secrecy", /\b(?:do it|act|proceed) (?:silently|quietly|secretly)\b|\b(?:don'?t|do not|never) (?:tell|inform|mention|notify|show)\b[^.\n]{0,30}\b(?:human|customer|user|manager|approver|buyer|anyone)|\bwithout telling\b|\bälä kerro\b|\bsäg (?:inget|inte)\b/i],
+  ["price manipulation", /\baccept any price\b|\bprice\b[^.\n]{0,20}\b(?:is a placeholder|doesn'?t matter|is not final)|\b(?:change|set|override|ignore) (?:the )?(?:unit )?(?:price|total|invoice)\b/i],
+  ["quantity manipulation", /\b(?:set|change|increase|raise) (?:the )?(?:quantity|qty|amount) (?:to|by)\b|\bmultiply (?:the )?(?:quantity|order|amount)\b|\b\d+\s*(?:x|×|times) the (?:requested|ordered|usual)? ?(?:quantity|amount|order)\b|\b(?:order|buy) (?:the )?(?:entire|whole|all) (?:stock|inventory)\b|\bkoko varasto\b/i],
+  ["limit evasion", /\bsplit\b[^.\n]{0,30}\borders?\b[^.\n]{0,40}\b(?:under|below|less than|so (?:that )?(?:nobody|no one|it doesn'?t))|\b(?:keep|stay)\w* (?:just )?(?:under|below) the (?:approval |auto[- ]?approve |spending )?(?:limit|threshold)|\bpretend (?:the|that)\b[^.\n]{0,30}\b(?:limit|budget|approval|allergen)/i],
+];
 
-function planRequestScreenWarnEl(explanation) {
+function screenRequestNeed(need) {
+  if (!need || typeof need !== "object") return [];
+  const raw = [need.raw_text, need.product_query].filter((s) => typeof s === "string" && s.trim()).join("\n");
+  const out = [];
+  if (raw) {
+    const norm = raw.normalize("NFKC").replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "").replace(/[ \t]+/g, " ");
+    for (const [reason, rx] of REQ_SCREEN_RULES) {
+      if (rx.test(norm) && !out.includes(reason)) out.push(reason);
+    }
+  }
+  return out;
+}
+
+function planRequestScreenWarnEl(explanation, need) {
   const text = String(explanation || "");
-  if (!text.includes(REQ_SCREEN_WARN_PREFIX)) return null;
-  const fullMatch = text.match(/Warning: the request contains instructions aimed at AI agents(?:\s*\(([^)]*)\))?\.\s*They were ignored,\s*and the customer's policy will ask a human to confirm\./);
-  const reasons = fullMatch ? fullMatch[1] : (text.match(/Warning: the request contains instructions aimed at AI agents\s*\(([^)]*)\)/) || [])[1];
-  const detail = fullMatch ? fullMatch[0] : text.slice(text.indexOf(REQ_SCREEN_WARN_PREFIX));
+  if (text.includes(REQ_SCREEN_WARN_PREFIX)) {
+    const fullMatch = text.match(/Warning: the request contains instructions aimed at AI agents(?:\s*\(([^)]*)\))?\.\s*They were ignored,\s*and the customer's policy will ask a human to confirm\./);
+    const reasons = fullMatch ? fullMatch[1] : (text.match(/Warning: the request contains instructions aimed at AI agents\s*\(([^)]*)\)/) || [])[1];
+    const detail = fullMatch ? fullMatch[0] : text.slice(text.indexOf(REQ_SCREEN_WARN_PREFIX));
+    return h("div", { class: "exc warn plan-request-screen-warn", role: "alert" },
+      h("b", null, "!"),
+      h("div", null,
+        h("b", null, `Buyer request injection screen: FLAGGED${reasons ? ` (${reasons.trim()})` : ""}. `),
+        h("span", { class: "exc-body" }, detail)));
+  }
+  const needReasons = screenRequestNeed(need);
+  if (!needReasons.length) return null;
+  const label = needReasons.join(", ");
+  const detail = `${REQ_SCREEN_WARN_PREFIX} (${label}). They were ignored, and the customer's policy will ask a human to confirm.`;
   return h("div", { class: "exc warn plan-request-screen-warn", role: "alert" },
     h("b", null, "!"),
     h("div", null,
-      h("b", null, `Buyer request injection screen: FLAGGED${reasons ? ` (${reasons.trim()})` : ""}. `),
+      h("b", null, `Buyer request injection screen: FLAGGED (${label}). `),
       h("span", { class: "exc-body" }, detail)));
 }
 
@@ -1362,7 +1401,7 @@ async function decide(o, q, decision, voiceNote) {
     S.voice = null;
     renderApproverChip();
     if (remember.remember) { S.remember = false; loadLearned(o.customer_id, true); }
-    if (S.requote?.order_id === o.order_id) S.requote = null;
+    if (S.requote && (S.requote.order_id === o.order_id || S.requote.new_order_id === o.order_id)) S.requote = null;
     const dec = order.decision || o.decision;
     S.decided.set(order.order_id, { order, quote: q, decision: dec });
     if (S.run && S.run.order && S.run.order.order_id === order.order_id) { S.run.order = order; }
@@ -1405,6 +1444,7 @@ function requoteCard(it) {
     h("div", { class: "card-head" }, h("h3", { class: "grow" },
       R.why === "cutoff_passed" ? "Cut-off passed while waiting: re-planned"
         : R.why === "line_unavailable" ? "A line became unavailable: re-planned"
+        : R.why === "partial_stock" ? "Stock fell below quoted quantity: re-planned"
         : delta ? "Prices changed: re-quote needed" : R.why === "quote_expired" ? "Price lock expired: fresh quote, same price" : "Re-quote needed"),
       delta != null ? h("span", { class: `delta ${delta > 0 ? "up" : "down"}` }, `${delta > 0 ? "+" : ""}${eur(delta)} (${num((delta / old.total_net) * 100, 1)}%)`) : null),
     h("div", { class: "card-body sm muted" }, R.reason, " Your approval was bound to the old quote hash, so it did not apply. Nothing was ordered."),
