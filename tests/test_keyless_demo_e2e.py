@@ -111,6 +111,7 @@ def _live_server(
         "AIMO_API_KEY": "",
         "VALIO_API_KEY": "",
     }
+    env.pop("AIMO_CATALOG_FIXTURE", None)
     if extra_env:
         env.update(extra_env)
     proc = subprocess.Popen(
@@ -602,6 +603,7 @@ def test_live_replay_gateway_run_demo_and_sse_keyless(
     tmp_path: Path,
 ) -> None:
     base, _ = replay_live_server
+    monkeypatch.delenv("AIMO_CATALOG_FIXTURE", raising=False)
     monkeypatch.setenv("AIMO_REPLAY", str(REPLAY_DIR))
     monkeypatch.setenv("AIMO_OFFLINE", "0")
 
