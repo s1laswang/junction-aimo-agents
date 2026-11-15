@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Try to Scam the Agent | Valio Aimo Trusted Trade Arena</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="arena-topbar" data-testid="arena-topbar">
+    <div class="brand-cluster">
+      <div class="pixel-emblem" aria-hidden="true">VA</div>
+      <div class="brand-copy">
+        <h1>VALIO AIMO: TRY TO SCAM THE AGENT</h1>
+        <p>Try to Scam the Agent | 2D Wholesale Warehouse Security Arena: Trusted Trade Gateway vs Naive Direct-API Agent</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-badges">
+        <span id="sprite-mode-badge" class="sys-pill" data-testid="sprite-mode-badge">SPRITES: PROCEDURAL PIXEL (24)</span>
+        <span id="fixture-source-badge" class="sys-pill" data-testid="fixture-source-badge">DATA: BUILT-IN FIXTURES</span>
+        <span id="mcp-surface-badge" class="sys-pill ok" data-testid="mcp-surface-badge">13 MCP TOOLS | 0 APPROVE TOOLS</span>
+      </div>
+      <nav class="arena-nav" aria-label="Judge proof surfaces" data-testid="arena-nav">
+        <a href="../demo/index.html">One-Page Judge Walkthrough</a>
+        <a href="../demo/ASSETS.md">CC0 Asset Credits</a>
+        <a href="assets/manifest.json">Sprite Manifest</a>
+        <a href="../../README.md">README</a>
+        <a href="../SUBMISSION.md">Submission</a>
+        <a href="../evidence/live-run/README.md">Live Run</a>
+        <a href="../NUMBERS.md">Numbers</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="control-ribbon" aria-label="Arena mode and scenario controls">
+    <div class="defense-group" role="group" aria-label="Target architecture">
+      <span class="ribbon-label">TARGET:</span>
+      <button id="mode-gateway" type="button" class="mode-btn active" data-mode="gateway" data-testid="mode-gateway">
+        Trusted Trade Gateway (Protected)
+      </button>
+      <button id="mode-naive" type="button" class="mode-btn" data-mode="naive" data-testid="mode-naive">
+        Naive Direct-API Agent (Vulnerable)
+      </button>
+      <button id="btn-compare-both" type="button" class="mode-btn compare-btn" data-testid="btn-compare-both">
+        Run Scam on Both
+      </button>
+    </div>
+    <div id="scenario-pills" class="scenario-pills" role="tablist" aria-label="Scam and demo scenarios" data-testid="scenario-pills"></div>
+  </section>
+
+  <main class="arena-grid">
+    <section class="stage-column" aria-label="2D pixel warehouse stage and scoreboard">
+      <div class="canvas-card">
+        <div class="stage-hud">
+          <div class="stage-title-wrap">
+            <span id="active-kind-tag" class="kind-tag">HAPPY PATH</span>
+            <h2 id="active-scenario-title" data-testid="active-scenario-title">30s Hero Flow: 1,000 L Lactose-Free Milk</h2>
+            <span id="active-customer-pill" class="customer-pill" data-testid="active-customer-pill">hotel-aurora</span>
+          </div>
+          <div id="verdict-banner" class="verdict-banner ok" data-testid="verdict-banner">
+            GATEWAY VERIFIED: PEPPOL AP
+          </div>
+        </div>
+
+        <div class="canvas-frame">
+          <canvas id="warehouse-canvas" width="800" height="432" data-testid="warehouse-canvas" aria-label="Playable 2D pixel warehouse simulation"></canvas>
+        </div>
+
+        <div class="transport-bar" data-testid="transport-bar">
+          <div class="transport-buttons">
+            <button id="btn-reset" type="button" class="ctrl-btn" data-testid="btn-reset">Reset</button>
+            <button id="btn-prev" type="button" class="ctrl-btn" data-testid="btn-prev">Step Back</button>
+            <button id="btn-play" type="button" class="ctrl-btn primary-btn" data-testid="btn-play">Play</button>
+            <button id="btn-next" type="button" class="ctrl-btn" data-testid="btn-next">Step Forward</button>
+            <button id="btn-speed" type="button" class="ctrl-btn" data-speed="1" data-testid="btn-speed">1x Speed</button>
+          </div>
+          <div class="scrubber-wrap">
+            <label for="step-scrubber" id="step-counter" class="step-counter" data-testid="step-counter">Beat 1 / 6</label>
+            <input id="step-scrubber" type="range" min="0" max="5" value="0" data-testid="step-scrubber" aria-label="Scenario timeline scrubber">
+          </div>
+        </div>
+
+        <div id="beat-strip" class="beat-strip" data-testid="beat-strip"></div>
+        <div id="step-narrative" class="step-narrative" data-testid="step-narrative"></div>
+        <div id="compare-toast" class="compare-toast" hidden data-testid="compare-toast"></div>
+      </div>
+
+      <section id="scoreboard-panel" class="scoreboard-card" aria-label="Security scoreboard and wind-tunnel benchmarks" data-testid="scoreboard-panel">
+        <div class="scoreboard-header">
+          <h3>Security Scoreboard &amp; Wind-Tunnel Benchmark (wt640)</h3>
+          <span class="benchmark-tag">640 Gemini adversarial &amp; operational scenarios | 3 customer policies</span>
+        </div>
+
+        <div class="session-counters">
+          <div class="counter-box">
+            <span class="counter-label">Scams Tested</span>
+            <strong id="score-scams-tried" class="counter-val" data-testid="score-scams-tried">0</strong>
+          </div>
+          <div class="counter-box good-box">
+            <span class="counter-label">Gateway Compromised</span>
+            <strong id="score-gateway-compromised" class="counter-val good" data-testid="score-gateway-compromised">0</strong>
+          </div>
+          <div class="counter-box good-box">
+            <span class="counter-label">Gateway Attacks Caught</span>
+            <strong id="score-gateway-blocked" class="counter-val good" data-testid="score-gateway-blocked">0</strong>
+          </div>
+          <div class="counter-box bad-box">
+            <span class="counter-label">Naive Agent Compromised</span>
+            <strong id="score-naive-compromised" class="counter-val bad" data-testid="score-naive-compromised">0</strong>
+          </div>
+        </div>
+
+        <table class="wt-table" data-testid="wt-benchmark-table">
+          <thead>
+            <tr>
+              <th>Safety / Verification Metric</th>
+              <th>Trusted Trade Gateway</th>
+              <th>Naive Direct-API Agent</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Policy violations (wt640)</td>
+              <td class="good mono">0 violations</td>
+              <td class="bad mono">372 violations</td>
+            </tr>
+            <tr>
+              <td>Allergen safety violations (wt640)</td>
+              <td class="good mono">0 allergen violations</td>
+              <td class="bad mono">193 allergen violations</td>
+            </tr>
+            <tr>
+              <td>Prompt injections flagged (wt640)</td>
+              <td class="good mono">80 / 80 flagged (100.0%)</td>
+              <td class="bad mono">0 / 80 flagged (0.0%)</td>
+            </tr>
+            <tr>
+              <td>Escalation precision &amp; recall</td>
+              <td class="good mono">69.5% precision / 99.7% recall</td>
+              <td class="bad mono">17.8% recall (unsafe bypass)</td>
+            </tr>
+            <tr>
+              <td>MCP tool surface &amp; approval boundary</td>
+              <td class="good mono">13 MCP tools (0 approve tools)</td>
+              <td class="bad mono">Unrestricted self-approve API</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </section>
+
+    <aside id="proof-inspector" class="inspector-column" aria-label="Gateway Proof Inspector" data-testid="proof-inspector">
+      <div class="inspector-header">
+        <div>
+          <h3>Gateway Proof Inspector</h3>
+          <p id="proof-step-subtitle" class="muted-sub">Cryptographic, policy, and catalog evidence per beat</p>
+        </div>
+        <div class="inspector-badges">
+          <span id="proof-actor-badge" class="actor-chip" data-testid="proof-actor-badge">GATEWAY</span>
+          <span id="proof-http-badge" class="http-chip ok" data-testid="proof-http-badge">HTTP 200</span>
+        </div>
+      </div>
+
+      <div id="inspector-plan-card" class="proof-card" data-testid="inspector-plan-card">
+        <div class="card-title-row">
+          <h4>1. plan_need, Allergen Filter &amp; injection_screen</h4>
+          <span id="proof-screen-badge" class="mini-badge ok" data-testid="proof-screen-badge">injection_screen: CLEAN</span>
+        </div>
+        <div id="proof-mandate-summary" class="kv-grid" data-testid="proof-mandate-summary"></div>
+        <div id="proof-plan-lines" class="plan-lines-box" data-testid="proof-plan-lines"></div>
+      </div>
+
+      <div id="inspector-crypto-card" class="proof-card" data-testid="inspector-crypto-card">
+        <div class="card-title-row">
+          <h4>2. Ed25519 JWS Quote &amp; Access Guardrails</h4>
+          <span id="proof-jws-badge" class="mini-badge ok" data-testid="proof-jws-badge">Ed25519 JWS VERIFIED</span>
+        </div>
+        <div class="audit-actions-row">
+          <button id="btn-verify-quote" type="button" class="mini-btn" data-testid="btn-verify-quote">Verify Quote JWS</button>
+          <button id="btn-tamper-quote" type="button" class="mini-btn warn-btn" data-testid="btn-tamper-quote">Tamper Quote Total</button>
+          <button id="btn-restore-quote" type="button" class="mini-btn" data-testid="btn-restore-quote">Restore Quote</button>
+        </div>
+        <div id="quote-verify-banner" class="verify-banner ok" data-testid="quote-verify-banner">
+          Ed25519 JWS &amp; SHA-256 quote_hash verified against JWKS
+        </div>
+        <div id="proof-crypto-grid" class="kv-grid" data-testid="proof-crypto-grid"></div>
+        <div class="mcp-roster-box" data-testid="mcp-roster-box">
+          <div class="mcp-roster-title">13 MCP Tools Exposed to Buyer Agent (no approval tool):</div>
+          <div id="proof-mcp-tools" class="mcp-tool-chips"></div>
+        </div>
+      </div>
+
+      <div id="inspector-audit-card" class="proof-card" data-testid="inspector-audit-card">
+        <div class="card-title-row">
+          <h4>3. Peppol BIS Order Response &amp; Audit Chain</h4>
+          <span id="proof-peppol-badge" class="mini-badge ok" data-testid="proof-peppol-badge">Peppol AP</span>
+        </div>
+        <div class="audit-actions-row">
+          <button id="btn-verify-chain" type="button" class="mini-btn" data-testid="btn-verify-chain">Verify Chain</button>
+          <button id="btn-tamper-chain" type="button" class="mini-btn warn-btn" data-testid="btn-tamper-chain">Simulate Tamper</button>
+          <button id="btn-restore-chain" type="button" class="mini-btn" data-testid="btn-restore-chain">Restore Event</button>
+        </div>
+        <div id="audit-verify-banner" class="verify-banner ok" data-testid="audit-verify-banner">
+          Audit chain intact: ok=true (SHA-256 hash chain verified)
+        </div>
+        <ol id="proof-audit-list" class="audit-list" data-testid="proof-audit-list"></ol>
+      </div>
+
+      <div id="inspector-json-card" class="proof-card" data-testid="inspector-json-card">
+        <div class="card-title-row">
+          <h4>4. Live Step Payload</h4>
+          <span id="proof-tool-name" class="mono-tag">plan_need</span>
+        </div>
+        <pre id="proof-raw-json" class="raw-json" data-testid="proof-raw-json"></pre>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="arena-footer" data-testid="arena-footer">
+    <span>Keyless offline static simulation (0 Gemini calls, 0 live network calls). Recorded against Valio Aimo Trusted Trade Gateway.</span>
+    <span>24 pixel sprites by Kenney Vleugels (Kenney.nl) under CC0-1.0 Public Domain (<a href="../demo/ASSETS.md">docs/demo/ASSETS.md</a> | <a href="assets/manifest.json">manifest.json</a>).</span>
+  </footer>
+
+  <script src="scenarios.js" onerror="window.__arenaScenariosMissing=true"></script>
+  <script src="game.js"></script>
+</body>
+</html>
