@@ -54,17 +54,20 @@ def _err(r, status, code=None):
 
 
 # ------------------------------------------------------------------ 1. quantities
+@pytest.mark.needs_data
 def test_fractional_count_unit_is_422_with_plain_reason(api):
     b = _err(_quote(api, [{"product_id": "464306", "qty_sales_units": 2.5}]), 422, "fractional_quantity")
     assert "ST is a count unit" in b["message"] and "2 or 3" in b["message"]
     assert b["detail"]["refused"][0]["sales_unit"] == "ST"
 
 
+@pytest.mark.needs_data
 def test_whole_count_units_still_quote(api):
     r = _quote(api, [{"product_id": "464306", "qty_sales_units": 3}])
     assert r.status_code == 200, r.text
 
 
+@pytest.mark.needs_data
 def test_fraction_allowed_only_by_a_real_fractional_lot_step(api, monkeypatch):
     real = service.get_product
 
@@ -103,6 +106,7 @@ def test_plan_absurd_quantity_is_422(api):
     assert "not plausible" in b["message"]
 
 
+@pytest.mark.needs_data
 def test_large_qty_against_standing_baseline_needs_approval(api, monkeypatch):
     # 464306 at EUR 1.01: 120 units = EUR 121, far under the EUR 500 auto limit. With a standing baseline of
     # 2 a week, 120 is 60x -> flagged and never auto-approved.
@@ -116,6 +120,7 @@ def test_large_qty_against_standing_baseline_needs_approval(api, monkeypatch):
     assert "60x" in hits["quantity.plausibility"]["message"] or "60x" in str(q["provenance"]["line_verification"])
 
 
+@pytest.mark.needs_data
 def test_normal_qty_within_baseline_is_not_flagged(api, monkeypatch):
     monkeypatch.setattr(service, "_standing_baseline", lambda c, pid: 20.0 if pid == "464306" else None)
     q = _quote(api, [{"product_id": "464306", "qty_sales_units": 40}]).json()
@@ -250,6 +255,7 @@ def test_hung_run_is_closed_by_watchdog(monkeypatch):
 
 
 # ------------------------------------------------------------------ 4. one clock in the audit report
+@pytest.mark.needs_data
 def test_audit_report_uses_simulated_clock_and_labels_it(api, monkeypatch):
     monkeypatch.setenv("AIMO_NOW", "2026-11-14T14:16:00+02:00")
     monkeypatch.setenv("AIMO_NOW_FROZEN", "1")
@@ -262,6 +268,7 @@ def test_audit_report_uses_simulated_clock_and_labels_it(api, monkeypatch):
     assert str(ev["ts"]).startswith("2026-11-14T12:16") and ev["data"]["clock"]["wall_ts"]
 
 
+@pytest.mark.needs_data
 def test_audit_report_real_clock_label(api):
     q = _quote(api, [{"product_id": "464306", "qty_sales_units": 10}]).json()
     rep = api.get(f"/v1/audit/report/{q['quote_id']}").text

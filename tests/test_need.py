@@ -250,6 +250,7 @@ class MemLog:
                                                           "quote_id": q.quote_id}))
 
 
+@pytest.mark.needs_data
 def test_split_orders_escalate_once_they_pass_the_auto_limit():
     """3 x €399.96 of milk (each under the €500 auto limit) used to be auto-approved every time. Now the second
     order of the same kind in 7 days (together €799.92 > €500) goes to a human, and so does the third."""

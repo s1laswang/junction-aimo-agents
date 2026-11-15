@@ -84,9 +84,14 @@ else
   summary=$(grep -E "[0-9]+ failed|[0-9]+ passed" /tmp/aimo-accept-pytest.txt | tail -1 || true)
   summary=${summary:-"(no summary)"}
   if [ "$pec" -eq 0 ]; then
-    record PASS "pytest" "$summary"
+    if has_env AIMO_API_KEY; then
+      record PASS "pytest" "$summary"
+    else
+      record PASS "pytest (keyless)" "$summary; tests marked needs_data skip without the challenge catalog"
+    fi
   elif ! has_env AIMO_API_KEY && grep -q "valio_aimo_junction26_product_data.json" /tmp/aimo-accept-pytest.txt; then
-    record SKIP "pytest (full suite)" "catalog data missing without AIMO_API_KEY; see /tmp/aimo-accept-pytest.txt — $summary"
+    # keyless failures are real: a test that needs the full catalog must carry @pytest.mark.needs_data
+    record FAIL "pytest (keyless)" "exit $pec — a test needs the full catalog but is not marked needs_data; see /tmp/aimo-accept-pytest.txt — $summary"
   else
     record FAIL "pytest" "exit $pec — $summary"
   fi
