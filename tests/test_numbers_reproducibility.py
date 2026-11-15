@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import gzip
+import hashlib
+import io
 import json
 import pathlib
 import re
+import shutil
+import subprocess
+import tokenize
 import xml.etree.ElementTree as ET
 
+import pytest
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from aimo.buyer.costs import summarize
 from aimo.gateway.mcp_server import build_mcp
-from conformance import profile
+from conformance import profile, verify as conf_verify
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -238,18 +247,45 @@ def test_gemini_section5_ledger_and_montage_arithmetic():
         for ln in (evidence_dir / "montage-ledger-after-trim.jsonl").read_text(encoding="utf-8").splitlines()
         if ln.strip()
     ]
+    sun_rows = [
+        json.loads(ln)
+        for ln in (evidence_dir / "montage-ledger-sun.jsonl").read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
     assert len(before_rows) == 55
     assert len(after_rows) == 50
+    assert len(sun_rows) == 53
+
+    before_summary = summarize(before_rows)
+    assert round(before_summary["cost_usd"] / 5, 4) == 0.0822
+
     after_summary = summarize(after_rows)
     assert after_summary["cached"] == 57661
     assert after_summary["in"] == 183196
     assert round(after_summary["cached"] / after_summary["in"] * 100) == 31
+    assert round(after_summary["cost_usd"] / 5, 4) == 0.0339
+
+    sun_summary = summarize(sun_rows)
+    assert sun_summary["calls"] == 53
+    assert sun_summary["in"] == 225503
+    assert sun_summary["cached"] == 86792
+    assert round(sun_summary["cached"] / sun_summary["in"] * 100) == 38
+    assert round(sun_summary["cost_usd"] / 5, 4) == 0.0352
+    assert (sun_summary["escalated_runs"], sun_summary["runs"]) == (5, 6)
+    assert (sun_summary["escalated_steps"], sun_summary["agent_steps"]) == (5, 34)
+    assert round(sun_summary["escalated_steps"] / sun_summary["agent_steps"] * 100) == 15
 
     for doc_text in (gemini, numbers):
         assert "57,661" in doc_text
         assert "183,196" in doc_text
         assert "31%" in doc_text
         assert "4,255" in doc_text
+
+    montage_md = _read_text("docs/demo-montage.md")
+    evidence_readme = _read_text("docs/evidence/README.md")
+    for doc_text in (montage_md, evidence_readme, numbers):
+        for tok in ("$0.0352", "$0.0339", "225,503", "86,792", "38%", "15%", "53"):
+            assert tok in doc_text
 
 
 def test_openness_conformance_reports_valid_json():
@@ -283,7 +319,13 @@ def _pct1(val: float) -> str:
 
 
 def _by_sut(systems: list[dict]) -> dict[str, dict]:
-    return {s["meta"]["sut"]: s for s in systems}
+    out: dict[str, dict] = {}
+    for s in systems:
+        sut = (s.get("meta") or {}).get("sut")
+        if not sut:
+            sut = "baseline" if "naive" in (s.get("label") or "").lower() else "team"
+        out[sut] = s
+    return out
 
 
 def _load_policy(customer_id: str) -> dict:
@@ -313,11 +355,41 @@ def test_windtunnel_json_matches_documented_metrics():
 
     assert gw640["n"] == 640
     assert nv640["n"] == 640
+    assert gw640["policy_violations"] == 0
+    assert gw640["allergen_violations"] == 0
+    assert _pct1(gw640["escalation"]["recall"]) == "99.7%"
+    assert _pct1(gw640["escalation"]["precision"]) == "69.5%"
+    assert (gw640["escalation"]["tp"], gw640["escalation"]["fp"]) == (331, 145)
+    assert _pct1(gw640["outcome_accuracy"]) == "74.8%"
     assert nv640["policy_violations"] == 372
     assert nv640["allergen_violations"] == 193
     assert _pct1(nv640["escalation"]["recall"]) == "17.8%"
     assert _pct1(nv640["escalation"]["precision"]) == "90.8%"
-    assert _pct1(gw640["injection"]["block_rate"]) == "56.2%"
+    assert gw640["injection"]["payloads"] == 80
+    assert gw640["injection"]["blocked"] == 80
+    assert _pct1(gw640["injection"]["block_rate"]) == "100.0%"
+    assert (gw640["injection"]["false_positives"], gw640["injection"]["clean_requests"]) == (1, 560)
+
+    pre640 = _by_sut(wt["main_before_s3"]["systems"])["team"]
+    assert pre640["policy_violations"] == 1
+    assert pre640["allergen_violations"] == 0
+    assert _pct1(pre640["escalation"]["precision"]) == "54.0%"
+    assert _pct1(pre640["escalation"]["recall"]) == "98.8%"
+    assert _pct1(pre640["injection"]["block_rate"]) == "56.2%"
+
+    wt_ev_dir = ROOT / "docs" / "evidence" / "windtunnel"
+    for fname in (
+        "README.md",
+        "snapshot.tar.gz",
+        "wt640_gem.jsonl.gz",
+        "wt640_gem__pipeline__baseline.jsonl.gz",
+        "wt640_gem__pipeline__team__final.jsonl.gz",
+        "wt640_gem__pipeline__team__a99692f.jsonl.gz",
+    ):
+        fp = wt_ev_dir / fname
+        assert fp.is_file() and fp.stat().st_size > 0, f"Missing windtunnel evidence {fname}"
+    scen_lines = gzip.decompress((wt_ev_dir / "wt640_gem.jsonl.gz").read_bytes()).decode("utf-8").splitlines()
+    assert len([ln for ln in scen_lines if ln.strip()]) == 640
 
     wt2560 = wt["scale"]
     assert wt2560["name"] == "wt2560"
@@ -367,7 +439,23 @@ def test_windtunnel_json_matches_documented_metrics():
         ("docs/windtunnel-results.md", wt_md),
         ("docs/NUMBERS.md", numbers_md),
     ):
-        for tok in ("98.7%", "21.4%", "56.6%", "94.3%", "42/60", "0/60"):
+        for tok in (
+            "98.7%",
+            "21.4%",
+            "56.6%",
+            "94.3%",
+            "42/60",
+            "0/60",
+            "69.5%",
+            "74.8%",
+            "145",
+            "68.2%",
+            "73.4%",
+            "99.7%",
+            "100.0%",
+            "80 of 80",
+            "AIMO_SCREEN_GEMINI=1",
+        ):
             assert tok in doc_text, f"{doc_name} missing windtunnel scale/screen metric {tok!r}"
 
 
@@ -445,4 +533,249 @@ def test_injection_fp_repro_script_or_screening_zero_fp_documented():
     numbers_md = _read_text("docs/NUMBERS.md")
     assert "docs/pitch/repro_injection_fp.py" in numbers_md
     assert "0 of 34,159" in numbers_md and "0 / 34,159" in numbers_md
+
+
+def test_numbers_md_fallback_live_run_and_hygiene_contracts():
+    numbers_md = _read_text("docs/NUMBERS.md")
+    for tok in (
+        "GEMINI_FALLBACK_MODELS",
+        "gemini-3.5-flash",
+        "29 s",
+        "scripts/verify_quote.py",
+        "docs/evidence/live-run/quote.json",
+        "docs/evidence/live-run/audit-events.json",
+        "docs/evidence/live-run/jwks.json",
+        "docs/evidence/live-run/summarize.py",
+    ):
+        assert tok in numbers_md, f"docs/NUMBERS.md missing {tok!r}"
+
+    live_dir = ROOT / "docs" / "evidence" / "live-run"
+    live_quote = json.loads((live_dir / "quote.json").read_text(encoding="utf-8"))
+    live_order = json.loads((live_dir / "order.json").read_text(encoding="utf-8"))
+    live_run = json.loads((live_dir / "run.json").read_text(encoding="utf-8"))
+    assert live_quote["quote_id"] in numbers_md
+    assert live_order["order_id"] in numbers_md
+    assert live_run["run_id"] in numbers_md
+    assert str(live_run["latency_s"]) in numbers_md
+
+    for py_rel in (
+        "docs/evidence/montage_stats.py",
+        "docs/evidence/live-run/summarize.py",
+        "tests/test_numbers_reproducibility.py",
+        "tests/test_live_run_evidence.py",
+    ):
+        src = _read_text(py_rel)
+        assert "\x23" not in src, f"Comment marker found in {py_rel}"
+        assert "\u2014" not in src, f"Em dash found in {py_rel}"
+
+    for md_rel in (
+        "docs/NUMBERS.md",
+        "docs/OPENNESS.md",
+        "docs/demo-montage.md",
+        "docs/windtunnel-results.md",
+        "docs/evidence/README.md",
+        "docs/evidence/windtunnel/README.md",
+        "docs/evidence/live-run/README.md",
+        "docs/evidence/live-run/transcript.md",
+        "docs/evidence/live-run/audit-report.md",
+    ):
+        assert "\u2014" not in _read_text(md_rel), f"Em dash found in {md_rel}"
+
+
+    for json_rel in (
+        "docs/evidence/live-run/quote.json",
+        "docs/evidence/live-run/audit-events.json",
+        "docs/evidence/live-run/order.json",
+        "docs/evidence/live-run/jwks.json",
+    ):
+        assert "\u2014" not in _read_text(json_rel), f"Em dash found in {json_rel}"
+
+    self_src = _read_text("tests/test_numbers_reproducibility.py")
+    comment_tokens = [
+        tok
+        for tok in tokenize.generate_tokens(io.StringIO(self_src).readline)
+        if tok.type == tokenize.COMMENT
+    ]
+    assert comment_tokens == []
+
+
+def test_live_run_crypto_chain_order_binding_and_scenario_92_contract():
+    live_dir = ROOT / "docs" / "evidence" / "live-run"
+    jwks = json.loads((live_dir / "jwks.json").read_text(encoding="utf-8"))
+    quote = json.loads((live_dir / "quote.json").read_text(encoding="utf-8"))
+    order = json.loads((live_dir / "order.json").read_text(encoding="utf-8"))
+    events = json.loads((live_dir / "audit-events.json").read_text(encoding="utf-8"))
+    run = json.loads((live_dir / "run.json").read_text(encoding="utf-8"))
+
+    jwk = jwks["keys"][0]
+    jwk_canon = conf_verify.canonical_json({"crv": jwk["crv"], "kty": jwk["kty"], "x": jwk["x"]})
+    recomputed_kid = conf_verify.b64e(hashlib.sha256(jwk_canon.encode("utf-8")).digest())
+    assert recomputed_kid == conf_verify.thumbprint(jwk) == jwk["kid"] == quote["kid"]
+    pub_bytes = base64.urlsafe_b64decode(jwk["x"] + "=" * (-len(jwk["x"]) % 4))
+    pub_key = Ed25519PublicKey.from_public_bytes(pub_bytes)
+
+    quote_core = {k: v for k, v in quote.items() if k not in ("quote_hash", "signature", "kid")}
+    recomputed_qhash = hashlib.sha256(conf_verify.canonical_json(quote_core).encode("utf-8")).hexdigest()
+    assert recomputed_qhash == quote["quote_hash"] == conf_verify.quote_hash(quote)
+
+    qheader, qpayload = conf_verify.verify_jws(quote["signature"], jwks)
+    assert qheader == {"alg": "EdDSA", "kid": jwk["kid"], "typ": "quote+jws"}
+    assert qpayload["typ"] == "quote"
+    assert qpayload["quote_id"] == quote["quote_id"] == "Q-20261115-964294b6"
+    assert qpayload["quote_hash"] == recomputed_qhash
+    assert qpayload["total_net"] == 1010
+
+    q_res = conf_verify.verify_quote(quote, jwks)
+    assert q_res == {
+        "ok": True,
+        "hash_matches": True,
+        "signature_valid": True,
+        "quote_hash": recomputed_qhash,
+        "reasons": [],
+    }
+    qhash = q_res["quote_hash"]
+
+    qh64, qp64, qs64 = quote["signature"].split(".")
+    qsig = bytearray(base64.urlsafe_b64decode(qs64 + "=" * (-len(qs64) % 4)))
+    pub_key.verify(bytes(qsig), f"{qh64}.{qp64}".encode("ascii"))
+    qsig[0] ^= 0x01
+    with pytest.raises(ValueError):
+        conf_verify.verify_jws(f"{qh64}.{qp64}.{conf_verify.b64e(bytes(qsig))}", jwks)
+    other_pub = Ed25519PrivateKey.generate().public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    with pytest.raises(ValueError):
+        conf_verify.verify_jws(quote["signature"], {"keys": [{**jwk, "x": conf_verify.b64e(other_pub)}]})
+    none_hdr = conf_verify.b64e(conf_verify.canonical_json({"alg": "none", "kid": jwk["kid"]}).encode("utf-8"))
+    with pytest.raises(ValueError):
+        conf_verify.verify_jws(f"{none_hdr}.{qp64}.{qs64}", jwks)
+
+    ev_res = conf_verify.verify_events(events, jwks, contiguous=True)
+    assert ev_res == {"ok": True, "checked": 6, "problems": []}
+    assert events[0]["prev_hash"] == "0" * 64
+    for idx, ev in enumerate(events):
+        if idx > 0:
+            assert ev["prev_hash"] == events[idx - 1]["hash"]
+        core = {k: v for k, v in ev.items() if k not in ("hash", "signature", "kid")}
+        recomputed_ev_hash = hashlib.sha256(
+            (ev["prev_hash"] + conf_verify.canonical_json(core)).encode("utf-8")
+        ).hexdigest()
+        assert recomputed_ev_hash == ev["hash"] == conf_verify.event_hash(ev)
+        eheader, epayload = conf_verify.verify_jws(ev["signature"], jwks)
+        assert eheader == {"alg": "EdDSA", "kid": jwk["kid"], "typ": "audit+jws"}
+        assert epayload == {"typ": "audit-event", "seq": ev["seq"], "hash": ev["hash"]}
+        eh64, ep64, es64 = ev["signature"].split(".")
+        esig = base64.urlsafe_b64decode(es64 + "=" * (-len(es64) % 4))
+        pub_key.verify(esig, f"{eh64}.{ep64}".encode("ascii"))
+        assert ev["data"]["quote_hash"] == qhash
+
+    assert order["quote_id"] == quote["quote_id"]
+    assert order["quote_hash"] == qhash
+    assert order["status"] == "placed"
+    assert order["response_code"] == "AP"
+    assert run["quote"]["quote_hash"] == qhash
+    assert run["order"]["quote_hash"] == qhash
+    assert events[3]["action"] == "approval.verified"
+    assert events[3]["data"]["quote_hash"] == order["quote_hash"] == qhash
+    assert events[3]["data"]["approver"] == order["approved_by"]
+    assert events[5]["action"] == "order.placed"
+    assert events[5]["data"]["order"]["quote_hash"] == order["quote_hash"] == qhash
+
+    numbers_md = _read_text("docs/NUMBERS.md")
+    openness_md = _read_text("docs/OPENNESS.md")
+    scenarios_md = _read_text("docs/SCENARIOS.md")
+
+    for doc_rel, doc_text in (("docs/NUMBERS.md", numbers_md), ("docs/OPENNESS.md", openness_md)):
+        doc_dir = (ROOT / doc_rel).parent
+        for target_rel in ("evidence/live-run/README.md", "evidence/windtunnel/README.md"):
+            assert f"({target_rel})" in doc_text, f"{doc_rel} missing link to {target_rel}"
+            resolved = (doc_dir / target_rel).resolve()
+            assert resolved.is_file() and resolved.stat().st_size > 0
+
+    openness_sec5 = openness_md.split("\x23\x23 5. Verify offline", 1)[1].split("\x23\x23 ", 1)[0]
+    for sec5_tok in (
+        "docs/evidence/live-run/",
+        "docs/evidence/live-run/quote.json",
+        "docs/evidence/live-run/audit-events.json",
+        "docs/evidence/live-run/jwks.json",
+        "scripts/verify_quote.py",
+        "VERIFIED",
+        "02575d8",
+        "62e8384",
+    ):
+        assert sec5_tok in openness_sec5, f"docs/OPENNESS.md section 5 missing {sec5_tok!r}"
+
+    scen_rows = [
+        int(m.group(1))
+        for m in re.finditer(r"\|\s*PASS\s*\|\s*s[0-7]_[a-z_]+\s*\|[^|]+\|\s*(\d+)\s*\|", scenarios_md)
+    ]
+    assert scen_rows == [12, 11, 11, 9, 8, 14, 14, 13]
+    assert sum(scen_rows) == 92
+
+    for num_tok in (
+        "8/8 PASS (92 checks",
+        "92 checks",
+        "88 checks",
+        "`s0` 12, `s1` 11, `s2` 11, `s3` 9, `s4` 8, `s5` 14, `s6` 14, `s7` 13",
+        "375 passed, 7 skipped, 1 xfailed, 1 xpassed",
+        "274 passed, 0 failed",
+        "1,168 passed",
+        "1150 passed",
+        "743 passed",
+        "2,448",
+        "1d0b238",
+        "02575d8",
+        "62e8384",
+        "PASS=17 FAIL=0 SKIP=3",
+        "PASS=16 FAIL=0 SKIP=4",
+        "demo-walkthrough.mp4",
+        "build_walkthrough.sh",
+        "ffprobe",
+        "2,251,113",
+        "109.72 s",
+        "110 s",
+        "1280x720",
+        "yuv420p",
+        "44,100 Hz",
+        "f3c5996",
+    ):
+        assert num_tok in numbers_md, f"docs/NUMBERS.md missing {num_tok!r}"
+
+    mp4_path = ROOT / "docs" / "pitch" / "demo-walkthrough.mp4"
+    assert mp4_path.is_file()
+    assert mp4_path.stat().st_size == 2_251_113
+    ffprobe_bin = shutil.which("ffprobe")
+    if ffprobe_bin:
+        probe = subprocess.run(
+            [
+                ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_name,width,height,sample_rate,channels",
+                "-show_entries",
+                "format=duration,size",
+                "-of",
+                "json",
+                str(mp4_path),
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        pinfo = json.loads(probe.stdout)
+        assert int(pinfo["format"]["size"]) == 2_251_113
+        dur = float(pinfo["format"]["duration"])
+        assert round(dur, 2) == 109.72
+        assert round(dur) == 110
+        vstreams = [s for s in pinfo["streams"] if s.get("codec_name") == "h264"]
+        astreams = [s for s in pinfo["streams"] if s.get("codec_name") == "aac"]
+        assert len(vstreams) == 1 and (vstreams[0]["width"], vstreams[0]["height"]) == (1280, 720)
+        assert len(astreams) == 1 and (int(astreams[0]["sample_rate"]), int(astreams[0]["channels"])) == (44100, 1)
+
+    passed_tokens = re.findall(r"\b(\d+)\s+passed\b", numbers_md)
+    assert passed_tokens and int(passed_tokens[0]) == 1150
+
 

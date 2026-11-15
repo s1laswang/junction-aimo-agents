@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import os
 import pathlib
 import re
 import subprocess
+import tokenize
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HASH = chr(35)
@@ -18,11 +20,17 @@ REQUIRED_DOCKER_RUNTIME_DIRS = (
     "toywholesaler",
 )
 
-REQUIRED_IGNORE_ENTRIES = {
+REQUIRED_GITIGNORE_ENTRIES = {
     ".env",
     "data/",
     "keys/",
-    "/conformance-*.json",
+    "conformance-*.json",
+}
+
+REQUIRED_DOCKERIGNORE_BASE_ENTRIES = {
+    ".env",
+    "data/",
+    "keys/",
 }
 
 REQUIRED_MAKE_TARGETS = {
@@ -141,10 +149,16 @@ def test_gitignore_and_dockerignore_contain_required_entries():
     gitignore_entries = _ignore_entries(".gitignore")
     dockerignore_entries = _ignore_entries(".dockerignore")
 
-    missing_git = REQUIRED_IGNORE_ENTRIES - gitignore_entries
-    missing_docker = REQUIRED_IGNORE_ENTRIES - dockerignore_entries
+    missing_git = REQUIRED_GITIGNORE_ENTRIES - gitignore_entries
+    missing_docker = REQUIRED_DOCKERIGNORE_BASE_ENTRIES - dockerignore_entries
     assert missing_git == set(), f".gitignore missing required entries: {sorted(missing_git)}"
+    assert "/conformance-*.json" not in gitignore_entries, (
+        ".gitignore must use unanchored conformance-*.json so subdirectory conformance files are ignored"
+    )
     assert missing_docker == set(), f".dockerignore missing required entries: {sorted(missing_docker)}"
+    assert bool({"conformance-*.json", "/conformance-*.json"} & dockerignore_entries), (
+        ".dockerignore must ignore conformance-*.json"
+    )
 
 
 def test_git_check_ignore_blocks_root_conformance_but_allows_openness_reports():
@@ -158,12 +172,29 @@ def test_git_check_ignore_blocks_root_conformance_but_allows_openness_reports():
     if not (ROOT / ".git").exists():
         return
 
-    ignored_probe = subprocess.run(
-        ["git", "check-ignore", "-q", "conformance-127.0.0.1_8000.json"],
-        cwd=ROOT,
-        check=False,
+    for stray_path in (
+        "conformance-127.0.0.1_8000.json",
+        "conformance-tmp.json",
+        "sub/conformance-tmp.json",
+        "nested/deep/conformance-tmp.json",
+    ):
+        ignored_probe = subprocess.run(
+            ["git", "check-ignore", "-q", stray_path],
+            cwd=ROOT,
+            check=False,
+        )
+        assert ignored_probe.returncode == 0, f"{stray_path} must be ignored by git"
+
+    tracked_openness = set(
+        subprocess.check_output(
+            ["git", "ls-files", "docs/openness/conformance-*.json"],
+            cwd=ROOT,
+            text=True,
+        ).splitlines()
     )
-    assert ignored_probe.returncode == 0, "conformance-127.0.0.1_8000.json must be ignored by git"
+    assert set(openness_reports).issubset(tracked_openness), (
+        f"Expected tracked openness conformance reports, got {sorted(tracked_openness)}"
+    )
 
     for rel in openness_reports:
         allowed_probe = subprocess.run(
@@ -288,9 +319,10 @@ def test_combine_doc_disposition_table_covers_all_remote_branches_without_force_
     assert set(table_branches) == set(EXPECTED_REMOTE_BRANCHES)
     assert len(ready_to_delete_branches) == 9
     assert len(active_session_branches) == 7
+    assert branch_rows["team/submit"][0] == "62e8384"
     assert branch_rows["team/submit"][1] == 0
-    assert branch_rows["team/submit"][2] >= 34
-    assert branch_rows["team/submit"][3] >= 34
+    assert branch_rows["team/submit"][2] >= 38
+    assert branch_rows["team/submit"][3] >= 38
 
     assert "--force" not in combine
     code_blocks = re.findall(r"```(?:bash|sh)?\n(.*?)```", combine, flags=re.DOTALL)
@@ -365,11 +397,30 @@ def test_combine_and_merge_momin_document_wip_rescue_fleet_ports_and_judge_fixes
         "cfd5ed9",
         "4ccc1fb",
         "2fe8975",
+        "7225d06",
+        "f3c5996",
+        "02575d8",
+        "62e8384",
+        "c379f53",
+        "1d0b238",
         "0f0ece1",
     ):
         assert sha in combine, f"docs/COMBINE.md missing commit reference {sha}"
-    for marker in ("test_run_api_guard.py", "demo-walkthrough.mp4", "371", "270"):
-        assert marker in combine, f"docs/COMBINE.md missing Wave 7 reference {marker}"
+    for marker in (
+        "test_run_api_guard.py",
+        "demo-walkthrough.mp4",
+        "live-run",
+        "AIMO_GEMINI_TRACE",
+        "375",
+        "274",
+        "371",
+        "270",
+        "69.5%",
+        "92",
+        "109.72",
+        "2,448",
+    ):
+        assert marker in combine, f"docs/COMBINE.md missing Wave 10 reference {marker}"
 
     merge_momin = _read_text("docs/MERGE-MOMIN.md")
     assert EM_DASH not in merge_momin
@@ -385,8 +436,40 @@ def test_combine_and_merge_momin_document_wip_rescue_fleet_ports_and_judge_fixes
         "cfd5ed9",
         "4ccc1fb",
         "2fe8975",
+        "7225d06",
+        "f3c5996",
+        "02575d8",
+        "62e8384",
+        "c379f53",
+        "1d0b238",
         "0f0ece1",
     ):
         assert credited_sha in merge_momin, f"docs/MERGE-MOMIN.md missing commit reference {credited_sha}"
-    for marker in ("test_run_api_guard.py", "demo-walkthrough.mp4", "371", "270"):
-        assert marker in merge_momin, f"docs/MERGE-MOMIN.md missing Wave 7 reference {marker}"
+    for marker in (
+        "test_run_api_guard.py",
+        "demo-walkthrough.mp4",
+        "live-run",
+        "AIMO_GEMINI_TRACE",
+        "375",
+        "274",
+        "371",
+        "270",
+        "69.5%",
+        "92",
+        "109.72",
+        "2,448",
+    ):
+        assert marker in merge_momin, f"docs/MERGE-MOMIN.md missing Wave 10 reference {marker}"
+
+
+def test_self_hygiene_zero_comments_and_zero_em_dashes():
+    self_path = pathlib.Path(__file__)
+    self_text = self_path.read_text(encoding="utf-8")
+    assert EM_DASH not in self_text
+    assert HASH not in self_text
+    comment_tokens = [
+        tok.string
+        for tok in tokenize.generate_tokens(io.StringIO(self_text).readline)
+        if tok.type == tokenize.COMMENT
+    ]
+    assert comment_tokens == []

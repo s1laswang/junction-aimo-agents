@@ -6,10 +6,10 @@ Shared contracts: `aimo/models.py` (CEO) and `docs/interfaces.md`. Each Claude e
 | Role | Owner | Owns (paths) | Delivers |
 |---|---|---|---|
 | CEO | Claude (aimo-ceo) | `docs/PLAN.md`, `docs/TEAM.md`, `docs/interfaces.md`, `aimo/models.py`, `aimo/config.py`, merges | Plan, contracts, integration, submission |
-| Gateway | aimo-gateway | `aimo/backend/client.py`, `aimo/backend/orders.py`, `aimo/gateway/`, `scripts/fetch_data.py`, `aimo/cli.py` | Live mock API client (cache, retry, rate-limit, fault injection), FastAPI `/v1/*` + OpenAPI, MCP server (`/mcp` + stdio), `/.well-known/otap.json`, mock order backend, `uv run aimo serve` |
+| Gateway | aimo-gateway | `aimo/backend/client.py`, `aimo/backend/orders.py`, `aimo/gateway/`, `scripts/fetch_data.py`, `aimo/cli.py` | Live mock API client (cache, retry, rate-limit, fault injection, automatic replay), FastAPI `/v1/*` + OpenAPI, MCP server (`/mcp` + stdio, 13 tools, no approval tool), `/.well-known/otap.json`, mock order backend, `uv run aimo serve` |
 | Catalog | aimo-catalog | `aimo/catalog/`, `aimo/backend/catalog_store.py` | Product normalizer (names, units → litres or kg per sales unit, allergens tri-state from `allergen`/`nonAllergen`/`nutritionalClaim`, labels), SQLite FTS search, reliability and CO2 join, `plan_need()` split planner, good-better-best `rank_substitutes()`, Gemini embeddings |
 | Trust | aimo-trust | `aimo/trust/` | YAML policy engine (spend thresholds, category scopes, substitution rules, allergen hard blocks, cut-off and freshness checks), Ed25519 key, JWS-signed quotes, approvals bound to quote hash, hash-chained signed audit log, human-readable audit report, chain verification, injection screening helper |
-| Buyer | aimo-buyer | `aimo/buyer/` | Gemini buyer agent (google-genai function calling over the MCP tools), need parsing with structured output, streaming of steps to the UI, `uv run aimo demo` running the 1,000 L milk example end to end, Gemini usage ledger |
+| Buyer | aimo-buyer | `aimo/buyer/` | Gemini buyer agent (google-genai function calling over the MCP tools, quota fallback, plus keyless scripted fallback in `aimo/buyer/mock_model.py`), need parsing with structured output, streaming of steps to the UI, `uv run aimo demo` running the 1,000 L milk example end to end, Gemini usage ledger |
 | Frontend | aimo-frontend | `web/` | No-build approval UI at `/ui`: request box, live agent trace, good-better-best cards, policy verdict, approval inbox (approve/reject), order response, audit timeline plus "Verify chain" |
 | Wind tunnel + QA | aimo-windtunnel | `windtunnel/`, `tests/` | Gemini-generated synthetic customers and requests (schools, hospitals, hotels, events, stock-outs, injections), runner against the gateway, scoring (escalation correctness, violations, latency), FR8 jobs, pytest smoke tests |
 | Pitch | aimo-pitch (spawned Sat evening) | `docs/pitch/`, `README.md` polish, `docs/SUBMISSION.md`, `docs/GEMINI.md` | Deck outline, demo script rehearsal, submission text, DeepMind write-up |
@@ -18,8 +18,8 @@ Shared contracts: `aimo/models.py` (CEO) and `docs/interfaces.md`. Each Claude e
 - Catalog → Gateway: `search(query, filters) -> list[ProductSummary]`, `get_product(id) -> Product`, `plan_need(need, offers_fn) -> Plan`.
 - Backend → everyone: `BackendClient.price(ids, date)`, `.availability(ids, date)` → `dict[id, Offer]` via `get_offers()`.
 - Trust → Gateway: `evaluate(quote, mandate) -> PolicyDecision`, `sign_quote(quote) -> Quote`, `verify_quote(quote)`, `audit.append(event)`, `audit.verify()`, `audit.render(subject_id)`.
-- Gateway → Buyer and Frontend: HTTP `/v1/*` and MCP tools (names fixed in interfaces.md).
-- Buyer → Frontend: `POST /v1/agent/runs` starts a run. `GET /v1/agent/runs/{id}/events` (SSE) streams `AgentStep` events.
+- Gateway → Buyer and Frontend: HTTP `/v1/*` (known `X-Customer-Id` required; human approvals only via `X-Approver-Session` or `X-Approver-Pin`) and MCP (`/mcp` + stdio, advertising 13 tools with no approval tool; names fixed in `docs/interfaces.md`).
+- Buyer → Frontend: `POST /v1/agent/runs` (plus `/v1/agent/runs/{id}/answer` and run listing) requires a signed-in human (`X-Approver-Session` or `X-Approver-Pin`; body `faults` and caller-chosen `inproc`/`fake` test transports are operator-only behind `AIMO_DEMO_FAULTS=1`). `GET /v1/agent/runs/{id}/events` (SSE) streams `AgentStep` events.
 
 ## Milestones
 - **M1 (Sat 18:00):** terminal slice end to end. Gateway, catalog, trust and buyer must each have their function stubs real by then.
@@ -34,3 +34,13 @@ Shared contracts: `aimo/models.py` (CEO) and `docs/interfaces.md`. Each Claude e
 | **Momin** (Momin010) | Push your existing Aimo work to a `momin/*` branch of this repo, or send the link. Then pair with the CEO for 30 minutes to map it onto our seams (`BackendClient`, `catalog.search`, gateway/MCP). Own the merge of your pieces. Review the MCP server against the spec. | Link ASAP, merge by Sat 22:00 |
 | **Ivar** (ivarakerholm-wq) | Domain and UX owner. Write 3 customer profiles with real-sounding policies (hotel chain, school kitchen with milk-allergy pupils, hospital with gluten-free and texture-modified diets) in `aimo/trust/policies/` style YAML or plain text. Click through the approval UI at M2 and file issues. Validate the good-better-best wording with a mentor. | Profiles by Sat 20:00, UI review at 22:30 |
 | **Chintufp** (Chintufp) | Pitch and submission owner. Build the deck from the PLAN demo script, record the backup demo video at the Sun 06:00 freeze, and draft the Junction submission text and the Google DeepMind "Best Use of Gemini" text from `docs/GEMINI.md`. Drive the live demo. | Deck draft Sat 23:00, video Sun 07:30 |
+
+## FR8 fleet collaboration (`fr8/valio/*`)
+Five parallel FR8 squads closed the judge-review gaps and hardened the submission across `fr8/valio/*` (audited in `docs/COMBINE.md` and `docs/MERGE-MOMIN.md`):
+| Squad | Branch | Scope delivered |
+|---|---|---|
+| `inputs` | `fr8/valio/inputs` | Pre-planning `quantity <= 0` and fractional/absurd quantity `422` validation, `/v1` and MCP bad-input guards, replay/catalog boundary hardening |
+| `buyer` | `fr8/valio/buyer` | Keyless deterministic scripted buyer (`aimo/buyer/mock_model.py`) and regex parser so `uv run aimo demo` finishes end to end without `GEMINI_API_KEY`, Gemini quota failover, second-wholesaler parity |
+| `allergen` | `fr8/valio/allergen` | Customer policy allergen hard-block enforced inside `plan_need()` and `rank_substitutes()`, tri-state allergen normalization and FI/SV/EN aliases, `s5_allergen_safe` coverage |
+| `auth` | `fr8/valio/auth` | Known-customer `403 unknown_customer` across `/v1` and MCP, per-approver 12-char passphrases (`X-Approver-Pin` / `X-Approver-Session`) and human-only `/v1/agent/runs`, `PlanLine.injection_screen` plus buyer request/query screening |
+| `docs` | `fr8/valio/docs` | 13-tool MCP documentation, command-reproducible numbers (`docs/NUMBERS.md`), narrated walkthrough and submission hygiene test suites, branch and PR reconciliation |
