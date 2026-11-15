@@ -37,7 +37,10 @@ PY
   return 1
 }
 
+# per-run log folder: two accept runs in parallel must not overwrite each other's logs
+ACCEPT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/aimo-accept.XXXXXX")"
 say "== Aimo judge accept (junction-aimo-agents) =="
+say "logs=$ACCEPT_TMP"
 say "cwd=$ROOT"
 
 if command -v uv >/dev/null 2>&1; then
@@ -78,10 +81,10 @@ if [ "$fail" -gt 0 ]; then
 else
   say "-- pytest --"
   set +e
-  uv run --extra dev pytest -q > /tmp/aimo-accept-pytest.txt 2>&1
+  uv run --extra dev pytest -q > $ACCEPT_TMP/aimo-accept-pytest.txt 2>&1
   pec=$?
   set -e
-  summary=$(grep -E "[0-9]+ failed|[0-9]+ passed" /tmp/aimo-accept-pytest.txt | tail -1 || true)
+  summary=$(grep -E "[0-9]+ failed|[0-9]+ passed" $ACCEPT_TMP/aimo-accept-pytest.txt | tail -1 || true)
   summary=${summary:-"(no summary)"}
   if [ "$pec" -eq 0 ]; then
     if has_env AIMO_API_KEY; then
@@ -89,9 +92,9 @@ else
     else
       record PASS "pytest (keyless)" "$summary; tests marked needs_data skip without the challenge catalog"
     fi
-  elif ! has_env AIMO_API_KEY && grep -q "valio_aimo_junction26_product_data.json" /tmp/aimo-accept-pytest.txt; then
+  elif ! has_env AIMO_API_KEY && grep -q "valio_aimo_junction26_product_data.json" $ACCEPT_TMP/aimo-accept-pytest.txt; then
     # keyless failures are real: a test that needs the full catalog must carry @pytest.mark.needs_data
-    record FAIL "pytest (keyless)" "exit $pec — a test needs the full catalog but is not marked needs_data; see /tmp/aimo-accept-pytest.txt — $summary"
+    record FAIL "pytest (keyless)" "exit $pec — a test needs the full catalog but is not marked needs_data; see $ACCEPT_TMP/aimo-accept-pytest.txt — $summary"
   else
     record FAIL "pytest" "exit $pec — $summary"
   fi
@@ -114,14 +117,14 @@ else
 
   say "-- scenarios s0..s7 ($mode_label) --"
   set +e
-  uv run python -m scenarios.run_all > /tmp/aimo-accept-scenarios.txt 2>&1
+  uv run python -m scenarios.run_all > $ACCEPT_TMP/aimo-accept-scenarios.txt 2>&1
   sec=$?
   set -e
-  ssum=$(grep -E "^[0-9]+/[0-9]+ passed" /tmp/aimo-accept-scenarios.txt | tail -1 || true)
+  ssum=$(grep -E "^[0-9]+/[0-9]+ passed" $ACCEPT_TMP/aimo-accept-scenarios.txt | tail -1 || true)
   if [ "$sec" -eq 0 ] && [ -n "$ssum" ]; then
     record PASS "scenarios.run_all" "$ssum ($mode_label)"
   else
-    record FAIL "scenarios.run_all" "exit $sec — ${ssum:-no table} ($mode_label; see /tmp/aimo-accept-scenarios.txt)"
+    record FAIL "scenarios.run_all" "exit $sec — ${ssum:-no table} ($mode_label; see $ACCEPT_TMP/aimo-accept-scenarios.txt)"
   fi
   # pick a free port
   PORT=$(python3 - <<'PY'
@@ -130,7 +133,7 @@ s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()
 PY
 )
   set +e
-  uv run aimo serve --no-build --host 127.0.0.1 --port "$PORT" > /tmp/aimo-accept-serve.txt 2>&1 &
+  uv run aimo serve --no-build --host 127.0.0.1 --port "$PORT" > $ACCEPT_TMP/aimo-accept-serve.txt 2>&1 &
   spid=$!
   set -e
   up=0
@@ -142,7 +145,7 @@ PY
   if [ "$up" -eq 1 ]; then
     record PASS "aimo serve starts" "http://127.0.0.1:${PORT} pid=$spid"
     for path in /.well-known/otap.json /.well-known/jwks.json /healthz /docs /ui; do
-      code=$(curl -s -o /tmp/aimo-accept-curl.out -w "%{http_code}" --max-time 5 "http://127.0.0.1:${PORT}${path}" || echo 000)
+      code=$(curl -s -o $ACCEPT_TMP/aimo-accept-curl.out -w "%{http_code}" --max-time 5 "http://127.0.0.1:${PORT}${path}" || echo 000)
       case "$code" in
         2*|3*) record PASS "GET $path" "HTTP $code" ;;
         *) record FAIL "GET $path" "HTTP $code" ;;
@@ -165,19 +168,19 @@ PY
 
     if { has_env AIMO_API_KEY && [ -f data/valio_aimo_junction26_product_data.json ]; } || [ "$replay_on" -eq 1 ]; then
       set +e
-      uv run python -m conformance --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-conf.txt 2>&1
+      uv run python -m conformance --base "http://127.0.0.1:${PORT}" > $ACCEPT_TMP/aimo-accept-conf.txt 2>&1
       cec=$?
       set -e
       if [ "$cec" -eq 0 ]; then
-        record PASS "conformance suite" "$(tail -3 /tmp/aimo-accept-conf.txt | tr '\n' ' ')"
+        record PASS "conformance suite" "$(tail -3 $ACCEPT_TMP/aimo-accept-conf.txt | tr '\n' ' ')"
       else
-        record FAIL "conformance suite" "exit $cec (see /tmp/aimo-accept-conf.txt)"
+        record FAIL "conformance suite" "exit $cec (see $ACCEPT_TMP/aimo-accept-conf.txt)"
       fi
       set +e
-      uv run python docs/pitch/qa_milk_flow.py --base "http://127.0.0.1:${PORT}" > /tmp/aimo-accept-milk.txt 2>&1
+      uv run python docs/pitch/qa_milk_flow.py --base "http://127.0.0.1:${PORT}" > $ACCEPT_TMP/aimo-accept-milk.txt 2>&1
       mec=$?
       set -e
-      order_line=$(grep -E "^ORDER " /tmp/aimo-accept-milk.txt | tail -1 || true)
+      order_line=$(grep -E "^ORDER " $ACCEPT_TMP/aimo-accept-milk.txt | tail -1 || true)
       if [ "$mec" -eq 0 ] && [ -n "$order_line" ]; then
         record PASS "qa_milk_flow.py" "MILK FLOW OK ($mode_label)"
         oid=$(sed -E 's/^ORDER ([^ ]+).*/\1/' <<<"$order_line")
@@ -188,7 +191,7 @@ PY
         record PASS "audit verify" "${aver:-ok}"
         say "  $order_line"
       else
-        record FAIL "qa_milk_flow.py" "exit $mec (see /tmp/aimo-accept-milk.txt)"
+        record FAIL "qa_milk_flow.py" "exit $mec (see $ACCEPT_TMP/aimo-accept-milk.txt)"
       fi
     else
       record SKIP "conformance suite" "needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
@@ -203,7 +206,7 @@ PY
     kill "$spid" 2>/dev/null || true
     wait "$spid" 2>/dev/null || true
   else
-    record FAIL "aimo serve starts" "did not bind; last log: $(tail -3 /tmp/aimo-accept-serve.txt | tr '\n' ' ')"
+    record FAIL "aimo serve starts" "did not bind; last log: $(tail -3 $ACCEPT_TMP/aimo-accept-serve.txt | tr '\n' ' ')"
     kill "$spid" 2>/dev/null || true
   fi
 fi

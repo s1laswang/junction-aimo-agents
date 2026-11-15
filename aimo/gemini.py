@@ -46,6 +46,36 @@ def record(feature: str, model: str, kind: str = "generate", usage: Any = None, 
         f.write(json.dumps(row) + "\n")
 
 
+def _raw(x: Any) -> Any:
+    """JSON-safe copy of a google-genai request/response object for the raw trace."""
+    if x is None or isinstance(x, (str, int, float, bool)):
+        return x
+    if hasattr(x, "model_dump"):
+        try:
+            return x.model_dump(mode="json", exclude_none=True)
+        except Exception:  # noqa: BLE001
+            return str(x)
+    if isinstance(x, dict):
+        return {str(k): _raw(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_raw(v) for v in x]
+    return str(x)
+
+
+def _trace(row: dict) -> None:
+    """Raw request/response log, one JSON line per attempt, when AIMO_GEMINI_TRACE=<file> is set (evidence runs).
+    Off by default. It records prompts and model output, never the API key."""
+    path = os.environ.get("AIMO_GEMINI_TRACE", "").strip()
+    if not path:
+        return
+    try:
+        row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z", **row}
+        with open(path, "a") as f:
+            f.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001  tracing must never break a call
+        pass
+
+
 _tl = threading.local()
 _exhausted: dict[str, float] = {}      # model -> epoch seconds until which it is skipped (quota exhausted)
 EXHAUSTED_S = 1800.0
@@ -92,6 +122,10 @@ def generate(feature: str, model: str, contents: Any, config: Any = None, run_id
             try:
                 r = client().models.generate_content(model=m, contents=contents, config=config)
                 record(feature, m, usage=r.usage_metadata, latency_s=time.time() - t0, run_id=run_id, meta=row_meta)
+                _trace({"feature": feature, "run_id": run_id, "requested_model": model, "model": m, "attempt": attempt,
+                        "ok": True, "latency_s": round(time.time() - t0, 3), "meta": row_meta,
+                        "usage": _raw(getattr(r, "usage_metadata", None)),
+                        "request": {"contents": _raw(contents), "config": _raw(config)}, "response": _raw(r)})
                 _tl.model = m
                 return r
             except Exception as e:  # noqa: BLE001
@@ -99,6 +133,9 @@ def generate(feature: str, model: str, contents: Any, config: Any = None, run_id
                 record(feature, m, latency_s=time.time() - t0, ok=False, error=type(e).__name__, run_id=run_id,
                        meta=row_meta)
                 msg = str(e)
+                _trace({"feature": feature, "run_id": run_id, "requested_model": model, "model": m, "attempt": attempt,
+                        "ok": False, "latency_s": round(time.time() - t0, 3), "meta": row_meta,
+                        "error": f"{type(e).__name__}: {msg[:600]}"})
                 if _is_daily_quota(msg):
                     _exhausted[m] = time.time() + EXHAUSTED_S
                     break  # the day's quota for this model is gone: use the next model now

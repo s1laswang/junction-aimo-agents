@@ -61,3 +61,16 @@ def test_requested_model_first_when_healthy(fake):
     models = fake({"gemini-3.8-flash": "ok", "gemini-3.5-flash": "ok"})
     gemini.generate("test", "gemini-3.8-flash", "hi")
     assert models.calls == ["gemini-3.8-flash"] and gemini.last_model() == "gemini-3.8-flash"
+
+
+def test_raw_trace_records_request_response_and_fallback(fake, tmp_path, monkeypatch):
+    import json
+    trace = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("AIMO_GEMINI_TRACE", str(trace))
+    fake({"gemini-3.8-flash": Exception(DAILY), "gemini-3.5-flash": "ok"})
+    gemini.generate("test", "gemini-3.8-flash", "hello there", run_id="r1")
+    rows = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert [(r["model"], r["ok"]) for r in rows] == [("gemini-3.8-flash", False), ("gemini-3.5-flash", True)]
+    assert "RESOURCE_EXHAUSTED" in rows[0]["error"]
+    assert rows[1]["requested_model"] == "gemini-3.8-flash" and rows[1]["meta"]["fallback_from"] == "gemini-3.8-flash"
+    assert rows[1]["request"]["contents"] == "hello there" and rows[1]["ts"].endswith("Z")
