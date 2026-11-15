@@ -16,7 +16,7 @@ frames=(
   "$F/1080p-plan.png|The usual ten-litre box missed its order cut-off, so the plan picks the same Valio milk in one-litre cartons for one thousand and ten euros, and explains every option it rejected. This frame is the interface's offline mode."
   "$F/live-plan.png|The hotel's own policy says three things need a human: the total is over the five hundred euro limit, the pack is a swap, and the volume is three point three times the usual week. The agent pauses."
   "$F/s5-ops-blocked-attacks.png|The agent tries to approve its own order, naming the real manager and the correct quote. The gateway refuses with four oh three, and the attempt is written into the signed audit log as a blocked attack."
-  "$F/s5-signin-panel.png|Approvals are human only. Anna, the procurement manager, signs in with her own passphrase, which no agent ever receives."
+  "$F/s5-signin-panel.png|Approvals are human only. Anna, the procurement manager, signed in with her own passphrase before she started the run, and that one sign-in covers her approval. No agent ever receives it."
   "$F/s5-approval-signed-in.png|She approves this exact signed quote. If the price or the lines change, her approval no longer applies."
   "$F/live-run-approved.png|The order is placed, and the Peppol style order response says: accepted."
   "$F/live-audit-verified.png|Every request, decision and refusal is in a hash-chained, signed audit log, and verify recomputes all of it."

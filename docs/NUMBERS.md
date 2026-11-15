@@ -63,9 +63,9 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | s0–s7: 8/8 PASS | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 | R submit, see docs/reports/pitch.md "Gate runs" for the latest |
-| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **366 passed, 7 skipped, 1 xfailed, 1 xpassed**; keyless 265 passed, 0 failed | R submit, Sun 05:15, 7c290cf |
+| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **371 passed, 7 skipped, 1 xfailed, 1 xpassed**; keyless 270 passed, 0 failed | R submit, Sun 05:25, 4ccc1fb |
 | `make accept`, keyed | README | `make accept` | RESULT: PASS (19 PASS, 1 SKIP since the S1 merge) | R submit, every gate run in docs/reports/submit.md |
-| `make accept`, keyless (fresh clone, empty `.env`, no key variables) | README, SUBMISSION | `git clone … && cd … && : > .env && uv sync --extra dev && make accept` | RESULT: PASS (PASS=17 FAIL=0 SKIP=3); keyless pytest 265 passed / 0 failed, scenarios 8/8 in replay, conformance 44/44, MILK FLOW OK, Peppol AP | merge session, Sun 03:46 on a `git archive` of 6edf3fc, order ORD-20261114-b7e04bc3 (was 250 passed at b301d5a, Sun 03:15, order ORD-20261114-2058a197); earlier 16/0/4 before the tests session marked catalog tests `needs_data` |
+| `make accept`, keyless (fresh clone, empty `.env`, no key variables) | README, SUBMISSION | `git clone … && cd … && : > .env && uv sync --extra dev && make accept` | RESULT: PASS (PASS=17 FAIL=0 SKIP=3); keyless pytest 270 passed / 0 failed, scenarios 8/8 in replay, conformance 44/44, MILK FLOW OK, Peppol AP | merge session, Sun 03:46 on a `git archive` of 6edf3fc, order ORD-20261114-b7e04bc3 (was 250 passed at b301d5a, Sun 03:15, order ORD-20261114-2058a197); earlier 16/0/4 before the tests session marked catalog tests `needs_data` |
 
 ## Input hardening
 | Number | Claimed in | Command | Value | Status |
