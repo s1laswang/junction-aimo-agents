@@ -13,22 +13,133 @@ AIMO_LLM_MODE: "auto" (default: mock only when no key), "mock" or "scripted" (al
 """
 from __future__ import annotations
 
+from datetime import date, datetime
+import math
 import os
 from typing import Any
 
 MOCK_MODEL_NAME = "mock-replay (no Gemini)"
 MOCK_LABEL = "[MOCK MODEL: no GEMINI_API_KEY, scripted replay, not Gemini]"
+_MISSING = object()
+
+
+def _finite_num(val: Any) -> float | None:
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    try:
+        num = float(val)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return num if math.isfinite(num) else None
+
+
+def _clean_id(val: Any) -> str:
+    if isinstance(val, bool) or not isinstance(val, (str, int)):
+        return ""
+    return str(val).strip()
+
+
+def _iter_seq(items: Any) -> list[Any]:
+    if items is None or isinstance(items, (str, bytes, bytearray, dict)):
+        return []
+    if isinstance(items, (list, tuple)):
+        return list(items)
+    try:
+        return list(items)
+    except Exception:
+        return []
+
+
+def _plan_sort_key(key: Any) -> tuple[int, int, str]:
+    if isinstance(key, int) and not isinstance(key, bool):
+        return (0, key, "")
+    return (1, 0, str(key))
+
+
+def _need_prefs(need: Any) -> dict[str, Any]:
+    if need is None:
+        return {}
+    prefs = need.get("preferences") if isinstance(need, dict) else getattr(need, "preferences", None)
+    return prefs if isinstance(prefs, dict) else {}
+
+
+def _need_has_valid_qty(need: Any) -> bool:
+    if need is None or isinstance(need, (bool, int, float, str, bytes, bytearray, list, tuple, set)):
+        return False
+    raw = need.get("quantity", _MISSING) if isinstance(need, dict) else getattr(need, "quantity", _MISSING)
+    if raw is _MISSING:
+        return not isinstance(need, dict) or bool(need)
+    qty = _finite_num(raw)
+    return qty is not None and qty > 0
+
+
+def _need_raw_text(need: Any) -> str:
+    if need is None:
+        return ""
+    raw = need.get("raw_text") if isinstance(need, dict) else getattr(need, "raw_text", None)
+    return raw if isinstance(raw, str) else ""
+
+
+def _coerce_delivery_iso(val: Any) -> str | None:
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, datetime):
+        return val.date().isoformat()
+    if isinstance(val, date):
+        return val.isoformat()
+    if isinstance(val, str):
+        text = val.strip()
+        if not text:
+            return None
+        head = text[:10] if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-" else text
+        try:
+            return date.fromisoformat(head).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _need_delivery_iso(need: Any) -> str | None:
+    if need is None:
+        return None
+    raw = need.get("delivery_by") if isinstance(need, dict) else getattr(need, "delivery_by", None)
+    return _coerce_delivery_iso(raw)
+
+
+def _dump_need(need: Any) -> dict[str, Any]:
+    if isinstance(need, dict):
+        return dict(need)
+    dump_fn = getattr(need, "model_dump", None)
+    if callable(dump_fn):
+        dumped = dump_fn(mode="json")
+        if isinstance(dumped, dict):
+            return dumped
+    if hasattr(need, "__dict__"):
+        return {
+            k: (v.isoformat() if hasattr(v, "isoformat") else v)
+            for k, v in vars(need).items()
+            if not k.startswith("_")
+        }
+    return {}
+
+
+def _safe_shortfall(plan: Any) -> float:
+    if not isinstance(plan, dict):
+        return 0.0
+    val = _finite_num(plan.get("shortfall"))
+    return val if val is not None and val > 0 else 0.0
 
 
 def mock_wanted() -> bool:
-    mode = os.environ.get("AIMO_LLM_MODE", "auto").strip().lower()
+    mode = (os.environ.get("AIMO_LLM_MODE") or "auto").strip().lower()
     if mode in ("mock", "scripted"):
         return True
     if mode == "live":
         return False
     from aimo import config
+    cfg_key = getattr(config, "GEMINI_API_KEY", None)
     key = (
-        (config.GEMINI_API_KEY or "").strip()
+        (cfg_key.strip() if isinstance(cfg_key, str) else "")
         or (os.environ.get("GEMINI_API_KEY") or "").strip()
         or (os.environ.get("GOOGLE_API_KEY") or "").strip()
     )
@@ -51,50 +162,104 @@ def _text(text: str):
 
 
 def _collect_plan_lines(a: Any) -> list[dict]:
-    plans = getattr(a, "plans", None) or {}
-    needs = getattr(a, "needs", None) or []
-    raw = (
-        [
-            l
-            for i in sorted(plans)
-            if not (0 <= i < len(needs) and (needs[i].preferences or {}).get("cancelled_by_clarification"))
-            for l in (plans[i] or {}).get("lines", [])
-        ]
-        if plans
-        else list((getattr(a, "plan", None) or {}).get("lines", []))
-    )
+    raw_plans = getattr(a, "plans", None)
+    plans = raw_plans if isinstance(raw_plans, dict) else {}
+    raw_needs = getattr(a, "needs", None)
+    needs = list(raw_needs) if isinstance(raw_needs, (list, tuple)) else []
+    raw: list[Any] = []
+    if plans:
+        for i in sorted(plans, key=_plan_sort_key):
+            if (
+                isinstance(i, int)
+                and not isinstance(i, bool)
+                and 0 <= i < len(needs)
+                and _need_prefs(needs[i]).get("cancelled_by_clarification")
+            ):
+                continue
+            plan_entry = plans[i]
+            if not isinstance(plan_entry, dict):
+                continue
+            plan_lines = plan_entry.get("lines")
+            if isinstance(plan_lines, list):
+                raw.extend(plan_lines)
+    else:
+        raw_plan = getattr(a, "plan", None)
+        if isinstance(raw_plan, dict):
+            plan_lines = raw_plan.get("lines")
+            if isinstance(plan_lines, list):
+                raw = list(plan_lines)
     out: list[dict] = []
     by_pid: dict[str, dict] = {}
     for l in raw:
-        if not l.get("product_id") or (l.get("qty_sales_units") or 0) <= 0:
+        if not isinstance(l, dict):
             continue
-        pid = str(l["product_id"])
+        raw_pid = l.get("product_id")
+        pid = _clean_id(raw_pid)
+        if not pid:
+            continue
+        raw_qty = l.get("qty_sales_units")
+        qty = _finite_num(raw_qty)
+        if qty is None or qty <= 0:
+            continue
+        qty_val: int | float = raw_qty if isinstance(raw_qty, int) and not isinstance(raw_qty, bool) else qty
         if pid in by_pid:
-            total = by_pid[pid]["qty_sales_units"] + l["qty_sales_units"]
+            total = by_pid[pid]["qty_sales_units"] + qty_val
+            total_check = _finite_num(total)
+            if total_check is None or total_check <= 0:
+                continue
             by_pid[pid]["qty_sales_units"] = round(total, 6) if isinstance(total, float) else total
         else:
-            entry: dict[str, Any] = {"product_id": l["product_id"], "qty_sales_units": l["qty_sales_units"]}
-            if l.get("tier"):
-                entry["tier"] = l["tier"]
+            entry_pid = pid if isinstance(raw_pid, str) else raw_pid
+            entry: dict[str, Any] = {"product_id": entry_pid, "qty_sales_units": qty_val}
+            tier = l.get("tier")
+            if isinstance(tier, str) and tier:
+                entry["tier"] = tier
+            elif tier and not isinstance(tier, bool):
+                entry["tier"] = tier
             by_pid[pid] = entry
             out.append(entry)
     return out
 
 
 def _detail_candidate_ids(a: Any) -> list[str]:
-    plans = getattr(a, "plans", None) or {}
-    cands = (
-        (getattr(a, "plan", None) or {}).get("candidates")
-        or [c for i in sorted(plans) for c in (plans[i] or {}).get("candidates", [])]
-    )
+    raw_plans = getattr(a, "plans", None)
+    plans = raw_plans if isinstance(raw_plans, dict) else {}
+    raw_plan = getattr(a, "plan", None)
+    plan_cands = raw_plan.get("candidates") if isinstance(raw_plan, dict) else None
+    if isinstance(plan_cands, list) and plan_cands:
+        cands: list[Any] = list(plan_cands)
+    else:
+        cands = []
+        for i in sorted(plans, key=_plan_sort_key):
+            plan_entry = plans[i]
+            if isinstance(plan_entry, dict):
+                entry_cands = plan_entry.get("candidates")
+                if isinstance(entry_cands, list):
+                    cands.extend(entry_cands)
     need = getattr(a, "need", None)
-    pref_ids = {str(x) for x in (need.preferred_product_ids if need else [])}
+    raw_prefs = (
+        need.get("preferred_product_ids")
+        if isinstance(need, dict)
+        else getattr(need, "preferred_product_ids", None)
+    )
+    pref_ids = {
+        pid
+        for x in (raw_prefs if isinstance(raw_prefs, (list, tuple, set)) else [])
+        if (pid := _clean_id(x))
+    }
     plan_lines = _collect_plan_lines(a)
-    line_ids = {str(l.get("product_id")) for l in plan_lines if l.get("product_id")}
+    line_ids = {pid for l in plan_lines if (pid := _clean_id(l.get("product_id")))}
     buckets: tuple[list[str], ...] = ([], [], [], [], [])
     seen: set[str] = set()
     for c in cands:
-        pid = str((c.get("product") or {}).get("id") or c.get("product_id") or c.get("id") or "")
+        if not isinstance(c, dict):
+            continue
+        prod = c.get("product")
+        pid = (
+            (_clean_id(prod.get("id")) if isinstance(prod, dict) else "")
+            or _clean_id(c.get("product_id"))
+            or _clean_id(c.get("id"))
+        )
         if not pid or pid in seen:
             continue
         seen.add(pid)
@@ -119,7 +284,7 @@ def _detail_candidate_ids(a: Any) -> list[str]:
             if pid not in ordered:
                 ordered.append(pid)
     for l in plan_lines:
-        pid = str(l.get("product_id") or "")
+        pid = _clean_id(l.get("product_id"))
         if pid and pid not in ordered:
             ordered.append(pid)
     return ordered[:2]
@@ -127,41 +292,47 @@ def _detail_candidate_ids(a: Any) -> list[str]:
 
 def _inspected_products(contents: Any) -> set[str]:
     out: set[str] = set()
-    for c in contents:
-        for p in c.parts or []:
+    for c in _iter_seq(contents):
+        for p in _iter_seq(getattr(c, "parts", None)):
             fc = getattr(p, "function_call", None)
-            if fc and fc.name == "get_product":
-                pid = (fc.args or {}).get("product_id")
-                if pid:
-                    out.add(str(pid))
+            if getattr(fc, "name", None) == "get_product":
+                fc_args = getattr(fc, "args", None)
+                if isinstance(fc_args, dict):
+                    pid = _clean_id(fc_args.get("product_id"))
+                    if pid:
+                        out.add(pid)
             fr = getattr(p, "function_response", None)
-            if fr and fr.name == "get_product" and isinstance(fr.response, dict):
-                pid = fr.response.get("id") or fr.response.get("product_id")
-                if pid:
-                    out.add(str(pid))
+            if getattr(fr, "name", None) == "get_product":
+                fr_resp = getattr(fr, "response", None)
+                if isinstance(fr_resp, dict):
+                    pid = _clean_id(fr_resp.get("id")) or _clean_id(fr_resp.get("product_id"))
+                    if pid:
+                        out.add(pid)
     return out
 
 
 def _tool_errors(contents: Any) -> list[str]:
-    if isinstance(contents, str) or not contents:
-        return []
     out: list[str] = []
-    for c in contents:
-        for p in getattr(c, "parts", None) or []:
+    for c in _iter_seq(contents):
+        for p in _iter_seq(getattr(c, "parts", None)):
             fr = getattr(p, "function_response", None)
-            if fr and isinstance(fr.response, dict):
-                resp = fr.response
+            fr_resp = getattr(fr, "response", None)
+            if isinstance(fr_resp, dict):
                 err = (
-                    resp.get("error")
+                    fr_resp.get("error")
                     or (
-                        resp.get("detail")
-                        if resp.get("detail") and "lines" not in resp and "quote_id" not in resp and "order_id" not in resp
+                        fr_resp.get("detail")
+                        if fr_resp.get("detail")
+                        and "lines" not in fr_resp
+                        and "quote_id" not in fr_resp
+                        and "order_id" not in fr_resp
                         else None
                     )
-                    or ("tool_error" if resp.get("isError") else None)
+                    or ("tool_error" if fr_resp.get("isError") else None)
                 )
                 if err:
-                    item = f"{fr.name}: {err}"
+                    fr_name = getattr(fr, "name", None) or "unknown_tool"
+                    item = f"{fr_name}: {err}"
                     if item not in out:
                         out.append(item)
     return out
@@ -186,47 +357,65 @@ class MockModel:
         if isinstance(contents, str):
             return _text(self._summary(feature))
         self._last_errors = _tool_errors(contents)
+        raw_order = getattr(a, "order", None)
+        order = raw_order if isinstance(raw_order, dict) else {}
         if (
             getattr(a, "blocked", False)
-            or (getattr(a, "order", None) or {}).get("status") in ("placed", "approved", "rejected", "cancelled", "expired", "failed")
+            or order.get("status") in ("placed", "approved", "rejected", "cancelled", "expired", "failed")
         ):
             return _text(self._summary("buyer.agent_step"))
-        needs = getattr(a, "needs", None) or []
-        if needs and all((x.preferences or {}).get("cancelled_by_clarification") for x in needs):
+        raw_needs = getattr(a, "needs", None)
+        needs = list(raw_needs) if isinstance(raw_needs, (list, tuple)) else []
+        if needs and all(_need_prefs(x).get("cancelled_by_clarification") for x in needs):
             return _text(self._summary("buyer.agent_step"))
         active = [
             (i, need)
             for i, need in enumerate(needs)
-            if not (need.preferences or {}).get("cancelled_by_clarification")
+            if not _need_prefs(need).get("cancelled_by_clarification")
         ]
-        if any((getattr(x, "quantity", 1) or 0) <= 0 for _, x in active):
+        raw_need = getattr(a, "need", None)
+        if any(not _need_has_valid_qty(x) for _, x in active):
             return _text(self._summary("buyer.agent_step"))
-        frs = [p.function_response for c in contents for p in (c.parts or []) if p.function_response]
-        done = [fr.name for fr in frs]
+        if not active and raw_need is not None and not _need_has_valid_qty(raw_need):
+            return _text(self._summary("buyer.agent_step"))
+        raw_plans = getattr(a, "plans", None)
+        plans = raw_plans if isinstance(raw_plans, dict) else {}
+        raw_quote = getattr(a, "quote", None)
+        frs = [
+            fr
+            for c in _iter_seq(contents)
+            for p in _iter_seq(getattr(c, "parts", None))
+            if (fr := getattr(p, "function_response", None)) is not None and getattr(fr, "name", None)
+        ]
+        done = [str(getattr(fr, "name", "")) for fr in frs]
         plan_failed = any(err.startswith("plan_need:") for err in self._last_errors)
         if not plan_failed and "create_quote" not in done:
             for seq, (i, need) in enumerate(active):
-                if i not in a.plans and done.count("plan_need") <= seq:
-                    return _call("plan_need", {"need": need.model_dump(mode="json")})
-        quote_idxs = [idx for idx, fr in enumerate(frs) if fr.name == "create_quote"]
+                if i not in plans and done.count("plan_need") <= seq:
+                    return _call("plan_need", {"need": _dump_need(need)})
+        quote_idxs = [idx for idx, fr in enumerate(frs) if getattr(fr, "name", None) == "create_quote"]
         replan_needed = bool(getattr(a, "_replan_needed", False))
-        if len(quote_idxs) == 1 and a.quote is None:
-            q_resp = frs[quote_idxs[0]].response
+        if len(quote_idxs) == 1 and raw_quote is None:
+            q_resp = getattr(frs[quote_idxs[0]], "response", None)
             q_err = q_resp.get("error") if isinstance(q_resp, dict) else None
             if replan_needed or q_err in _REPLAN_ERRORS:
                 self._replan_started = True
-        replan_items = [need for _, need in active] or ([a.need] if getattr(a, "need", None) is not None else [])
-        replanned = sum(1 for fr in frs[quote_idxs[0] + 1 :] if fr.name == "plan_need") if len(quote_idxs) == 1 else 0
-        if not plan_failed and len(quote_idxs) == 1 and a.quote is None and self._replan_started:
+        replan_items = [need for _, need in active] or ([raw_need] if raw_need is not None else [])
+        replanned = (
+            sum(1 for fr in frs[quote_idxs[0] + 1 :] if getattr(fr, "name", None) == "plan_need")
+            if len(quote_idxs) == 1
+            else 0
+        )
+        if not plan_failed and len(quote_idxs) == 1 and raw_quote is None and self._replan_started:
             if replanned < len(replan_items):
-                return _call("plan_need", {"need": replan_items[replanned].model_dump(mode="json")})
+                return _call("plan_need", {"need": _dump_need(replan_items[replanned])})
         lines = _collect_plan_lines(a)
         raw_texts = (
-            " ".join((x.raw_text or "") for _, x in active)
+            " ".join(_need_raw_text(x) for _, x in active)
             if active
-            else ((a.need.raw_text or "") if getattr(a, "need", None) else "")
+            else _need_raw_text(raw_need)
         ).lower()
-        if not plan_failed and a.quote is None and "create_quote" not in done and any(
+        if not plan_failed and raw_quote is None and "create_quote" not in done and any(
             k in raw_texts for k in ("detail", "alternative", "ingredient", "ainesos", "innehåll", "ingrediens")
         ):
             inspected = _inspected_products(contents)
@@ -235,7 +424,7 @@ class MockModel:
                 for pid in _detail_candidate_ids(a):
                     if pid not in inspected:
                         return _call("get_product", {"product_id": pid})
-        if plan_failed or (active and any(i not in a.plans for i, _ in active)) or (a.quote is None and not lines):
+        if plan_failed or (active and any(i not in plans for i, _ in active)) or (raw_quote is None and not lines):
             return _text(self._summary("buyer.agent_step"))
         can_quote = "create_quote" not in done or (
             len(quote_idxs) == 1
@@ -243,15 +432,24 @@ class MockModel:
             and not replan_needed
             and replanned >= len(replan_items)
         )
-        if a.quote is None and can_quote:
-            delivery_date = (
-                min(x.delivery_by for _, x in active).isoformat()
-                if active
-                else (a.need.delivery_by.isoformat() if getattr(a, "need", None) else None)
-            )
+        if raw_quote is None and can_quote:
+            if active:
+                dates = [d for _, x in active if (d := _need_delivery_iso(x)) is not None]
+                delivery_date = min(dates) if dates else _need_delivery_iso(raw_need)
+            else:
+                delivery_date = _need_delivery_iso(raw_need)
             return _call("create_quote", {"delivery_date": delivery_date, "lines": lines})
-        if a.quote is not None and "place_order" not in done and not getattr(a, "blocked", False):
-            return _call("place_order", {"quote_id": a.quote["quote_id"], "quote_hash": a.quote["quote_hash"]})
+        quote_id = raw_quote.get("quote_id") if isinstance(raw_quote, dict) else None
+        quote_hash = raw_quote.get("quote_hash") if isinstance(raw_quote, dict) else None
+        if (
+            isinstance(quote_id, str)
+            and quote_id.strip()
+            and isinstance(quote_hash, str)
+            and quote_hash.strip()
+            and "place_order" not in done
+            and not getattr(a, "blocked", False)
+        ):
+            return _call("place_order", {"quote_id": quote_id.strip(), "quote_hash": quote_hash.strip()})
         return _text(self._summary("buyer.agent_step"))
 
     def _summary(self, feature: str) -> str:
@@ -263,25 +461,39 @@ class MockModel:
         drift = getattr(a, "drift", None)
         raw_quote = getattr(a, "quote", None)
         q = raw_quote if isinstance(raw_quote, dict) else {}
-        status = order.get("status") or ("needs_confirmation" if drift and q else "no_order")
-        plans = getattr(a, "plans", None) or {}
-        shortfall = (
-            sum((plans[i] or {}).get("shortfall") or 0 for i in sorted(plans))
-            if plans
-            else ((getattr(a, "plan", None) or {}).get("shortfall") or 0)
+        raw_status = order.get("status")
+        status = (
+            raw_status.strip()
+            if isinstance(raw_status, str) and raw_status.strip()
+            else ("needs_confirmation" if drift and q else "no_order")
         )
+        raw_plans = getattr(a, "plans", None)
+        plans = raw_plans if isinstance(raw_plans, dict) else {}
+        if plans:
+            shortfall = 0.0
+            for i in sorted(plans, key=_plan_sort_key):
+                sf = _safe_shortfall(plans[i])
+                if _finite_num(shortfall + sf) is not None:
+                    shortfall += sf
+        else:
+            shortfall = _safe_shortfall(getattr(a, "plan", None))
         lines = _collect_plan_lines(a)
-        needs = getattr(a, "needs", None) or []
+        raw_needs = getattr(a, "needs", None)
+        needs = list(raw_needs) if isinstance(raw_needs, (list, tuple)) else []
         cancelled = bool(needs) and all(
-            (x.preferences or {}).get("cancelled_by_clarification") for x in needs
+            _need_prefs(x).get("cancelled_by_clarification") for x in needs
         )
+        raw_need = getattr(a, "need", None)
+        check_needs = needs if needs else ([raw_need] if raw_need is not None else [])
         non_pos = any(
-            (x.preferences or {}).get("non_positive_quantity") or (getattr(x, "quantity", 1) or 0) <= 0
-            for x in needs
+            bool(_need_prefs(x).get("non_positive_quantity")) or not _need_has_valid_qty(x)
+            for x in check_needs
         )
         bits = [f"status {status}"]
         if q:
-            bits.append(f"quote {q.get('quote_id')} EUR {q.get('total_net', 0):.2f}")
+            total_net = _finite_num(q.get("total_net"))
+            total_val = total_net if total_net is not None else 0.0
+            bits.append(f"quote {q.get('quote_id')} EUR {total_val:.2f}")
         if shortfall > 0:
             bits.append(f"shortfall {shortfall:g}")
         if non_pos:
@@ -290,9 +502,11 @@ class MockModel:
             bits.append("cancelled per buyer clarification")
         elif not q and not lines and not non_pos:
             bits.append("no orderable lines")
-        if not order and status != "needs_confirmation" and self._last_errors:
-            bits.append(f"tool error ({', '.join(self._last_errors[:2])})")
-        who = order.get("approved_by")
+        errs = [str(e) for e in self._last_errors[:2] if e] if isinstance(self._last_errors, list) else []
+        if not order and status != "needs_confirmation" and errs:
+            bits.append(f"tool error ({', '.join(errs)})")
+        raw_who = order.get("approved_by")
+        who = raw_who.strip() if isinstance(raw_who, str) else ""
         if status == "rejected":
             bits.append(f"rejected by {who}" if who else "rejected by policy")
         elif status == "cancelled":
@@ -308,6 +522,11 @@ class MockModel:
         if getattr(a, "injections", None):
             bits.append("suspicious supplier text was detected and ignored")
         req_fn = getattr(a, "_request_injection_flags", None)
-        if callable(req_fn) and req_fn():
-            bits.append("suspicious instructions in buyer request were ignored")
+        if callable(req_fn):
+            try:
+                has_req_inj = bool(req_fn())
+            except Exception:
+                has_req_inj = False
+            if has_req_inj:
+                bits.append("suspicious instructions in buyer request were ignored")
         return f"{MOCK_LABEL} " + "; ".join(bits) + "."

@@ -17,20 +17,103 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import queue
 import json
+import math
 import os
+import queue
 import threading
 import time
 import uuid
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from aimo.models import AgentStep
 
-MAX_RUNS = int(os.environ.get("AIMO_BUYER_MAX_RUNS", "8"))
+_UNSET = object()
+
+
+def _parse_max_runs(raw: object = _UNSET) -> int:
+    val = os.environ.get("AIMO_BUYER_MAX_RUNS") if raw is _UNSET else raw
+    if val is None or isinstance(val, bool):
+        return 8
+    s = val.strip() if isinstance(val, str) else str(val).strip()
+    if not s:
+        return 8
+    try:
+        n = int(s)
+    except (ValueError, TypeError):
+        return 8
+    return max(1, n)
+
+
+def _parse_answer_timeout(raw: object = _UNSET) -> float:
+    val = os.environ.get("AIMO_BUYER_ANSWER_TIMEOUT") if raw is _UNSET else raw
+    if val is None or isinstance(val, bool):
+        return 900.0
+    s = val.strip() if isinstance(val, str) else str(val).strip()
+    if not s:
+        return 900.0
+    try:
+        t = float(s)
+    except (ValueError, TypeError):
+        return 900.0
+    if not math.isfinite(t) or t <= 0.0:
+        return 900.0
+    return t
+
+
+def _safe_run_id(run_id: object) -> str:
+    if not isinstance(run_id, str):
+        return ""
+    cleaned = "".join(
+        ch
+        for ch in run_id
+        if ord(ch) >= 32 and not (0x7F <= ord(ch) <= 0x9F) and not (0xD800 <= ord(ch) <= 0xDFFF)
+    ).strip()
+    return cleaned[:80]
+
+
+def _invalid_run_id(run_id: object) -> bool:
+    if not isinstance(run_id, str):
+        return True
+    return "\x00" in run_id or len(run_id) > 128 or not run_id.strip()
+
+
+def _strip_surrogates(text: str) -> str:
+    return "".join(ch for ch in text if not (0xD800 <= ord(ch) <= 0xDFFF))
+
+
+def _parse_last_event_id(raw: object) -> int:
+    if not isinstance(raw, str):
+        return 0
+    s = raw.strip(" \t\r\n")
+    if not s or len(s) > 64 or not (s.isascii() and s.isdigit()):
+        return 0
+    return int(s)
+
+
+def mcp_url_for(base_url: str | None = None) -> str:
+    explicit = (os.environ.get("AIMO_MCP_URL") or "").strip()
+    if explicit:
+        return explicit
+    if isinstance(base_url, str):
+        raw_base = base_url
+    elif base_url is not None and hasattr(base_url, "scheme") and hasattr(base_url, "netloc"):
+        raw_base = str(base_url)
+    else:
+        raw_base = ""
+    base = raw_base.strip().rstrip("/")
+    if base:
+        return f"{base}/mcp"
+    serve = (os.environ.get("AIMO_SERVE_URL") or "").strip().rstrip("/")
+    if serve:
+        return f"{serve}/mcp"
+    return "http://localhost:8000/mcp"
+
+
+MAX_RUNS = _parse_max_runs()
 _sem = threading.BoundedSemaphore(MAX_RUNS)
 
 
@@ -38,23 +121,23 @@ class RunRequest(BaseModel):
     text: str
     customer_id: str = "hotel-aurora"
     model: Optional[str] = None
-    thinking: Optional[str] = None          # MINIMAL | LOW | MEDIUM | HIGH
-    transport: Optional[str] = None         # auto | mcp | inproc | fake
+    thinking: Optional[str] = None
+    transport: Optional[str] = None
     escalate: bool = True
-    faults: Optional[str] = None            # X-Aimo-Faults spec (demo fault injection)
-    image_b64: Optional[str] = None         # photo of a handwritten order / menu / invoice (base64)
-    image_mime: Optional[str] = None        # e.g. image/png, image/jpeg
-    clarify: bool = True                    # ask instead of guessing when the need is ambiguous
+    faults: Optional[str] = None
+    image_b64: Optional[str] = None
+    image_mime: Optional[str] = None
+    clarify: bool = True
 
 
 class AnswerRequest(BaseModel):
-    option_id: Optional[str] = None         # one of the needs_clarification step's options[].id
-    text: Optional[str] = None              # or free text
+    option_id: Optional[str] = None
+    text: Optional[str] = None
     question_id: Optional[str] = None
     customer_id: Optional[str] = None
 
 
-ANSWER_TIMEOUT_S = float(os.environ.get("AIMO_BUYER_ANSWER_TIMEOUT", "900"))
+ANSWER_TIMEOUT_S = _parse_answer_timeout()
 
 
 class Run:
@@ -73,8 +156,18 @@ class Run:
         """Called by the agent thread: block until POST /answer (or timeout -> None)."""
         self.pending_question, prev = question, self.status
         self.status = "waiting_for_answer"
+        raw_timeout = ANSWER_TIMEOUT_S
+        if (
+            isinstance(raw_timeout, (int, float))
+            and not isinstance(raw_timeout, bool)
+            and math.isfinite(raw_timeout)
+            and raw_timeout > 0.0
+        ):
+            timeout = min(float(raw_timeout), float(threading.TIMEOUT_MAX))
+        else:
+            timeout = 900.0
         try:
-            return self.answers.get(timeout=ANSWER_TIMEOUT_S)
+            return self.answers.get(timeout=timeout)
         except queue.Empty:
             return None
         finally:
@@ -89,13 +182,16 @@ class Run:
         return self.status in ("finished", "error")
 
     def view(self, with_steps: bool = True) -> dict:
+        with self.cond:
+            steps_snapshot = list(self.steps)
+        res = self.result if isinstance(self.result, dict) else {}
         d = {"run_id": self.run_id, "status": self.status, "customer_id": self.req.customer_id,
-             "text": self.req.text, "created_at": self.created, "n_steps": len(self.steps),
-             "summary": (self.result or {}).get("summary"), "order_status": (self.result or {}).get("status"),
-             "latency_s": (self.result or {}).get("latency_s"), "mock": (self.result or {}).get("mock"),
+             "text": self.req.text, "created_at": self.created, "n_steps": len(steps_snapshot),
+             "summary": res.get("summary"), "order_status": res.get("status"),
+             "latency_s": res.get("latency_s"), "mock": res.get("mock"),
              "pending_question": self.pending_question, "has_image": self.image is not None}
         if with_steps:
-            d["steps"] = [s.model_dump(mode="json") for s in self.steps]
+            d["steps"] = [s.model_dump(mode="json") for s in steps_snapshot]
         return d
 
 
@@ -109,7 +205,7 @@ class RunRegistry:
         run_id = "run-" + uuid.uuid4().hex[:10]
         run = Run(run_id, req)
         run.image = image
-        resolved_mcp = mcp_url or os.environ.get("AIMO_MCP_URL") or "http://localhost:8000/mcp"
+        resolved_mcp = (mcp_url.strip() if isinstance(mcp_url, str) else "") or mcp_url_for()
         with self.lock:
             self.runs[run_id] = run
         threading.Thread(target=self._execute, args=(run, transport_factory, agent_kwargs or {}, resolved_mcp),
@@ -117,7 +213,8 @@ class RunRegistry:
         return run
 
     def get(self, run_id: str) -> Run:
-        run = self.runs.get(run_id)
+        with self.lock:
+            run = self.runs.get(run_id)
         if not run:
             raise KeyError(run_id)
         return run
@@ -136,12 +233,12 @@ class RunRegistry:
                 if transport_factory is not None:
                     transport = transport_factory(req)
                 else:
-                    target_mcp = mcp_url or os.environ.get("AIMO_MCP_URL") or "http://localhost:8000/mcp"
+                    target_mcp = (mcp_url.strip() if isinstance(mcp_url, str) else "") or mcp_url_for()
                     transport = connect(req.transport or os.environ.get("AIMO_BUYER_TRANSPORT", "auto"),
                                         agent_id=prof["agent_id"], customer_id=req.customer_id,
                                         mcp_url=target_mcp,
                                         mandate=mandate_for(req.customer_id), faults=req.faults)
-                kw = dict(agent_kwargs)
+                kw = dict(agent_kwargs or {})
                 if req.model and not ("generate_fn" not in kw and mock_wanted()):
                     kw["model"] = req.model
                 if req.thinking:
@@ -155,16 +252,18 @@ class RunRegistry:
                 if agent.mock:
                     agent.model = MOCK_MODEL_NAME
                 run.result = agent.run(req.text)
-                run.status = "finished" if run.result.get("status") != "error" else "error"
-            except Exception as e:  # noqa: BLE001
+                res_status = run.result.get("status") if isinstance(run.result, dict) else None
+                run.status = "finished" if res_status != "error" else "error"
+            except Exception as e:
                 from datetime import datetime
 
                 from aimo.buyer.need import HELSINKI
+                err_txt = _strip_surrogates(str(e))
                 run.add(AgentStep(run_id=run.run_id, seq=len(run.steps) + 1, ts=datetime.now(HELSINKI),
                                   kind="error", title=f"Run could not start: {type(e).__name__}",
-                                  data={"error": str(e)[:500]}))
+                                  data={"error": err_txt[:500]}))
                 run.add(AgentStep(run_id=run.run_id, seq=len(run.steps) + 1, ts=datetime.now(HELSINKI),
-                                  kind="final", title="Run failed", data={"summary": str(e)[:300], "status": "error"}))
+                                  kind="final", title="Run failed", data={"summary": err_txt[:300], "status": "error"}))
                 run.status = "error"
             finally:
                 with run.cond:
@@ -172,7 +271,7 @@ class RunRegistry:
                 if transport is not None:
                     try:
                         transport.close()
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
 
 
@@ -203,8 +302,11 @@ async def create_run(request: Request):
     raw_cust = ""
     image = None
     try:
-        if request.headers.get("content-type", "").startswith("multipart/form-data"):
-            form = await request.form()
+        if request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+            try:
+                form = await request.form()
+            except Exception:
+                return _bad("invalid_body", "Invalid multipart form data.")
             fields = {k: v for k, v in form.items() if isinstance(v, str)}
             raw_cust = (fields.get("customer_id") or "").strip()
             up = form.get("image")
@@ -219,7 +321,7 @@ async def create_run(request: Request):
                 return _bad("invalid_body", "JSON object body required.")
             try:
                 payload = json.loads(raw_body)
-            except (ValueError, UnicodeDecodeError):
+            except (ValueError, UnicodeDecodeError, RecursionError):
                 return _bad("invalid_json", "The request body is not valid JSON.")
             if not isinstance(payload, dict):
                 return _bad("invalid_body", "JSON object body required.")
@@ -238,6 +340,8 @@ async def create_run(request: Request):
             status_code=422,
         )
     if req.image_b64:
+        if len(req.image_b64) > 22_000_000:
+            return _bad("image_too_large", "image too large (max 15 MB)", 413)
         try:
             image = (base64.b64decode(req.image_b64, validate=True), req.image_mime or "image/png")
         except (ValueError, TypeError):
@@ -254,12 +358,12 @@ async def create_run(request: Request):
     req = req.model_copy(update={"customer_id": eff_cust})
     if getattr(registry.start, "__func__", None) is RunRegistry.start and req.transport != "fake":
         if not is_known_customer(eff_cust):
-            return _bad("unknown_customer", f"unknown customer {eff_cust[:80]!r}", 403)
+            return _bad("unknown_customer", f"unknown customer {_strip_surrogates(eff_cust[:80])!r}", 403)
     try:
         check_agent_key(eff_cust, request.headers.get("x-agent-key"))
     except Exception as exc:
         return _bad(getattr(exc, "code", "invalid_agent_key"), getattr(exc, "message", str(exc)), getattr(exc, "status", 403))
-    base_mcp = os.environ.get("AIMO_MCP_URL") or f"{str(request.base_url).rstrip('/')}/mcp"
+    base_mcp = mcp_url_for(str(request.base_url))
     run = registry.start(req.model_copy(update={"image_b64": None}), image=image, mcp_url=base_mcp)
     return {"run_id": run.run_id, "events_url": f"/v1/agent/runs/{run.run_id}/events",
             "answer_url": f"/v1/agent/runs/{run.run_id}/answer"}
@@ -281,10 +385,12 @@ def answer_run(run_id: str, ans: AnswerRequest, request: Request):
         return _bad("customer_mismatch", "X-Customer-Id disagrees with body customer_id.", 403)
     eff_cust = hdr_cust or body_cust
     unpatched_real = getattr(registry.start, "__func__", None) is RunRegistry.start
-    run = registry.runs.get(run_id)
+    bad_id = _invalid_run_id(run_id)
+    with registry.lock:
+        run = None if bad_id else registry.runs.get(run_id)
     if eff_cust:
         if unpatched_real and (run is None or run.req.transport != "fake") and not is_known_customer(eff_cust):
-            return _bad("unknown_customer", f"unknown customer {eff_cust[:80]!r}", 403)
+            return _bad("unknown_customer", f"unknown customer {_strip_surrogates(eff_cust[:80])!r}", 403)
         try:
             check_agent_key(eff_cust, request.headers.get("x-agent-key"))
         except Exception as exc:
@@ -302,46 +408,54 @@ def answer_run(run_id: str, ans: AnswerRequest, request: Request):
                 "POST /v1/agent/runs/{run_id}/answer requires X-Customer-Id or customer_id.",
                 401,
             )
+    if bad_id:
+        return _bad("invalid_run_id", "invalid run_id", 422)
     if run is None:
-        return _bad("run_not_found", f"unknown run {run_id}", 404)
+        return _bad("run_not_found", f"unknown run {_safe_run_id(run_id)}", 404)
     q = run.pending_question
-    if q is None:
+    if not isinstance(q, dict):
         return _bad("not_waiting_for_answer", "this run is not waiting for an answer", 409)
     if ans.question_id and ans.question_id != q.get("question_id"):
-        return _bad("question_mismatch", f"pending question is {q.get('question_id')}", 409)
-    if not ans.option_id and not ans.text:
+        return _bad("question_mismatch", f"pending question is {_safe_run_id(str(q.get('question_id') or ''))}", 409)
+    if not (ans.option_id or "").strip() and not (ans.text or "").strip():
         return _bad("answer_required", "option_id or text is required", 422)
-    if ans.option_id and ans.option_id not in {o["id"] for o in q.get("options", [])}:
-        return _bad("unknown_option", f"unknown option {ans.option_id}", 422)
+    valid_options = {o["id"] for o in (q.get("options") or []) if isinstance(o, dict) and "id" in o}
+    if ans.option_id and ans.option_id not in valid_options:
+        return _bad("unknown_option", f"unknown option {_safe_run_id(ans.option_id)}", 422)
     run.answers.put(ans.model_dump(exclude_none=True, exclude={"customer_id"}))
     return {"ok": True, "run_id": run_id, "question_id": q.get("question_id")}
 
 
 @router.get("/runs")
-def list_runs(limit: int = 20) -> list[dict]:
-    runs = sorted(registry.runs.values(), key=lambda r: r.created, reverse=True)[:limit]
+def list_runs(limit: int = Query(20, ge=1, le=200)) -> list[dict]:
+    eff_limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else 20
+    eff_limit = max(1, min(200, eff_limit))
+    with registry.lock:
+        snapshot = list(registry.runs.values())
+    runs = sorted(snapshot, key=lambda r: r.created, reverse=True)[:eff_limit]
     return [r.view(with_steps=False) for r in runs]
 
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict:
+    if _invalid_run_id(run_id):
+        raise HTTPException(422, "invalid run_id")
     try:
         return registry.get(run_id).view()
     except KeyError:
-        raise HTTPException(404, f"unknown run {run_id}")
+        raise HTTPException(404, f"unknown run {_safe_run_id(run_id)}")
 
 
 @router.get("/runs/{run_id}/events")
 async def run_events(run_id: str, request: Request):
     from sse_starlette.sse import EventSourceResponse
+    if _invalid_run_id(run_id):
+        raise HTTPException(422, "invalid run_id")
     try:
         run = registry.get(run_id)
     except KeyError:
-        raise HTTPException(404, f"unknown run {run_id}")
-    start = 0
-    last = request.headers.get("last-event-id")
-    if last and last.isdigit():
-        start = int(last)
+        raise HTTPException(404, f"unknown run {_safe_run_id(run_id)}")
+    start = _parse_last_event_id(request.headers.get("last-event-id"))
 
     async def gen():
         i = start
@@ -359,7 +473,7 @@ async def run_events(run_id: str, request: Request):
                 return
             await asyncio.sleep(0.25)
             idle += 0.25
-            if idle >= 15:  # keep-alive comment for proxies
+            if idle >= 15:
                 idle = 0.0
                 yield {"comment": "keep-alive"}
 
