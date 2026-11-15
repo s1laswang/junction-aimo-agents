@@ -54,3 +54,7 @@ Gate (Sat 14 Nov, branch before rebase): `pytest` 306 passed, 7 skipped, 2 xfail
 
 ## Open
 - None blocking. The fuzz test takes about 45 s of the suite, mostly first-call catalog warm-up in `/v1/plan`.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- On `fr8/valio/main` (`43e841c` / `7990fa3`) and `fr8/valio/docs` (`ed09d11` / `d89db12`, `4,286` collected pytest checks in `tests/`), pre-planning `quantity <= 0` 422 validation, fractional count-unit / absurd quantity 422s, `unknown_customer` 403, human-started `/v1/agent/runs` (`X-Approver-Session` / `X-Approver-Pin`), and per-run `judge_accept.sh` temp logs (`02575d8`) are all merged.
+- Judges can inspect the 422/403/409 guardrails (`agent_cannot_approve`, `requote_needed`), Peppol `AP` export, and WebCrypto Ed25519 signature + audit tamper detection with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).
