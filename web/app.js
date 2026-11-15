@@ -1526,10 +1526,10 @@ async function loadAudit(quiet) {
     } else evs = await api.audit();
     if (my !== auditSeq) return;
     evs.sort((a, b) => a.seq - b.seq);
-    S.audit = { ...S.audit, state: "ok", events: evs, error: null, effectiveScope: scope };
+    Object.assign(S.audit, { state: "ok", events: evs, error: null, effectiveScope: scope });
   } catch (e) {
     if (my !== auditSeq) return;
-    S.audit = { ...S.audit, state: "error", error: e.message };
+    Object.assign(S.audit, { state: "error", error: e.message });
   }
   updateCounts();
   renderAudit();
@@ -1617,7 +1617,7 @@ function renderAudit() {
       h("button", { class: `btn btn-sm ${scope === "flow" ? "btn-primary" : ""}`, disabled: !subjects.length, onclick: () => { S.audit.scope = "flow"; loadAudit(); } }, "This flow"),
       h("button", { class: `btn btn-sm ${scope === "all" ? "btn-primary" : ""}`, onclick: () => { S.audit.scope = "all"; loadAudit(); } }, "Whole ledger"))));
   parts.push(h("div", { class: "card card-body audit-tools" },
-    h("button", { class: "btn", onclick: verifyChain, disabled: A.verifying }, A.verifying ? [h("span", { class: "spinner" }), "Verifying"] : "Verify chain"),
+    h("button", { class: "btn", onclick: verifyChain, disabled: A.verifying || A.state === "loading" }, A.verifying ? [h("span", { class: "spinner" }), "Verifying"] : "Verify chain"),
     vr ? (vr.ok
       ? h("span", { class: "verify-result ok" }, `✓ Chain intact · ${num(vr.checked, 0)} events, hashes and signatures checked`)
       : h("span", { class: "verify-result bad" }, vr.error ? `✕ Verification failed: ${vr.error}` : `✕ Chain broken at event #${vr.broken_at} (${num(vr.checked, 0)} checked)`)) : h("span", { class: "muted sm" }, "Recomputes every hash and checks every link and signature on the server."),
