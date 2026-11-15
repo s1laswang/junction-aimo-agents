@@ -301,7 +301,8 @@ def test_runs_router_streams_steps():
 
     runs.registry.start = start
     try:
-        client = TestClient(app)
+        from aimo.gateway.human_auth import local_pin
+        client = TestClient(app, headers={"X-Approver-Pin": local_pin()})
         run_id = client.post("/v1/agent/runs", json={"text": HERO, "customer_id": "hotel-aurora"}).json()["run_id"]
         with client.stream("GET", f"/v1/agent/runs/{run_id}/events") as resp:
             kinds = [line.split(":", 1)[1].strip() for line in resp.iter_lines() if line.startswith("event:")]
@@ -421,7 +422,8 @@ def test_answer_endpoint_resumes_run():
 
     runs.registry.start = start
     try:
-        client = TestClient(app)
+        from aimo.gateway.human_auth import local_pin
+        client = TestClient(app, headers={"X-Approver-Pin": local_pin()})
         run_id = client.post("/v1/agent/runs", json={"text": AMBIGUOUS, "customer_id": "cafe-x"}).json()["run_id"]
         for _ in range(2):  # date, then variant
             for _ in range(200):

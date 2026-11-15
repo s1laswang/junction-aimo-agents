@@ -52,14 +52,22 @@ def _text(text: str):
 
 def _collect_plan_lines(a: Any) -> list[dict]:
     plans = getattr(a, "plans", None) or {}
+    needs = getattr(a, "needs", None) or []
     raw = (
-        [l for i in sorted(plans) for l in (plans[i] or {}).get("lines", [])]
+        [
+            l
+            for i in sorted(plans)
+            if not (0 <= i < len(needs) and (needs[i].preferences or {}).get("cancelled_by_clarification"))
+            for l in (plans[i] or {}).get("lines", [])
+        ]
         if plans
         else list((getattr(a, "plan", None) or {}).get("lines", []))
     )
     out: list[dict] = []
     by_pid: dict[str, dict] = {}
     for l in raw:
+        if not l.get("product_id") or (l.get("qty_sales_units") or 0) <= 0:
+            continue
         pid = str(l["product_id"])
         if pid in by_pid:
             total = by_pid[pid]["qty_sales_units"] + l["qty_sales_units"]
@@ -81,7 +89,8 @@ def _detail_candidate_ids(a: Any) -> list[str]:
     )
     need = getattr(a, "need", None)
     pref_ids = {str(x) for x in (need.preferred_product_ids if need else [])}
-    line_ids = {str(l.get("product_id")) for l in _collect_plan_lines(a) if l.get("product_id")}
+    plan_lines = _collect_plan_lines(a)
+    line_ids = {str(l.get("product_id")) for l in plan_lines if l.get("product_id")}
     buckets: tuple[list[str], ...] = ([], [], [], [], [])
     seen: set[str] = set()
     for c in cands:
@@ -109,6 +118,10 @@ def _detail_candidate_ids(a: Any) -> list[str]:
         for pid in b:
             if pid not in ordered:
                 ordered.append(pid)
+    for l in plan_lines:
+        pid = str(l.get("product_id") or "")
+        if pid and pid not in ordered:
+            ordered.append(pid)
     return ordered[:2]
 
 
@@ -136,10 +149,21 @@ def _tool_errors(contents: Any) -> list[str]:
     for c in contents:
         for p in getattr(c, "parts", None) or []:
             fr = getattr(p, "function_response", None)
-            if fr and isinstance(fr.response, dict) and fr.response.get("error"):
-                item = f"{fr.name}: {fr.response['error']}"
-                if item not in out:
-                    out.append(item)
+            if fr and isinstance(fr.response, dict):
+                resp = fr.response
+                err = (
+                    resp.get("error")
+                    or (
+                        resp.get("detail")
+                        if resp.get("detail") and "lines" not in resp and "quote_id" not in resp and "order_id" not in resp
+                        else None
+                    )
+                    or ("tool_error" if resp.get("isError") else None)
+                )
+                if err:
+                    item = f"{fr.name}: {err}"
+                    if item not in out:
+                        out.append(item)
     return out
 
 
@@ -158,13 +182,35 @@ class MockModel:
         if isinstance(contents, str):
             return _text(self._summary(feature))
         self._last_errors = _tool_errors(contents)
+        if (
+            getattr(a, "blocked", False)
+            or (getattr(a, "order", None) or {}).get("status") in ("placed", "approved", "rejected", "cancelled", "expired", "failed")
+        ):
+            return _text(self._summary("buyer.agent_step"))
+        needs = getattr(a, "needs", None) or []
+        if needs and all((x.preferences or {}).get("cancelled_by_clarification") for x in needs):
+            return _text(self._summary("buyer.agent_step"))
+        active = [
+            (i, need)
+            for i, need in enumerate(needs)
+            if not (need.preferences or {}).get("cancelled_by_clarification")
+        ]
+        if any((getattr(x, "quantity", 1) or 0) <= 0 for _, x in active):
+            return _text(self._summary("buyer.agent_step"))
         done = [p.function_response.name for c in contents for p in (c.parts or []) if p.function_response]
-        for i, need in enumerate(a.needs):
-            if i not in a.plans and done.count("plan_need") <= i:
-                return _call("plan_need", {"need": need.model_dump(mode="json")})
+        plan_failed = any(err.startswith("plan_need:") for err in self._last_errors)
+        if not plan_failed:
+            for seq, (i, need) in enumerate(active):
+                if i not in a.plans and done.count("plan_need") <= seq:
+                    return _call("plan_need", {"need": need.model_dump(mode="json")})
         lines = _collect_plan_lines(a)
-        if a.quote is None and a.need and any(
-            k in (a.need.raw_text or "").lower() for k in ("detail", "alternative", "ingredient")
+        raw_texts = (
+            " ".join((x.raw_text or "") for _, x in active)
+            if active
+            else ((a.need.raw_text or "") if getattr(a, "need", None) else "")
+        ).lower()
+        if not plan_failed and a.quote is None and any(
+            k in raw_texts for k in ("detail", "alternative", "ingredient", "ainesos", "innehåll", "ingrediens")
         ):
             inspected = _inspected_products(contents)
             n_get = done.count("get_product")
@@ -172,16 +218,16 @@ class MockModel:
                 for pid in _detail_candidate_ids(a):
                     if pid not in inspected:
                         return _call("get_product", {"product_id": pid})
-        if (a.needs and len(a.plans) < len(a.needs)) or (a.quote is None and not lines):
+        if plan_failed or (active and any(i not in a.plans for i, _ in active)) or (a.quote is None and not lines):
             return _text(self._summary("buyer.agent_step"))
         if a.quote is None and "create_quote" not in done:
             delivery_date = (
-                min(x.delivery_by for x in a.needs).isoformat()
-                if a.needs
-                else (a.need.delivery_by.isoformat() if a.need else None)
+                min(x.delivery_by for _, x in active).isoformat()
+                if active
+                else (a.need.delivery_by.isoformat() if getattr(a, "need", None) else None)
             )
             return _call("create_quote", {"delivery_date": delivery_date, "lines": lines})
-        if a.quote is not None and "place_order" not in done and not a.blocked:
+        if a.quote is not None and "place_order" not in done and not getattr(a, "blocked", False):
             return _call("place_order", {"quote_id": a.quote["quote_id"], "quote_hash": a.quote["quote_hash"]})
         return _text(self._summary("buyer.agent_step"))
 
@@ -189,26 +235,49 @@ class MockModel:
         a = self.agent
         if feature == "buyer.explain":
             return f"{MOCK_LABEL} Plan from the deterministic planner; see the reasons on each line."
-        status = (a.order or {}).get("status") or ("needs_confirmation" if a.drift and a.quote else "no_order")
-        q = a.quote or {}
+        order = getattr(a, "order", None) or {}
+        drift = getattr(a, "drift", None)
+        q = getattr(a, "quote", None) or {}
+        status = order.get("status") or ("needs_confirmation" if drift and q else "no_order")
         plans = getattr(a, "plans", None) or {}
         shortfall = (
             sum((plans[i] or {}).get("shortfall") or 0 for i in sorted(plans))
             if plans
-            else ((a.plan or {}).get("shortfall") or 0)
+            else ((getattr(a, "plan", None) or {}).get("shortfall") or 0)
         )
         lines = _collect_plan_lines(a)
+        needs = getattr(a, "needs", None) or []
+        cancelled = bool(needs) and all(
+            (x.preferences or {}).get("cancelled_by_clarification") for x in needs
+        )
+        non_pos = any(
+            (x.preferences or {}).get("non_positive_quantity") or (getattr(x, "quantity", 1) or 0) <= 0
+            for x in needs
+        )
         bits = [f"status {status}"]
         if q:
             bits.append(f"quote {q.get('quote_id')} EUR {q.get('total_net', 0):.2f}")
         if shortfall > 0:
             bits.append(f"shortfall {shortfall:g}")
-        if not q and not lines:
+        if non_pos:
+            bits.append("non-positive quantity rejected")
+        if cancelled:
+            bits.append("cancelled per buyer clarification")
+        elif not q and not lines and not non_pos:
             bits.append("no orderable lines")
-        if not q and self._last_errors:
+        if not order and status != "needs_confirmation" and self._last_errors:
             bits.append(f"tool error ({', '.join(self._last_errors[:2])})")
-        if (a.order or {}).get("approved_by"):
-            bits.append(f"approved by {a.order['approved_by']}")
-        if a.injections:
+        who = order.get("approved_by")
+        if status == "rejected":
+            bits.append(f"rejected by {who}" if who else "rejected by policy")
+        elif status == "cancelled":
+            bits.append("order cancelled")
+        elif order.get("timed_out"):
+            bits.append("approval timed out")
+        elif who:
+            bits.append(f"approved by {who}")
+        elif status == "needs_confirmation":
+            bits.append("held for human confirmation")
+        if getattr(a, "injections", None):
             bits.append("suspicious supplier text was detected and ignored")
         return f"{MOCK_LABEL} " + "; ".join(bits) + "."

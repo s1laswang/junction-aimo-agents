@@ -249,6 +249,7 @@ def test_combine_doc_disposition_table_covers_all_remote_branches_without_force_
     table_branches: list[str] = []
     ready_to_delete_branches: list[str] = []
     active_session_branches: list[str] = []
+    branch_rows: dict[str, tuple[str, int, int, int]] = {}
     for line in primary_disposition.splitlines():
         if not line.startswith("| `origin/"):
             continue
@@ -268,6 +269,12 @@ def test_combine_doc_disposition_table_covers_all_remote_branches_without_force_
         assert unmerged_combined.isdigit(), f"Non-numeric unmerged count vs combined for {branch_name}"
         assert unmerged_fr8.isdigit(), f"Non-numeric unmerged count vs fr8/valio/main for {branch_name}"
         table_branches.append(branch_name)
+        branch_rows[branch_name] = (
+            tip_sha,
+            int(unmerged_main),
+            int(unmerged_combined),
+            int(unmerged_fr8),
+        )
         if unmerged_combined == "0" and unmerged_fr8 == "0":
             assert "safe to delete now" in disposition_text.lower()
             ready_to_delete_branches.append(branch_name)
@@ -281,6 +288,9 @@ def test_combine_doc_disposition_table_covers_all_remote_branches_without_force_
     assert set(table_branches) == set(EXPECTED_REMOTE_BRANCHES)
     assert len(ready_to_delete_branches) == 9
     assert len(active_session_branches) == 7
+    assert branch_rows["team/submit"][1] == 0
+    assert branch_rows["team/submit"][2] >= 34
+    assert branch_rows["team/submit"][3] >= 34
 
     assert "--force" not in combine
     code_blocks = re.findall(r"```(?:bash|sh)?\n(.*?)```", combine, flags=re.DOTALL)
@@ -342,12 +352,41 @@ def test_combine_and_merge_momin_document_wip_rescue_fleet_ports_and_judge_fixes
     assert len(wip_branches) == 5, f"Expected 5 wip/rescue-1115/* rows, got {len(wip_branches)}: {wip_branches}"
     assert set(wip_branches) == set(EXPECTED_WIP_RESCUE_BRANCHES)
 
-    for sha in ("5e599fd", "ccab8f5", "6edf3fc", "ddbeeba", "a99692f", "d4b0b41", "9742758"):
+    for sha in (
+        "5e599fd",
+        "ccab8f5",
+        "6edf3fc",
+        "ddbeeba",
+        "a99692f",
+        "d4b0b41",
+        "9742758",
+        "7c290cf",
+        "33203b5",
+        "cfd5ed9",
+        "4ccc1fb",
+        "2fe8975",
+        "0f0ece1",
+    ):
         assert sha in combine, f"docs/COMBINE.md missing commit reference {sha}"
+    for marker in ("test_run_api_guard.py", "demo-walkthrough.mp4", "371", "270"):
+        assert marker in combine, f"docs/COMBINE.md missing Wave 7 reference {marker}"
 
     merge_momin = _read_text("docs/MERGE-MOMIN.md")
     assert EM_DASH not in merge_momin
     assert f"{HASH}{HASH} Fleet ports into main (Sun 15 Nov, ~03:45, merge session)" in merge_momin
     assert f"{HASH}{HASH} Execution status (Sun 15 Nov)" in merge_momin
-    for credited_sha in ("0a792f0", "0d96f61", "599a991", "70289e6", "9742758"):
+    for credited_sha in (
+        "0a792f0",
+        "0d96f61",
+        "599a991",
+        "70289e6",
+        "9742758",
+        "33203b5",
+        "cfd5ed9",
+        "4ccc1fb",
+        "2fe8975",
+        "0f0ece1",
+    ):
         assert credited_sha in merge_momin, f"docs/MERGE-MOMIN.md missing commit reference {credited_sha}"
+    for marker in ("test_run_api_guard.py", "demo-walkthrough.mp4", "371", "270"):
+        assert marker in merge_momin, f"docs/MERGE-MOMIN.md missing Wave 7 reference {marker}"
