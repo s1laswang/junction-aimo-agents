@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal, Optional
+import math
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from aimo.models import Need, Tier
 
+MAX_QTY = 1e6
+ProductId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^\S+$")]
+ShortId = Annotated[str, Field(max_length=128)]
+
 
 class OffersRequest(BaseModel):
-    product_ids: list[str] = Field(..., min_length=1, max_length=1000, description="Valio Aimo product codes (max 1,000)")
+    product_ids: list[ProductId] = Field(..., min_length=1, max_length=1000, description="Valio Aimo product codes (max 1,000)")
     requested_date: date = Field(..., description="Requested delivery date (YYYY-MM-DD)")
     customer_id: Optional[str] = Field(None, description="Defaults to the X-Customer-Id header")
 
@@ -19,19 +24,46 @@ class OffersRequest(BaseModel):
 
 
 class QuoteLineIn(BaseModel):
-    product_id: str = Field(..., description="Valio Aimo product code")
-    qty_sales_units: float = Field(..., gt=0, description="Quantity in the product's sales unit (e.g. ST = piece, KI = box)")
+    product_id: ProductId = Field(..., description="Valio Aimo product code")
+    qty_sales_units: float = Field(
+        ...,
+        gt=0,
+        le=MAX_QTY,
+        allow_inf_nan=False,
+        description="Quantity in the product's sales unit (e.g. ST = piece, KI = box). Count "
+                    "units (ST, KI, RAS, BOT...) must be whole numbers unless the product's "
+                    "allowedLotSize is a fractional step; > 1,000,000 is refused (422)",
+    )
     tier: Optional[Tier] = Field(None, description="preferred | best | better | good (from plan_need); drives substitution rules")
-    flags: list[str] = Field(default_factory=list, description="Planner flags carried into policy evaluation")
-    product_name: Optional[str] = None
+    flags: list[Annotated[str, Field(max_length=100)]] = Field(
+        default_factory=list,
+        max_length=50,
+        description="Planner flags carried into policy evaluation",
+    )
+    product_name: Optional[str] = Field(None, max_length=300)
 
 
 class QuoteRequest(BaseModel):
     customer_id: Optional[str] = Field(None, description="Defaults to X-Customer-Id")
-    agent_id: Optional[str] = Field(None, description="Defaults to X-Agent-Id")
+    agent_id: Optional[ShortId] = Field(None, description="Defaults to X-Agent-Id")
     delivery_date: date
-    lines: list[QuoteLineIn] = Field(..., min_length=1)
+    lines: list[QuoteLineIn] = Field(..., min_length=1, max_length=200)
     need: Optional[Need] = None
+
+    @field_validator("need")
+    @classmethod
+    def _validate_need(cls, v: Optional[Need]) -> Optional[Need]:
+        if v is None:
+            return None
+        if not math.isfinite(v.quantity) or v.quantity > MAX_QTY:
+            raise ValueError(f"quantity must be finite and <= {int(MAX_QTY):,}")
+        if len(v.product_query or "") > 500:
+            raise ValueError("product_query must be at most 500 characters")
+        if len(v.raw_text or "") > 4000:
+            raise ValueError("raw_text must be at most 4,000 characters")
+        if not (v.product_query or "").strip() and not v.preferred_product_ids:
+            raise ValueError("product_query or preferred_product_ids is required")
+        return v
 
     model_config = {"json_schema_extra": {"examples": [
         {"customer_id": "hotel-aurora", "agent_id": "buyer-1", "delivery_date": "2026-11-16",
@@ -39,18 +71,18 @@ class QuoteRequest(BaseModel):
 
 
 class OrderRequest(BaseModel):
-    quote_id: str
-    quote_hash: str = Field(..., description="Must equal the quote's quote_hash: binds the order to the exact signed quote")
+    quote_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    quote_hash: str = Field(..., max_length=128, description="Must equal the quote's quote_hash: binds the order to the exact signed quote")
 
     model_config = {"json_schema_extra": {"examples": [{"quote_id": "Q-20261114-1a2b3c4d", "quote_hash": "<sha256 from the quote>"}]}}
 
 
 class DecisionRequest(BaseModel):
     decision: Literal["approve", "reject"]
-    approver: str = Field("", description="Human approver identity, e.g. anna@aurora. With X-Approver-Session it defaults to (and must match) the signed-in approver")
-    note: Optional[str] = None
-    quote_hash: str = Field(..., description="The quote_hash the approver reviewed; 409 if it does not match the order")
-    approver_role: Optional[str] = Field(None, description="Role the approver acts in (e.g. procurement_manager). "
+    approver: str = Field("", max_length=200, description="Human approver identity, e.g. anna@aurora. With X-Approver-Session it defaults to (and must match) the signed-in approver")
+    note: Optional[str] = Field(None, max_length=2000)
+    quote_hash: str = Field(..., max_length=128, description="The quote_hash the approver reviewed; 409 if it does not match the order")
+    approver_role: Optional[str] = Field(None, max_length=100, description="Role the approver acts in (e.g. procurement_manager). "
                                          "Defaults to the role in the customer's approver directory.")
     remember: bool = Field(False, description="Learned approvals: remember this approved swap so the policy can "
                                               "auto-allow it next time (aimo.trust.learned)")
@@ -60,3 +92,86 @@ class DecisionRequest(BaseModel):
     model_config = {"json_schema_extra": {"examples": [
         {"decision": "approve", "approver": "anna@hotel-aurora.example", "approver_role": "procurement_manager",
          "note": "OK for Monday", "quote_hash": "<sha256>"}]}}
+
+
+_HTTP_CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    406: "not_acceptable",
+    409: "conflict",
+    410: "gone",
+    413: "payload_too_large",
+    415: "unsupported_media_type",
+    422: "invalid_request",
+    429: "rate_limited",
+    501: "not_implemented",
+    502: "bad_gateway",
+    503: "unavailable",
+}
+
+
+def _clean_errors(errors: list) -> list[dict]:
+    out = []
+    for e in errors[:50]:
+        loc = [x if isinstance(x, (int, str)) else str(x) for x in (e.get("loc") or ())]
+        out.append({"loc": loc, "msg": str(e.get("msg", ""))[:300], "type": str(e.get("type", ""))[:80]})
+    return out
+
+
+def validation_message(errors: list[dict]) -> str:
+    parts = []
+    for e in errors[:5]:
+        loc = [str(x) for x in e.get("loc", []) if x not in ("body", "query", "path", "header")]
+        parts.append(f"{'.'.join(loc) or 'request'}: {e.get('msg')}")
+    more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+    return ("Invalid request. " + "; ".join(parts) + more)[:1000]
+
+
+def validation_error_body(errors: list) -> dict:
+    errs = _clean_errors(list(errors))
+    return {"error": "validation_error", "message": validation_message(errs), "detail": errs}
+
+
+def install_error_handlers(app) -> None:
+    import logging
+
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+    from pydantic import ValidationError
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    log = logging.getLogger("aimo.gateway")
+
+    @app.exception_handler(RequestValidationError)
+    async def _req_validation(_req, exc: RequestValidationError):
+        return JSONResponse(validation_error_body(exc.errors()), status_code=422)
+
+    @app.exception_handler(ValidationError)
+    async def _model_validation(_req, exc: ValidationError):
+        return JSONResponse(validation_error_body(exc.errors()), status_code=422)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(_req, exc: StarletteHTTPException):
+        d = exc.detail
+        if isinstance(d, dict) and d.get("error") and d.get("message"):
+            body = d
+        else:
+            code = _HTTP_CODES.get(exc.status_code, f"http_{exc.status_code}")
+            msg = str(d) if d else code.replace("_", " ")
+            body = {"error": code, "message": msg, "detail": msg}
+        return JSONResponse(body, status_code=exc.status_code, headers=getattr(exc, "headers", None))
+
+    @app.exception_handler(Exception)
+    async def _unhandled(req, exc: Exception):
+        log.exception("unhandled error on %s %s", req.method, req.url.path)
+        return JSONResponse(
+            {
+                "error": "internal_error",
+                "message": f"Unexpected server error ({type(exc).__name__}); "
+                "it has been logged. Retry, or report it with the time of the request.",
+            },
+            status_code=500,
+        )

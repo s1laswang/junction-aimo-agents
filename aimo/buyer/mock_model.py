@@ -129,6 +129,20 @@ def _inspected_products(contents: Any) -> set[str]:
     return out
 
 
+def _tool_errors(contents: Any) -> list[str]:
+    if isinstance(contents, str) or not contents:
+        return []
+    out: list[str] = []
+    for c in contents:
+        for p in getattr(c, "parts", None) or []:
+            fr = getattr(p, "function_response", None)
+            if fr and isinstance(fr.response, dict) and fr.response.get("error"):
+                item = f"{fr.name}: {fr.response['error']}"
+                if item not in out:
+                    out.append(item)
+    return out
+
+
 class MockModel:
     """Drop-in for BuyerAgent(generate_fn=...). Reads the agent's harness state, never invents
     quantities: the harness locks the need and corrects quote lines to the planner's lines."""
@@ -136,12 +150,14 @@ class MockModel:
     def __init__(self, agent: Any):
         self.agent = agent
         self.calls: list[str] = []
+        self._last_errors: list[str] = []
 
     def __call__(self, feature: str, model: str, contents: Any, config: Any = None):
         self.calls.append(feature)
         a = self.agent
         if isinstance(contents, str):
             return _text(self._summary(feature))
+        self._last_errors = _tool_errors(contents)
         done = [p.function_response.name for c in contents for p in (c.parts or []) if p.function_response]
         for i, need in enumerate(a.needs):
             if i not in a.plans and done.count("plan_need") <= i:
@@ -189,6 +205,8 @@ class MockModel:
             bits.append(f"shortfall {shortfall:g}")
         if not q and not lines:
             bits.append("no orderable lines")
+        if not q and self._last_errors:
+            bits.append(f"tool error ({', '.join(self._last_errors[:2])})")
         if (a.order or {}).get("approved_by"):
             bits.append(f"approved by {a.order['approved_by']}")
         if a.injections:

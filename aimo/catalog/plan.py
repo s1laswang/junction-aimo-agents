@@ -448,6 +448,8 @@ def mark_supplier_text(
 def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[str, Offer]]] = None,
               limit: int = 12) -> Plan:
     validate_need(need)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
     if offers_fn is None:
         from aimo.catalog.offers import get_offers
         offers_fn = get_offers
@@ -678,11 +680,60 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     Lines after delivery_by always carry `late_option` + `delivery_date:<iso>`; they are added to the
     plan only when need.preferences['allow_split_delivery'] is true, otherwise reported as the
     earliest date that covers the rest."""
+    validate_need(need)
+
+    def _pos_num(v: Any) -> Optional[float]:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        try:
+            fv = float(v)
+        except OverflowError:
+            return None
+        return fv if (math.isfinite(fv) and fv > 0.0) else None
+
+    def _score_key(v: Any) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return -1e9
+        try:
+            fv = float(v)
+        except OverflowError:
+            return -1e9
+        return fv if math.isfinite(fv) else -1e9
+
+    def _valid_avail(v: Any) -> tuple[bool, Optional[float]]:
+        if v is None:
+            return True, None
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False, None
+        try:
+            af = float(v)
+        except OverflowError:
+            return (True, math.inf) if v > 0 else (False, None)
+        if math.isnan(af) or af <= 0.0:
+            return False, None
+        return True, af
+
+    shortfall_val = _pos_num(plan.shortfall)
+    if shortfall_val is None or shortfall_val <= 1e-9:
+        if isinstance(plan.shortfall, bool) or not isinstance(plan.shortfall, (int, float)):
+            raise ValueError("plan.shortfall must be a finite number")
+        try:
+            sf_check = float(plan.shortfall)
+        except OverflowError as e:
+            raise ValueError("plan.shortfall must be a finite number") from e
+        if not math.isfinite(sf_check) or sf_check < 0.0:
+            raise ValueError("plan.shortfall must be a finite non-negative number")
+        return plan, []
     from aimo.catalog.delivery import earliest_feasible, fmt, late_offer
     allow = bool((need.preferences or {}).get("allow_split_delivery"))
     late: dict[str, tuple[Candidate, date, bool]] = {}
     for c in full:
         if not _only_orderability(c) or c.offer is None:
+            continue
+        if _pos_num(c.offer.unit_price) is None:
+            continue
+        ok_av, _ = _valid_avail(c.offer.available_amount)
+        if not ok_av or "availability_error" in (c.offer.issues or []) or "price_error" in (c.offer.issues or []):
             continue
         d, est = earliest_feasible(c.offer)
         if d is None or d <= need.delivery_by and not c.offer.cutoff_passed:
@@ -699,9 +750,9 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     late_offers = {pid: late_offer(c.offer, d) for pid, (c, d, _e) in late.items()}
     ranked = rank_substitutes(late_need, late_offers, limit=50, rows={p: shortlist[p] for p in late if p in shortlist},
                               relevance=rel, inferred_allergens=hints)
-    ranked = [c for c in ranked if c.tier != "rejected"]
-    ranked.sort(key=lambda c: (late[c.product.id][1], TIER_ORDER[c.tier], -c.rank_score))
-    remaining = plan.shortfall
+    ranked = [c for c in ranked if c.tier != "rejected" and c.tier in TIER_ORDER and c.product.id in late]
+    ranked.sort(key=lambda c: (late[c.product.id][1], TIER_ORDER[c.tier], -_score_key(c.rank_score)))
+    remaining = shortfall_val
     loaded_lots = _load_rows([c.product.id for c in ranked])
     lots = {
         pid: (loaded_lots[pid].get("allowed_lot_size") if pid in loaded_lots else (shortlist.get(pid) or {}).get("allowed_lot_size"))
@@ -711,17 +762,30 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     for c in ranked:
         if remaining <= 1e-9:
             break
-        content = c.product.content_amount
-        if not content or c.product.content_unit != need.unit or c.offer is None or c.offer.unit_price is None:
+        content = _pos_num(c.product.content_amount)
+        unit_price = _pos_num(c.offer.unit_price) if c.offer is not None else None
+        if content is None or unit_price is None or c.product.content_unit != need.unit:
             continue
-        units = _round_lot(remaining / content, lots.get(c.product.id), up=True)
-        if c.offer.available_amount is not None and c.offer.available_amount < units:
-            units = _round_lot(c.offer.available_amount, lots.get(c.product.id), up=False)
-        if units <= 0:
+        raw_units = remaining / content
+        if not math.isfinite(raw_units) or raw_units <= 0.0:
+            continue
+        units = _round_lot(raw_units, lots.get(c.product.id), up=True)
+        if not math.isfinite(units) or units <= 0.0:
+            continue
+        ok_avail, af = _valid_avail(c.offer.available_amount)
+        if not ok_avail:
+            continue
+        if af is not None and math.isfinite(af) and af < units:
+            units = _round_lot(af, lots.get(c.product.id), up=False)
+        if not math.isfinite(units) or units <= 0.0:
             continue
         d, est = late[c.product.id][1], late[c.product.id][2]
-        covered = round(units * content, 4)
-        total = round(units * c.offer.unit_price, 2)
+        raw_cov = units * content
+        raw_tot = units * unit_price
+        if not (math.isfinite(raw_cov) and math.isfinite(raw_tot)):
+            continue
+        covered = round(raw_cov, 4)
+        total = round(raw_tot, 2)
         flags = sorted(set([f for f in c.flags if f not in ("cutoff_passed",)] +
                            ["late_option", f"delivery_date:{d.isoformat()}"] + (["split_delivery"] if allow else [])))
         reasons = [c.reasons[0] if c.reasons else "",
@@ -729,11 +793,11 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
                    + (" (estimated date)" if est else "") + ("; split delivery allowed by the customer"
                                                              if allow else "; needs a human decision"),
                    f"{units:g} x {c.product.sales_unit} x {content:g} {need.unit} = {covered:g} {need.unit}; "
-                   f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}"]
+                   f"{units:g} x €{unit_price:.2f} = €{total:,.2f}"]
         reasons.extend(_candidate_injection_reasons(c, reasons))
         new_lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
                                   qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
-                                  unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=flags,
+                                  unit_price=unit_price, line_total=total, reasons=reasons, flags=flags,
                                   injection_screen=c.injection_screen))
         remaining -= covered
     if not new_lines:
@@ -750,7 +814,7 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     lines = [*plan.lines, *new_lines]
     covered_total = round(sum(l.covered_amount for l in lines), 4)
     total_net = round(sum(l.line_total for l in lines), 2)
-    shortfall = round(max(0.0, need.quantity - covered_total), 4)
+    shortfall = round(max(0.0, float(need.quantity) - covered_total), 4)
     note = (f"Split delivery: {late_cov:g} {need.unit} arrive {fmt(d_all)} (late_option lines, flagged for review).")
     _ = first
     explanation = explain(need, lines, plan.candidates, covered_total, shortfall, total_net)
@@ -786,6 +850,8 @@ def coverage_sentence(need: Need, plan: Plan) -> str:
 
 
 def _trim(full: list[Candidate], limit: int) -> list[Candidate]:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
     out, n_ok, n_rej = [], 0, 0
     for c in full:
         if c.tier == "rejected":
@@ -891,15 +957,50 @@ def _call_offers(fn, ids: list[str], need: Need) -> dict[str, Offer]:
 
 def fill(need: Need, cands: list[Candidate]) -> Plan:
     validate_need(need)
+
+    def _pos_num(v: Any) -> Optional[float]:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        try:
+            fv = float(v)
+        except OverflowError:
+            return None
+        return fv if (math.isfinite(fv) and fv > 0.0) else None
+
+    def _score_key(v: Any) -> float:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return -1e9
+        try:
+            fv = float(v)
+        except OverflowError:
+            return -1e9
+        return fv if math.isfinite(fv) else -1e9
+
+    def _valid_avail(v: Any) -> tuple[bool, Optional[float]]:
+        if v is None:
+            return True, None
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False, None
+        try:
+            af = float(v)
+        except OverflowError:
+            return (True, math.inf) if v > 0 else (False, None)
+        if math.isnan(af) or af <= 0.0:
+            return False, None
+        return True, af
+
     remaining = float(need.quantity)
     lines: list[PlanLine] = []
     excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
     rows_by_id = _load_rows([c.product.id for c in cands])
     lot = {pid: d.get("allowed_lot_size") for pid, d in rows_by_id.items()}
-    for c in sorted(cands, key=lambda c: (TIER_ORDER[c.tier], -c.rank_score)):
+    for c in sorted(cands, key=lambda c: (TIER_ORDER.get(c.tier, 9), -_score_key(c.rank_score))):
         if remaining <= 1e-9:
             break
-        if c.tier == "rejected" or c.offer is None or c.offer.unit_price is None:
+        if c.tier == "rejected" or c.tier not in TIER_ORDER or c.offer is None:
+            continue
+        unit_price = _pos_num(c.offer.unit_price)
+        if unit_price is None:
             continue
         if excl and ("allergen_unknown" in c.flags
                      or any(f.startswith(("contains:", "may_contain:"))
@@ -908,32 +1009,43 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
                      or (c.product.id in rows_by_id and blocking(rows_by_id[c.product.id].get("allergens") or {}, excl,
                                                                  allergen_source=rows_by_id[c.product.id].get("allergen_source")))):
             continue
-        content = c.product.content_amount
-        if not content or content <= 0 or c.product.content_unit != need.unit:
+        content = _pos_num(c.product.content_amount)
+        if content is None or c.product.content_unit != need.unit:
             continue
-        units = _round_lot(remaining / content, lot.get(c.product.id), up=True)
+        raw_units = remaining / content
+        if not math.isfinite(raw_units) or raw_units <= 0.0:
+            continue
+        units = _round_lot(raw_units, lot.get(c.product.id), up=True)
+        if not math.isfinite(units) or units <= 0.0:
+            continue
         flags = list(c.flags)
-        avail = c.offer.available_amount
-        if avail is not None and avail < units:
-            units = _round_lot(avail, lot.get(c.product.id), up=False)
+        ok_avail, af = _valid_avail(c.offer.available_amount)
+        if not ok_avail:
+            continue
+        if af is not None and math.isfinite(af) and af < units:
+            units = _round_lot(af, lot.get(c.product.id), up=False)
             if "partial_stock" not in flags:
                 flags.append("partial_stock")
-        if units <= 0:
+        if not math.isfinite(units) or units <= 0.0:
             continue
-        covered = round(units * content, 4)
-        total = round(units * c.offer.unit_price, 2)
+        raw_cov = units * content
+        raw_tot = units * unit_price
+        if not (math.isfinite(raw_cov) and math.isfinite(raw_tot)):
+            continue
+        covered = round(raw_cov, 4)
+        total = round(raw_tot, 2)
         reasons = [c.reasons[0]] if c.reasons else []
         reasons.append(f"{units:g} x {c.product.sales_unit} x {content:g} {need.unit} = {covered:g} {need.unit}; "
-                       f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}")
+                       f"{units:g} x €{unit_price:.2f} = €{total:,.2f}")
         reasons.extend(_candidate_injection_reasons(c, reasons))
         lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
                               qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
-                              unit_price=c.offer.unit_price, line_total=total, reasons=reasons,
+                              unit_price=unit_price, line_total=total, reasons=reasons,
                               flags=sorted(set(flags)), injection_screen=c.injection_screen))
         remaining -= covered
     covered_total = round(sum(l.covered_amount for l in lines), 4)
     total_net = round(sum(l.line_total for l in lines), 2)
-    shortfall = round(max(0.0, need.quantity - covered_total), 4)
+    shortfall = round(max(0.0, float(need.quantity) - covered_total), 4)
     return Plan(need=need, lines=lines, candidates=cands, covered_amount=covered_total, shortfall=shortfall,
                 total_net=total_net, explanation=explain(need, lines, cands, covered_total, shortfall, total_net))
 
