@@ -171,7 +171,7 @@ def main() -> None:
     check(v.get("ok") is True, json.dumps(v))
     served = h.get("replay", {}).get("mode") if h.get("replay", {}).get("forced") else "live"
     print(f"\nORDER {o['order_id']} placed for {a.date}; total_net EUR {q.get('total_net')}; Peppol OrderResponseCode "
-          f"{peppol}; audit verify ok={v.get('ok')} ({v.get('events', v.get('n', v.get('checked', '?')))} events); "
+          f"{peppol}; audit verify ok={v.get('ok')} ({v.get('checked', v.get('events', v.get('n', '?')))} events checked); "
           f"served_from={'replay' if served != 'live' else 'live'}")
     print("\nMILK FLOW OK")
 
