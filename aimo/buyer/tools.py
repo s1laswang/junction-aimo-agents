@@ -53,7 +53,6 @@ def jsonable(x: Any) -> Any:
     return x
 
 
-# ---------------------------------------------------------------- fake
 class FakeTransport:
     kind = "fake"
 
@@ -72,14 +71,13 @@ class FakeTransport:
         pass
 
 
-# ---------------------------------------------------------------- in-process gateway
 class InProcessTransport:
     """Calls aimo.gateway.service.<tool_name>(**args). Identity is passed to any parameter
     named agent_id / customer_id / mandate / identity that the function declares."""
     kind = "inproc"
 
     def __init__(self, agent_id: str, customer_id: str, mandate=None, faults: str | None = None):
-        import aimo.gateway.service as service  # raises ImportError if gateway not landed yet
+        import aimo.gateway.service as service
         self.service = service
         self.faults = faults
         self.agent_id, self.customer_id, self.mandate = agent_id, customer_id, mandate
@@ -93,7 +91,8 @@ class InProcessTransport:
                 if t["name"] not in self.missing]
 
     def call(self, name: str, args: dict) -> Any:
-        _ensure_replay_ready()
+        if getattr(self.service, "__name__", "") == "aimo.gateway.service":
+            _ensure_replay_ready()
         fn = getattr(self.service, name, None)
         if fn is None:
             raise ToolError(f"tool {name} not available in-process")
@@ -104,7 +103,6 @@ class InProcessTransport:
         for k, v in ident.items():
             if k in params and k not in kw and v is not None:
                 kw[k] = v
-        # Coerce dict args into pydantic models when the function is annotated that way.
         for k, p in params.items():
             ann = p.annotation
             if k in kw and isinstance(kw[k], dict) and inspect.isclass(ann) and hasattr(ann, "model_validate"):
@@ -112,8 +110,10 @@ class InProcessTransport:
         token = None
         if self.faults:
             try:
+                from aimo.backend import clock
                 from aimo.backend.client import set_request_faults
-                token = set_request_faults(self.faults)
+                if clock.request_overrides_allowed(True):
+                    token = set_request_faults(self.faults)
             except ImportError:
                 pass
         try:
@@ -130,7 +130,6 @@ class InProcessTransport:
         pass
 
 
-# ---------------------------------------------------------------- MCP
 class MCPTransport:
     """Sync facade over the async mcp.Client. A private event loop thread owns the client
     session (anyio requires enter/exit in the same task); calls are submitted to it."""
@@ -150,7 +149,7 @@ class MCPTransport:
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._main())
-        except BaseException as e:  # noqa: BLE001
+        except BaseException as e:
             if not self._ready.done():
                 self._ready.set_exception(e)
 
@@ -164,7 +163,7 @@ class MCPTransport:
             async with http:
                 async with Client(streamable_http_client(self.server, http_client=http)) as client:
                     await self._serve(client)
-        else:  # in-process MCPServer / Server (tests)
+        else:
             async with Client(self.server) as client:
                 await self._serve(client)
 
@@ -185,7 +184,7 @@ class MCPTransport:
             try:
                 r = await client.call_tool(name, args)
                 fut.set_result(r)
-            except BaseException as e:  # noqa: BLE001
+            except BaseException as e:
                 fut.set_exception(e)
 
     def list_tools(self) -> list[ToolSpec]:
@@ -209,7 +208,6 @@ def _parse_tool_result(r) -> Any:
         raise ToolError(text or "tool error")
     sc = r.structured_content
     if sc is not None:
-        # FastMCP wraps non-object returns as {"result": ...}
         if isinstance(sc, dict) and set(sc) == {"result"}:
             return sc["result"]
         return sc
@@ -219,7 +217,6 @@ def _parse_tool_result(r) -> Any:
         return {"text": text}
 
 
-# ---------------------------------------------------------------- factory
 def gateway_agent_id(agent_id: str, customer_id: str) -> str:
     """The gateway composes actors as agent:<customer>/<agent>, so it wants the bare agent name."""
     prefix = customer_id + "/"
@@ -229,15 +226,21 @@ def gateway_agent_id(agent_id: str, customer_id: str) -> str:
 def _has_forced_replay() -> bool:
     from aimo import config
     from aimo.backend import replay
-    if replay.mode() != "forced":
+    if replay.mode() not in ("forced", "auto"):
         return False
     rdir = replay.replay_dir()
     if rdir is None or not (rdir / "meta.json").exists():
         return False
-    if config.PRODUCT_JSON.exists():
+    has_real_catalog = (
+        config.PRODUCT_JSON.exists()
+        and "catalog-fixture" not in config.PRODUCT_JSON.parts
+    )
+    if has_real_catalog:
         return True
     if os.environ.get("AIMO_CATALOG_FIXTURE", "").strip() == "0":
         return False
+    if config.PRODUCT_JSON.exists():
+        return True
     from aimo.catalog import FIXTURE_CATALOG_DIR
     return (
         (rdir / "catalog" / (config.PRODUCT_JSON.name + ".gz")).exists()
@@ -245,15 +248,18 @@ def _has_forced_replay() -> bool:
     )
 
 
+_has_replay = _has_forced_replay
+
+
 def _ensure_replay_ready() -> None:
     from aimo import config
     from aimo.backend import client as backend_client, replay
-    if replay.mode() != "forced":
+    if replay.mode() not in ("forced", "auto"):
         return
     rdir = replay.replay_dir()
-    if rdir is None:
+    if rdir is None or not (rdir / "meta.json").exists():
         return
-    if isinstance(backend_client._client, backend_client.ValioClient) or (
+    if backend_client._client is None or isinstance(backend_client._client, backend_client.ValioClient) or (
         isinstance(backend_client._client, replay.ReplayClient) and backend_client._client.dir != rdir
     ):
         backend_client.set_client(replay.ReplayClient(rdir))
@@ -286,21 +292,34 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
     for k in order:
         try:
             if k == "mcp":
-                if kind == "auto":  # fast probe so auto mode falls back quickly when no server runs
+                if kind == "auto":
                     import httpx
-                    httpx.get(mcp_url, timeout=1.5)  # any HTTP status means something listens
-                return MCPTransport(mcp_url, headers=headers, timeout=60)  # create_quote re-fetches live prices; the mock API can be slow
+                    httpx.get(mcp_url, timeout=1.5)
+                return MCPTransport(mcp_url, headers=headers, timeout=60)
             if k == "inproc":
                 if kind == "auto":
                     import aimo.backend.client as backend_client
                     from aimo import config
-                    has_key = bool((config.AIMO_API_KEY or os.environ.get("VALIO_API_KEY") or "").strip() or config.OFFLINE)
-                    if not (backend_client._client is not None or (config.PRODUCT_JSON.exists() and has_key) or _has_forced_replay()):
+                    from aimo.backend import replay
+                    has_custom_client = (
+                        backend_client._client is not None
+                        and not isinstance(backend_client._client, (backend_client.ValioClient, replay.ReplayClient))
+                    )
+                    has_real_catalog = (
+                        config.PRODUCT_JSON.exists()
+                        and (
+                            "catalog-fixture" not in config.PRODUCT_JSON.parts
+                            or os.environ.get("AIMO_CATALOG_FIXTURE", "").strip() == "1"
+                        )
+                    )
+                    is_offline = bool(config.OFFLINE or os.environ.get("AIMO_OFFLINE", "0") == "1")
+                    has_key = bool((config.AIMO_API_KEY or os.environ.get("VALIO_API_KEY") or "").strip() or is_offline)
+                    if not (has_custom_client or (has_real_catalog and has_key) or _has_forced_replay()):
                         raise ToolError("in-process gateway needs challenge catalog data and AIMO_API_KEY")
                 return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":
                 from aimo.buyer.fakes import FakeGateway
                 return FakeTransport(gateway or FakeGateway(customer_id, agent_id))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             errors.append(f"{k}: {type(e).__name__}: {e}"[:300])
     raise ToolError("no tool transport available: " + "; ".join(errors))
