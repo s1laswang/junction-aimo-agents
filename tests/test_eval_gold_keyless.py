@@ -23,7 +23,6 @@ from aimo.buyer import eval_gold
 from aimo.buyer.eval_gold import APPROVERS, Approver, InprocApprover, _now
 from aimo.buyer.mock_model import MOCK_MODEL_NAME, mock_wanted
 from aimo.buyer.need import HELSINKI, resolve_date
-from aimo.catalog import textsearch as textsearch_mod
 from aimo.gateway import human_auth, service
 from aimo.models import AllergenStatus, Product, ProductSummary
 from aimo.trust import approvals as trust_approvals
@@ -49,7 +48,7 @@ class _FixtureUpstream:
         self.avail_raw = json.loads((FIX / "availability_20261116.json").read_text(encoding="utf-8"))
         base_price = next(p for p in self.price_raw["products"] if p["productId"] == "464306")
         base_avail = next(p for p in self.avail_raw["products"] if p["productId"] == "464306")
-        for extra_id in ("472833", "473328"):
+        for extra_id in ("470889", "472833", "473328"):
             self.price_raw["products"].append(dict(base_price, productId=extra_id))
             self.avail_raw["products"].append(dict(base_avail, productId=extra_id))
 
@@ -193,6 +192,18 @@ def _isolate_live_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
             content_unit="L",
             claims=["FREE_FROM_LACTOSE"],
         ),
+        "470889": Product(
+            id="470889",
+            name="Oatly Oat Drink Whole 1L",
+            brand="Oatly",
+            category="10402",
+            sales_unit="ST",
+            content_unit="L",
+            content_amount=1.0,
+            claims=["FREE_FROM_SOY", "VEGAN"],
+            allergens={"milk": AllergenStatus.free, "nuts": AllergenStatus.free},
+            allergen_source={"milk": "structured", "nuts": "structured"},
+        ),
         "472833": Product(
             id="472833",
             name="Fazer Aito oat drink 1 L UHT",
@@ -209,13 +220,13 @@ def _isolate_live_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
             id="473328",
             name="Schar Vital dark sliced bread 350 g gluten free",
             brand="Schar",
-            category="11100",
+            category="10900",
             sales_unit="ST",
             content_amount=0.35,
             content_unit="KG",
             claims=["FREE_FROM_GLUTEN"],
             allergens={"gluten": AllergenStatus.free},
-            allergen_source={"gluten": "structured"},
+            allergen_source={"gluten": "structured:claim"},
         ),
     }
     stub_cat = types.SimpleNamespace(
@@ -227,7 +238,6 @@ def _isolate_live_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     isolated_audit = trust_pkg.AuditLog(tmp_path / "audit.sqlite")
     monkeypatch.setattr(service, "_catalog", lambda: stub_cat)
     monkeypatch.setattr(catalog_mod, "get_product", stub_cat.get_product)
-    monkeypatch.setattr(textsearch_mod, "get_rows", lambda ids: {})
     monkeypatch.setattr(sys.modules["aimo.trust.audit"], "audit", isolated_audit)
     monkeypatch.setattr(trust_pkg, "audit", isolated_audit)
     monkeypatch.setattr(trust_approvals, "audit", isolated_audit)
@@ -254,8 +264,8 @@ def test_approver_authenticates_against_live_gateway_for_all_three_customers(
         client = TestClient(create_app(with_mcp=False))
         specs = [
             ("hotel-aurora", "464306", 1000, "best"),
-            ("school-tampere", "472833", 500, "preferred"),
-            ("hospital-meilahti", "464306", 100, "best"),
+            ("school-tampere", "470889", 500, "preferred"),
+            ("hospital-meilahti", "473328", 1200, "preferred"),
         ]
         order_ids: dict[str, str] = {}
         for cust, pid, qty, tier in specs:
@@ -315,7 +325,7 @@ def test_approver_skips_expired_and_approves_replacement_after_409_requote_neede
         q_stale = client.post(
             "/v1/quotes",
             headers=hdr_school,
-            json={"delivery_date": DELIVERY.isoformat(), "lines": [{"product_id": "472833", "qty_sales_units": 500, "tier": "preferred"}]},
+            json={"delivery_date": DELIVERY.isoformat(), "lines": [{"product_id": "470889", "qty_sales_units": 500, "tier": "preferred"}]},
         ).json()
         o_stale = client.post(
             "/v1/orders",
@@ -399,7 +409,7 @@ def test_inproc_approver_skips_expired_and_approves_replacement_after_409_requot
     try:
         monkeypatch.setenv("AIMO_NOW", "2026-11-14T11:30:00+02:00")
         ident_school = service.Identity(agent_id="buyer-1", customer_id="school-tampere")
-        q_stale = service.make_quote(ident_school, DELIVERY, [{"product_id": "472833", "qty_sales_units": 500, "tier": "preferred"}])
+        q_stale = service.make_quote(ident_school, DELIVERY, [{"product_id": "470889", "qty_sales_units": 500, "tier": "preferred"}])
         o_stale = service.submit_order(ident_school, q_stale.quote_id, q_stale.quote_hash or "")
         assert o_stale.status == "pending_approval"
 
