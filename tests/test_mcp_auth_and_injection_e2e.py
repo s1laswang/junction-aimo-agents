@@ -1479,3 +1479,103 @@ def test_toywholesaler_mcp_and_body_customer_portability(live_toy_gateway):
     assert nb_mcp_ln["injection_screen"]["suspicious"] is True
     assert nb_mcp_ln["injection_screen"]["injected"] is True
 
+
+def test_mcp_catalog_missing_returns_structured_tool_error(tmp_path, monkeypatch):
+    from aimo import catalog as cat_mod
+
+    monkeypatch.setattr(cat_mod, "catalog_available", lambda: False)
+    monkeypatch.setenv("AIMO_CUSTOMER_ID", "hotel-aurora")
+    monkeypatch.setenv("AIMO_AGENT_ID", "buyer-1")
+    srv = build_mcp()
+
+    calls = [
+        ("search_products", {"query": "lactose free milk"}),
+        (
+            "plan_need",
+            {
+                "need": {
+                    "customer_id": "hotel-aurora",
+                    "product_query": "lactose free milk",
+                    "quantity": 10,
+                    "unit": "L",
+                    "delivery_by": DELIVERY,
+                }
+            },
+        ),
+        (
+            "plan_need",
+            {
+                "need": {
+                    "customer_id": "hotel-aurora",
+                    "product_query": "lactose free milk",
+                    "quantity": 0,
+                    "unit": "L",
+                    "delivery_by": DELIVERY,
+                }
+            },
+        ),
+        (
+            "plan_need",
+            {
+                "need": {
+                    "customer_id": "hotel-aurora",
+                    "product_query": "lactose free milk",
+                    "quantity": 2_000_000,
+                    "unit": "L",
+                    "delivery_by": DELIVERY,
+                }
+            },
+        ),
+        (
+            "plan_need",
+            {
+                "need": {
+                    "customer_id": "rogue-corp",
+                    "product_query": "lactose free milk",
+                    "quantity": 10,
+                    "unit": "L",
+                    "delivery_by": DELIVERY,
+                }
+            },
+        ),
+    ]
+    results = asyncio.run(_inproc_mcp_batch(srv, calls))
+    _, err_search, _, txt_search = results[0]
+    assert err_search and "catalog_missing" in txt_search and "UnexpectedToolError" not in txt_search
+
+    _, err_plan, _, txt_plan = results[1]
+    assert err_plan and "catalog_missing" in txt_plan and "UnexpectedToolError" not in txt_plan
+
+    _, err_bad_qty, _, txt_bad_qty = results[2]
+    assert err_bad_qty and ("greater_than" in txt_bad_qty or "bad_quantity" in txt_bad_qty) and "catalog_missing" not in txt_bad_qty
+
+    _, err_absurd_qty, _, txt_absurd_qty = results[3]
+    assert err_absurd_qty and "absurd_quantity" in txt_absurd_qty and "catalog_missing" not in txt_absurd_qty
+
+    _, err_bad_cust, _, txt_bad_cust = results[4]
+    assert err_bad_cust and "customer_mismatch" in txt_bad_cust and "catalog_missing" not in txt_bad_cust
+
+    monkeypatch.delenv("AIMO_CUSTOMER_ID", raising=False)
+    unauth_res = asyncio.run(
+        _inproc_mcp_batch(
+            srv,
+            [
+                (
+                    "plan_need",
+                    {
+                        "need": {
+                            "customer_id": "rogue-corp",
+                            "product_query": "lactose free milk",
+                            "quantity": 10,
+                            "unit": "L",
+                            "delivery_by": DELIVERY,
+                        }
+                    },
+                )
+            ],
+        )
+    )
+    _, err_unknown, _, txt_unknown = unauth_res[0]
+    assert err_unknown and "unknown_customer" in txt_unknown and "catalog_missing" not in txt_unknown
+
+

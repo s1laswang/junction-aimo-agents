@@ -97,6 +97,18 @@ def _dump(x: Any) -> Any:
     return x
 
 
+def _require_catalog() -> None:
+    try:
+        _cat = service._catalog()
+    except Exception:
+        return
+    if _cat is None or not hasattr(_cat, "catalog_available"):
+        return
+    if not _cat.catalog_available():
+        raise service.ServiceError(503, "catalog_missing", _cat.CATALOG_MISSING_MESSAGE,
+                                   {"fix": "uv run aimo fetch-data", "needs": "AIMO_API_KEY"})
+
+
 def build_mcp() -> MCPServer:
     mcp = MCPServer(
         SERVER_NAME,
@@ -120,7 +132,15 @@ def build_mcp() -> MCPServer:
         co2. Prices and stock are NOT included: call get_offers with the ids.
         """
         _identity(ctx)
-        return _call(ctx, service.search_products, query, claims=claims, limit=limit)
+
+        def _run_search() -> dict[str, Any]:
+            if hasattr(service, "_check_search_inputs"):
+                service._check_search_inputs(query, claims, None, None, 10 if limit is None else limit, 10)
+            if getattr(service.search_products, "__module__", "") == "aimo.gateway.service":
+                _require_catalog()
+            return service.search_products(query, claims=claims, limit=limit)
+
+        return _call(ctx, _run_search)
 
     @mcp.tool()
     def get_product(product_id: str, ctx: Context = None) -> dict[str, Any]:
@@ -158,7 +178,20 @@ def build_mcp() -> MCPServer:
         candidate ranking with reasons, covered_amount, shortfall, total_net and an explanation.
         Feed plan.lines into create_quote.
         """
-        return _dump(_call(ctx, service.plan_need, need, identity=_identity(ctx)))
+        ident = _identity(ctx)
+
+        def _run_plan() -> Any:
+            if getattr(service.plan_need, "__module__", "") == "aimo.gateway.service":
+                n_obj = service._as_need(need, ident)
+                if n_obj is not None:
+                    if getattr(ident, "authenticated", {}).get("customer") and n_obj.customer_id != ident.customer_id:
+                        service.claim_identity(ident, n_obj.customer_id, None)
+                    auth.require_known_customer(n_obj.customer_id)
+                    service._check_need_input(n_obj)
+                _require_catalog()
+            return service.plan_need(need, identity=ident)
+
+        return _dump(_call(ctx, _run_plan))
 
     @mcp.tool()
     def create_quote(delivery_date: str, lines: list[QuoteLineIn], need: Optional[Need] = None, ctx: Context = None) -> dict[str, Any]:
