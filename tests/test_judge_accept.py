@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,7 @@ KEY_VARS = (
     "AIMO_STATE_DB",
     "AIMO_KEY_DIR",
     "AIMO_APPROVER_PIN",
+    "AIMO_ACCEPT_LOG_PREFIX",
 )
 
 
@@ -171,6 +174,7 @@ def test_judge_accept_no_em_dashes_no_comments_and_updated_demo_checks() -> None
     assert '--base-url "http://127.0.0.1:${PORT}" --auto-approve-as anna@hotel-aurora.example' in text
     assert 'AIMO_STATE_DB="$TMP_ACCEPT/state.sqlite"' in text
     assert 'AIMO_KEY_DIR="$TMP_ACCEPT/keys"' in text
+    assert '--json "$TMP_ACCEPT/conformance.json"' in text
     assert "mktemp -d" in text
     assert "trap cleanup" in text
 
@@ -336,11 +340,20 @@ def test_main_with_valio_api_key_and_catalog_runs_base_url_demo(tmp_path: Path) 
 
     scenarios_info = json.loads((out_dir / "scenarios.json").read_text(encoding="utf-8"))
     serve_info = json.loads((out_dir / "serve.json").read_text(encoding="utf-8"))
+    conf_info = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
     demo_info = json.loads((out_dir / "demo.json").read_text(encoding="utf-8"))
+    expected_conf_json = str(Path(serve_info["state_db"]).parent / "conformance.json")
     assert scenarios_info["state_db"] == ""
     assert scenarios_info["key_dir"] == ""
     assert serve_info["aimo_api_key"] == secret
     assert demo_info["aimo_api_key"] == secret
+    assert conf_info["args"] == [
+        "conformance",
+        "--base",
+        f"http://127.0.0.1:{serve_info['port']}",
+        "--json",
+        expected_conf_json,
+    ]
     assert "--base-url" in demo_info["args"]
     assert f"http://127.0.0.1:{serve_info['port']}" in demo_info["args"]
     assert not Path(serve_info["state_db"]).parent.exists()
@@ -403,7 +416,8 @@ def test_main_keyless_with_replay_snapshot_runs_full_real_http_gates(tmp_path: P
     assert not Path(serve_info["state_db"]).parent.exists()
 
     base_url = f"http://127.0.0.1:{serve_info['port']}"
-    assert "--base" in conf_info["args"] and base_url in conf_info["args"]
+    expected_conf_json = str(Path(serve_info["state_db"]).parent / "conformance.json")
+    assert conf_info["args"] == ["conformance", "--base", base_url, "--json", expected_conf_json]
     assert "--base" in milk_info["args"] and base_url in milk_info["args"]
     assert "--base-url" in demo_info["args"] and base_url in demo_info["args"]
     assert "--auto-approve-as" in demo_info["args"] and "anna@hotel-aurora.example" in demo_info["args"]
@@ -550,3 +564,76 @@ def test_main_keyless_without_replay_records_skip_for_requote_beat(tmp_path: Pat
     )
     assert not (out_dir / "requote.json").exists()
     assert "RESULT: PASS" in res.stdout
+
+
+def test_judge_accept_real_keyless_stack_end_to_end(tmp_path: Path) -> None:
+    real_bin = tmp_path / "bin"
+    real_bin.mkdir()
+    uv_wrapper = real_bin / "uv"
+    uv_wrapper.write_text(
+        "\x23!/usr/bin/env python3\n"
+        "import os, sys\n"
+        f"REAL_PYTHON = {sys.executable!r}\n"
+        f"REPO_ROOT = {str(ROOT)!r}\n"
+        "args = sys.argv[1:]\n"
+        "if args == ['--version']:\n"
+        "    print(f'uv-wrapper ({REAL_PYTHON})')\n"
+        "    sys.exit(0)\n"
+        "if not args or args[0] != 'run':\n"
+        "    sys.exit(98)\n"
+        "rest = args[1:]\n"
+        "while rest and rest[0].startswith('-'):\n"
+        "    opt = rest.pop(0)\n"
+        "    if opt in ('--extra', '--group', '--package', '--python', '-p', '--directory') and rest:\n"
+        "        rest.pop(0)\n"
+        "if not rest:\n"
+        "    sys.exit(97)\n"
+        "if rest[0] == 'pytest':\n"
+        "    print('1 passed in 0.01s')\n"
+        "    sys.exit(0)\n"
+        "cur_pp = os.environ.get('PYTHONPATH', '')\n"
+        "os.environ['PYTHONPATH'] = f'{REPO_ROOT}:{cur_pp}' if cur_pp else REPO_ROOT\n"
+        "if os.environ.get('AIMO_ENV_FILE'):\n"
+        "    for k in ('AIMO_API_KEY', 'VALIO_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'):\n"
+        "        os.environ.setdefault(k, '')\n"
+        "if rest[0] in ('python', 'python3'):\n"
+        "    os.execv(REAL_PYTHON, [REAL_PYTHON, *rest[1:]])\n"
+        "if rest[0] == 'aimo':\n"
+        "    os.execv(REAL_PYTHON, [REAL_PYTHON, '-m', 'aimo.cli', *rest[1:]])\n"
+        "os.execvp(rest[0], rest)\n",
+        encoding="utf-8",
+    )
+    uv_wrapper.chmod(0o755)
+
+    env_file = tmp_path / ".env"
+    shutil.copyfile(ROOT / ".env.example", env_file)
+    dotenv_existed_before = (ROOT / ".env").exists()
+    existing_conf_files = set(ROOT.glob("conformance-*.json"))
+
+    env = _clean_env({
+        "PATH": f"{real_bin}:{os.environ['PATH']}",
+        "PYTHONPATH": str(ROOT),
+        "AIMO_ENV_FILE": str(env_file),
+        "AIMO_DATA_DIR": str(tmp_path / "data"),
+        "AIMO_ACCEPT_LOG_PREFIX": str(tmp_path / "accept-log-"),
+    })
+    res = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "[PASS] scenarios.run_all - 8/8 passed (replay)" in res.stdout
+    assert "[PASS] conformance suite" in res.stdout
+    assert "[PASS] qa_milk_flow.py - MILK FLOW OK (replay)" in res.stdout
+    assert "[PASS] Peppol Order Response - OrderResponseCode AP (UBL 2.3, T116)" in res.stdout
+    assert "[PASS] audit verify - ok=True" in res.stdout
+    assert "[PASS] aimo demo (scripted buyer)" in res.stdout
+    assert "RESULT: PASS" in res.stdout
+    assert set(ROOT.glob("conformance-*.json")) == existing_conf_files
+    assert list(ROOT.glob("conformance-*.json")) == []
+    assert (ROOT / ".env").exists() == dotenv_existed_before
