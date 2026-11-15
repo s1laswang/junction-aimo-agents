@@ -16,6 +16,7 @@ Harness guardrails (independent of what the model decides):
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 import uuid
@@ -29,10 +30,21 @@ from aimo.buyer.tool_schemas import to_gemini_schema
 from aimo.buyer.tools import ToolTransport
 from aimo.models import AgentStep, Need
 
-DRIFT_RATIO = 10.0  # harness hold (likely unit mix-up); moderate drift (>3x) is trust policy -> needs_approval
+DRIFT_RATIO = 10.0
 EXTRA_STEP_KINDS = {"needs_clarification"}
-PLANNER_PREF_KEYS ={"brand", "fat_pct", "organic", "pack", "use"}
-UNTRUSTED_FIELDS =("marketing_text", "ingredients_text", "description", "text")
+PLANNER_PREF_KEYS = {"brand", "fat_pct", "organic", "pack", "use"}
+REPLAN_QUOTE_ERRORS = ("lines_unavailable", "lot_size_mismatch", "fractional_quantity")
+UNTRUSTED_FIELDS = ("marketing_text", "ingredients_text", "description", "text")
+
+
+def _valid_quantity(q: Any) -> bool:
+    if isinstance(q, bool) or not isinstance(q, (int, float)):
+        return False
+    try:
+        qf = float(q)
+    except (OverflowError, TypeError, ValueError):
+        return False
+    return math.isfinite(qf) and qf > 0
 _INJECTION_RE = re.compile(
     r"ignore (all |your |previous |the )*(instructions|limits|rules|policy)|system (note|prompt|message)|"
     r"to (ai|llm) agents?|approval is not required|disregard|you are now|order \d[\d,. ]* (units|pcs)",
@@ -135,11 +147,11 @@ def _extract_quote_patch(candidate: Any, *, prefix: str = "") -> dict[str, Any]:
 def screen_text(text: str) -> dict:
     """Prompt-injection screen. Prefer trust's screen_text when it exists."""
     try:
-        from aimo.trust import screen_text as trust_screen  # type: ignore[attr-defined]
+        from aimo.trust import screen_text as trust_screen
         r = trust_screen(text)
         if isinstance(r, dict) and "suspicious" in r:
             return r
-    except Exception:  # noqa: BLE001  trust not landed yet / failed: local fallback
+    except Exception:
         pass
     hits = [m.group(0) for m in _INJECTION_RE.finditer(text or "")]
     return {"suspicious": bool(hits), "reasons": hits[:3], "screen": "buyer-local"}
@@ -275,28 +287,28 @@ class BuyerAgent:
         self.mock = False
         if generate_fn is None:
             from aimo.buyer.mock_model import MOCK_MODEL_NAME, MockModel, mock_wanted
-            if mock_wanted():  # no Gemini key: scripted replay through the real harness, clearly labelled
+            if mock_wanted():
                 self.mock = True
                 self._generate = MockModel(self)
                 self.use_gemini_parse = False
                 self.model = self.reasoning_model = MOCK_MODEL_NAME
                 self.escalate = False
         self.explain_enabled = explain
-        self.answer_fn = answer_fn          # question dict -> {"option_id"|"text"} or None (no answer)
+        self.answer_fn = answer_fn
         self.clarify_enabled = clarify
-        self.image = image                  # (bytes, mime): photo of a handwritten order / menu / invoice
+        self.image = image
         self.clarifications: list[dict] = []
         self.now = now
         self.audit_base_url = audit_base_url.rstrip("/")
         self.steps: list[AgentStep] = []
         self._seq = 0
-        # harness state
-        self.need: Optional[Need] = None          # first item (compat)
-        self.needs: list[Need] = []               # one per product in the request
-        self.plan: Optional[dict] = None          # merged view over self.plans
-        self.plans: dict[int, dict] = {}          # need index -> Plan
+        self.need: Optional[Need] = None
+        self.needs: list[Need] = []
+        self.plan: Optional[dict] = None
+        self.plans: dict[int, dict] = {}
         self._plan_idx = 0
         self._replan_needed = False
+        self._replan_pending: set[int] = set()
         self.quote: Optional[dict] = None
         self.order: Optional[dict] = None
         self.orders_submitted = 0
@@ -305,18 +317,16 @@ class BuyerAgent:
         self.drift: Optional[dict] = None
         self.tool_failures: dict[str, int] = {}
         self.injections: list[dict] = []
+        self._suspicious_queries: list[str] = []
         self.escalate_next = False
         self.escalated = False
         self.models_used: list[dict] = []
         self.t0 = time.time()
 
-    # ------------------------------------------------------------ plumbing
     def emit(self, kind: str, title: str, **data: Any) -> AgentStep:
         self._seq += 1
         fields = dict(run_id=self.run_id, seq=self._seq, ts=datetime.now(HELSINKI), kind=kind, title=title, data=data)
         if kind in EXTRA_STEP_KINDS:
-            # `needs_clarification` is not (yet) in AgentStep.kind's Literal (models.py, CEO-owned):
-            # build without validation; it serialises like any other step.
             step = AgentStep.model_construct(**fields)
         else:
             step = AgentStep(**fields)
@@ -324,7 +334,7 @@ class BuyerAgent:
         if self.emit_fn:
             try:
                 self.emit_fn(step)
-            except Exception:  # noqa: BLE001  a broken listener must not kill the run
+            except Exception:
                 pass
         return step
 
@@ -345,17 +355,31 @@ class BuyerAgent:
                 return txt
         return ""
 
-    # ------------------------------------------------------------ main entry
     def run(self, text: str) -> dict:
         try:
             return self._run(text)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.emit("error", f"Run failed: {type(e).__name__}", error=str(e)[:500])
             final = (f"The purchasing run stopped because of an error ({type(e).__name__}). "
                      "Nothing further was ordered; a human should take over.")
             self.emit("final", "Run ended with an error", summary=final, status="error",
                       latency_s=round(time.time() - self.t0, 2))
             return self.result(final, status="error")
+
+    def _reject_invalid_quantities(self) -> dict:
+        self.need = None
+        self.needs = []
+        msg = "Requested quantity must be a finite number greater than zero; nothing was ordered."
+        self.emit("error", "Invalid quantity in purchasing request", error=msg)
+        if self.mock:
+            from aimo.buyer.mock_model import MOCK_LABEL
+            summary = f"{MOCK_LABEL} status error; non-positive quantity rejected. {msg}"
+        else:
+            summary = msg
+        self.emit("final", "Run ended with an error", summary=summary, status="error",
+                  latency_s=round(time.time() - self.t0, 2), models_used=self.models_used,
+                  escalated=False, injections=[])
+        return self.result(summary, status="error")
 
     def _run(self, text: str) -> dict:
         now = (self.now or now_helsinki()).astimezone(HELSINKI)
@@ -384,9 +408,12 @@ class BuyerAgent:
                 return self.result(summary, status="no_order")
         t = time.time()
         parse_text = _strip_request_injections(text)
+        parsed = parse_request(parse_text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
+        if not parsed or any(not _valid_quantity(getattr(x, "quantity", None)) for x in parsed):
+            return self._reject_invalid_quantities()
         self.needs = [
             x.model_copy(update={"raw_text": text})
-            for x in parse_request(parse_text, self.profile, now, use_gemini=self.use_gemini_parse, run_id=self.run_id)
+            for x in parsed
         ]
         self.need = n = self.needs[0]
         items = "; ".join(f"{x.quantity:g} {x.unit} {x.product_query}" for x in self.needs)
@@ -395,6 +422,8 @@ class BuyerAgent:
                   latency_s=round(time.time() - t, 2), parsed_by=n.preferences.get("parsed_by"))
         if self.clarify_enabled and not self._clarify(text, now):
             return self._finish_unanswered()
+        if not self.needs or any(not _valid_quantity(getattr(x, "quantity", None)) for x in self.needs):
+            return self._reject_invalid_quantities()
         for x in self.needs:
             ratio = x.preferences.get("standing_order_ratio")
             if ratio and float(ratio) >= DRIFT_RATIO and not self.drift:
@@ -423,7 +452,6 @@ class BuyerAgent:
         final_text = self._loop(system, task)
         return self._finish(final_text)
 
-    # ------------------------------------------------------------ multimodal intake and clarification
     def _read_image(self, text: str, now: datetime) -> str:
         from aimo.buyer.vision import extract_order_from_image
         t = time.time()
@@ -431,7 +459,7 @@ class BuyerAgent:
         try:
             ex = extract_order_from_image(data, mime, self.profile, now, run_id=self.run_id,
                                           generate=lambda **kw: self.generate(**kw), hint=text)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.emit("error", f"Could not read the image ({type(e).__name__})", error=str(e)[:300])
             if not text:
                 raise
@@ -500,7 +528,6 @@ class BuyerAgent:
                   latency_s=round(time.time() - self.t0, 2), question=q)
         return self.result(summary, status="needs_clarification")
 
-    # ------------------------------------------------------------ the tool loop
     def _loop(self, system: str, task: str) -> str:
         from google.genai import types
         decls = []
@@ -519,13 +546,13 @@ class BuyerAgent:
                 system_instruction=system, tools=tools,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 thinking_config=types.ThinkingConfig(thinking_level=level), max_output_tokens=8192,
-                http_options=types.HttpOptions(timeout=90_000))  # ms; a hung call is retried by aimo.gemini
+                http_options=types.HttpOptions(timeout=90_000))
             t = time.time()
             try:
                 r = self.generate("buyer.agent_step", model, contents, cfg,
                                   meta={"thinking_level": level, "step": step, "escalated": model != self.model})
-            except Exception as e:  # noqa: BLE001
-                if model != self.model:  # escalation failed: fall back to the default model
+            except Exception as e:
+                if model != self.model:
                     self.emit("error", f"Escalation model {model} failed ({type(e).__name__}); falling back",
                               error=str(e)[:300])
                     self.escalate_next = False
@@ -557,7 +584,7 @@ class BuyerAgent:
                     raise RuntimeError("model returned empty replies three times")
                 contents.append(types.Content(role="user", parts=[types.Part(text=prompts.NUDGE)]))
                 continue
-            contents.append(content)  # verbatim: keeps thought signatures for the next turn
+            contents.append(content)
             texts = [p.text for p in parts if getattr(p, "text", None) and not getattr(p, "thought", False)]
             calls = [p.function_call for p in parts if getattr(p, "function_call", None)]
             if texts and calls:
@@ -573,20 +600,25 @@ class BuyerAgent:
             for fc in calls:
                 args = dict(fc.args or {})
                 result = self._tool(fc.name, args, model=model, thinking=level, latency_s=dt)
-                result = compact_for_model(fc.name, result)  # full result already went to the step stream
+                result = compact_for_model(fc.name, result)
                 payload = result if isinstance(result, dict) else {"result": result}
                 responses.append(types.Part(function_response=types.FunctionResponse(
                     id=getattr(fc, "id", None), name=fc.name, response=payload)))
             contents.append(types.Content(role="user", parts=responses))
             if self.done:
-                # The order reached a final state (or was held). buyer.summary writes the buyer-facing
-                # text from the facts, so one more agent turn (~9k input tokens) would add nothing.
                 break
         else:
             self.emit("error", f"Max steps ({self.max_steps}) reached", max_steps=self.max_steps)
         return final_text
 
-    # ------------------------------------------------------------ tool execution with guardrails
+    def _mark_replan_needed(self) -> None:
+        active = [
+            i for i, x in enumerate(self.needs)
+            if not (x.preferences or {}).get("cancelled_by_clarification")
+        ]
+        self._replan_pending = set(active) if active else (set(self.plans) or {0})
+        self._replan_needed = bool(self._replan_pending)
+
     def _tool(self, name: str, args: dict, **meta: Any) -> Any:
         args = self._guard_args(name, args)
         if isinstance(args, dict) and args.get("__blocked__"):
@@ -603,19 +635,19 @@ class BuyerAgent:
         self.emit("tool_call", f"{name}({_short(args, 120)})", name=name, args=args, **meta)
         t = time.time()
         result, err = None, None
-        for attempt in range(2):  # retry once
+        for attempt in range(2):
             try:
                 result = self.t.call(name, args)
                 err = None
                 break
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 err = e
                 self.tool_failures[name] = self.tool_failures.get(name, 0) + 1
                 status = getattr(e, "status", None)
-                if isinstance(status, int) and status < 500:  # a business error, not infrastructure
+                if isinstance(status, int) and status < 500:
                     body = e.to_dict() if hasattr(e, "to_dict") else {"error": str(e)[:300]}
-                    if name == "create_quote" and body.get("error") in ("lines_unavailable", "lot_size_mismatch", "fractional_quantity"):
-                        self._replan_needed = True
+                    if name == "create_quote" and body.get("error") in REPLAN_QUOTE_ERRORS:
+                        self._mark_replan_needed()
                     self.emit("tool_result", f"{name}: refused ({body.get('error')})", name=name, result=body)
                     return body
                 if attempt == 0:
@@ -650,9 +682,17 @@ class BuyerAgent:
                 return {"__blocked__": "Call create_quote first: an order requires a signed quote from this run."}
             return {"quote_id": self.quote["quote_id"], "quote_hash": self.quote["quote_hash"]}
         if name == "plan_need":
+            active_items = [
+                x for x in (self.needs or [n])
+                if not (x.preferences or {}).get("cancelled_by_clarification")
+            ] or (self.needs or [n])
+            if any(not _valid_quantity(getattr(x, "quantity", None)) for x in active_items):
+                return {"__blocked__": "Requested quantity must be a finite number greater than zero."}
             given = args.get("need") if isinstance(args.get("need"), dict) else {}
             self._plan_idx = idx = self._match_need(given)
             base_need = self.needs[idx] if self.needs else n
+            if not _valid_quantity(getattr(base_need, "quantity", None)):
+                return {"__blocked__": "Requested quantity must be a finite number greater than zero."}
             locked = base_need.model_dump(mode="json")
             locked["customer_id"] = self.customer_id
             locked["excluded_allergens"] = list(dict.fromkeys([
@@ -665,8 +705,11 @@ class BuyerAgent:
                 locked["raw_text"] = raw_pq
             locked["product_query"] = clean_locked_pq
             given_pq = given.get("product_query").strip() if isinstance(given.get("product_query"), str) else ""
-            has_inj = bool(self.injections or self._request_injection_flags() or _screen_fast(given_pq).get("suspicious"))
-            if given_pq and not _screen_fast(given_pq).get("suspicious"):
+            given_pq_susp = bool(given_pq and _screen_fast(given_pq).get("suspicious"))
+            if given_pq_susp and given_pq not in self._suspicious_queries:
+                self._suspicious_queries.append(given_pq)
+            has_inj = bool(self.injections or self._request_injection_flags() or given_pq_susp)
+            if given_pq and not given_pq_susp:
                 if not has_inj:
                     chosen_pq = given_pq
                 else:
@@ -675,6 +718,9 @@ class BuyerAgent:
                     chosen_pq = given_pq if (base_tokens and (base_tokens & given_tokens)) else clean_locked_pq
             else:
                 chosen_pq = clean_locked_pq
+            base_raw = str(locked.get("raw_text") or "")
+            if self._suspicious_queries and not _screen_fast(base_raw).get("suspicious"):
+                locked["raw_text"] = f"{base_raw} [{self._suspicious_queries[0]}]".strip()
             given_prefs = given.get("preferences") if isinstance(given.get("preferences"), dict) else {}
             prefs_src = (locked.get("preferences") or {}) if has_inj else {**(locked.get("preferences") or {}), **given_prefs}
             merged = {
@@ -684,6 +730,12 @@ class BuyerAgent:
             }
             return {"need": merged}
         if name == "create_quote":
+            active_items = [
+                x for x in (self.needs or [n])
+                if not (x.preferences or {}).get("cancelled_by_clarification")
+            ] or (self.needs or [n])
+            if any(not _valid_quantity(getattr(x, "quantity", None)) for x in active_items):
+                return {"__blocked__": "Requested quantity must be a finite number greater than zero."}
             args = dict(args) if isinstance(args, dict) else {}
             quote_need = dict(self._quote_need())
             quote_need["customer_id"] = self.customer_id
@@ -692,6 +744,9 @@ class BuyerAgent:
                 *(self.profile.get("excluded_allergens") or []),
             ]))
             given_need = args.get("need") if isinstance(args.get("need"), dict) else {}
+            given_q_pq = given_need.get("product_query").strip() if isinstance(given_need.get("product_query"), str) else ""
+            if given_q_pq and _screen_fast(given_q_pq).get("suspicious") and given_q_pq not in self._suspicious_queries:
+                self._suspicious_queries.append(given_q_pq)
             locked_keys = (
                 "customer_id",
                 "product_query",
@@ -704,6 +759,9 @@ class BuyerAgent:
                 "raw_text",
             )
             merged_need = {**given_need, **{k: quote_need[k] for k in locked_keys if k in quote_need}}
+            base_q_raw = str(merged_need.get("raw_text") or "")
+            if self._suspicious_queries and not _screen_fast(base_q_raw).get("suspicious"):
+                merged_need["raw_text"] = f"{base_q_raw} [{self._suspicious_queries[0]}]".strip()
             prefs = dict(quote_need.get("preferences") or {})
             inj_flags = list(dict.fromkeys([*self._injection_flags(), *self._request_injection_flags()]))
             if inj_flags:
@@ -724,14 +782,26 @@ class BuyerAgent:
         and logged as a thought, so the Plan and the Quote/Approval views always agree."""
         if not self.plans:
             return {"__blocked__": "Call plan_need first: quote lines must come from the planner."}
-        if getattr(self, "_replan_needed", False):
-            return {"__blocked__": "Call plan_need again before re-quoting: the previous plan's lines were refused by the gateway."}
-        unplanned = [x.product_query for i, x in enumerate(self.needs) if i not in self.plans]
+        if getattr(self, "_replan_needed", False) or getattr(self, "_replan_pending", None):
+            rem = [
+                self.needs[i].product_query
+                for i in sorted(getattr(self, "_replan_pending", set()))
+                if 0 <= i < len(self.needs)
+            ]
+            suffix = f" (remaining items to re-plan: {rem})" if len(self.needs) > 1 and rem else ""
+            return {"__blocked__": f"Call plan_need again before re-quoting: the previous plan's lines were refused by the gateway{suffix}."}
+        unplanned = [
+            x.product_query
+            for i, x in enumerate(self.needs)
+            if i not in self.plans and not (x.preferences or {}).get("cancelled_by_clarification")
+        ]
         if unplanned:
             return {"__blocked__": f"Call plan_need for every item first (not planned yet: {unplanned})."}
         plan_lines: list[dict] = []
         by_pid: dict[str, dict] = {}
         for i in sorted(self.plans):
+            if 0 <= i < len(self.needs) and (self.needs[i].preferences or {}).get("cancelled_by_clarification"):
+                continue
             for l in (self.plans[i] or {}).get("lines", []):
                 pid = str(l["product_id"])
                 if pid in by_pid:
@@ -774,19 +844,28 @@ class BuyerAgent:
         """Which parsed item a plan_need call is about: by product_query, else the next unplanned one."""
         if len(self.needs) <= 1:
             return 0
+        pending = getattr(self, "_replan_pending", set())
+        active = [
+            i for i, x in enumerate(self.needs)
+            if not (x.preferences or {}).get("cancelled_by_clarification")
+        ] or list(range(len(self.needs)))
+        unplanned = [i for i in active if i not in self.plans or i in pending]
         q = str(given.get("product_query") or "").lower().strip()
-        for i, x in enumerate(self.needs):
-            if i not in self.plans and q and q == x.product_query.lower():
+        for i in unplanned:
+            if q and q == self.needs[i].product_query.lower():
+                return i
+        for i in active:
+            if q and q == self.needs[i].product_query.lower():
                 return i
         for i, x in enumerate(self.needs):
             if q and q == x.product_query.lower():
                 return i
         qw = set(re.findall(r"\w+", q))
-        pool = [i for i in range(len(self.needs)) if i not in self.plans] or list(range(len(self.needs)))
+        pool = unplanned or active
         best = max(pool, key=lambda i: len(qw & set(re.findall(r"\w+", self.needs[i].product_query.lower()))))
         if qw & set(re.findall(r"\w+", self.needs[best].product_query.lower())):
             return best
-        return next((i for i in range(len(self.needs)) if i not in self.plans), 0)
+        return unplanned[0] if unplanned else active[0]
 
     def _quote_need(self) -> dict:
         """The need attached to the quote. Several items -> one combined need: hard constraints are
@@ -881,7 +960,8 @@ class BuyerAgent:
         if not isinstance(result, dict):
             return result
         if name == "plan_need" and "lines" in result:
-            self._replan_needed = False
+            self._replan_pending.discard(self._plan_idx)
+            self._replan_needed = bool(self._replan_pending)
             self.plans[self._plan_idx] = result
             self.plan = self._merge_plans()
             rationale = self._explain(result) if self.explain_enabled else ""
@@ -899,8 +979,8 @@ class BuyerAgent:
                           model=self.reasoning_model, thinking=self.reasoning_thinking)
             if rationale:
                 result = {**result, "explanation": result.get("explanation") or rationale}
-        elif name == "create_quote" and result.get("error") in ("lines_unavailable", "lot_size_mismatch", "fractional_quantity"):
-            self._replan_needed = True
+        elif name == "create_quote" and result.get("error") in REPLAN_QUOTE_ERRORS:
+            self._mark_replan_needed()
         elif name == "create_quote" and "quote_id" in result:
             self.quote = result
             self.emit("quote", f"Quote {result['quote_id']}: EUR {result.get('total_net', 0):.2f}, "
@@ -923,7 +1003,7 @@ class BuyerAgent:
                 self.emit("order", f"Order {result['order_id']} rejected by policy", order=result)
             else:
                 self.emit("order", f"Order {result['order_id']}: {result.get('status')}", order=result)
-            self.done = True  # one order per request: nothing left for the model to do
+            self.done = True
         return result
 
     def _sync_quote_from_order(self, cur: Any, *, handoff: bool = False) -> bool:
@@ -1038,10 +1118,15 @@ class BuyerAgent:
         while time.time() < deadline:
             time.sleep(self.poll_s)
             try:
-                cur = self.t.call("get_order_status", {"order_id": oid})
+                polled = self.t.call("get_order_status", {"order_id": oid})
             except Exception as e:
                 self.emit("error", f"get_order_status failed ({type(e).__name__}); still waiting", error=str(e)[:200])
                 continue
+            if not isinstance(polled, dict):
+                self.emit("error", f"get_order_status returned {type(polled).__name__}; still waiting",
+                          order_id=oid, error=f"expected dict, got {type(polled).__name__}")
+                continue
+            cur = polled
             if isinstance(cur, dict) and cur.get("status") == "approved":
                 if self._sync_quote_from_order(cur, handoff=False):
                     qid_cur = (self.quote or {}).get("quote_id")
@@ -1111,13 +1196,13 @@ class BuyerAgent:
             self.emit("error", f"No human decision within {self.approval_timeout_s:.0f}s", order_id=oid)
             return timed_out
         self._finalize_replacement_quote_sync(cur, initial_qid, full_synced_qids, audit_tried_qids, oid)
-        if isinstance(cur, dict):
-            self.order = cur
+        if not isinstance(cur, dict):
+            cur = {**(order if isinstance(order, dict) else {}), "order_id": oid, "status": "pending_approval"}
+        self.order = cur
         who = cur.get("approved_by") or "the approver"
         self.emit("order", f"Order {oid} {cur.get('status')} (human decision by {who})", order=cur)
         return cur
 
-    # ------------------------------------------------------------ explanations and summary
     def _explain(self, plan: dict) -> str:
         facts = {
             "need": {k: (plan.get("need") or (self.need.model_dump(mode="json") if self.need else {})).get(k)
@@ -1133,7 +1218,7 @@ class BuyerAgent:
         try:
             return self._text_call("buyer.explain", prompts.EXPLAIN.format(
                 plan_json=json.dumps(facts, ensure_ascii=False, default=str)))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"(explanation unavailable: {type(e).__name__})"
 
     def _audit_link(self) -> str:
@@ -1166,7 +1251,7 @@ class BuyerAgent:
         try:
             summary = self._text_call("buyer.summary", prompts.SUMMARY.format(
                 facts_json=json.dumps(facts, ensure_ascii=False, default=str)))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             summary = ""
             self.emit("error", f"Summary generation failed ({type(e).__name__})")
         summary = summary or agent_text or f"Run finished with status {status}. Audit: {facts['audit_report_link']}"
@@ -1183,7 +1268,6 @@ class BuyerAgent:
                 "latency_s": round(time.time() - self.t0, 2), "models_used": self.models_used, "clarifications": self.clarifications,
                 "steps": [s.model_dump(mode="json") for s in self.steps]}
 
-    # ------------------------------------------------------------ formatting helpers
     @staticmethod
     def _result_title(name: str, r: Any) -> str:
         if isinstance(r, list):
