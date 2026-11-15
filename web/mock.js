@@ -94,10 +94,116 @@ function hotelNeed(text) {
 }
 
 const cleanScreen = () => ({ suspicious: false, reasons: [], layers: ["regex"] });
+const REQUEST_WARN_PREFIX = "Warning: the request contains instructions aimed at AI agents";
+const APPROVAL_WORD_RX = "(?:approv\\w*|sign[- ]?off|signed off|human review|review step|verification|human check|checks?|guardrails?)";
+const STRONG_SCREEN_RULES = [
+  [
+    "ignore_instructions",
+    /\b(?:ignore|disregard|forget|override|bypass|skip)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|all|any|your|the|these|my)\b[^.\n]{0,30}\b(?:instructions?|rules?|limits?|guardrails?|polic(?:y|ies)|checks?|restrictions?|budget)\b|\bignore your\b|\bdisregard (?:the|your|all)\b|\b(?:ignore|bypass|skip|disable|remove|lift)\s+(?:the\s+|your\s+|all\s+|any\s+)?(?:spending\s+|spend\s+|order\s+|approval\s+|budget\s+)?(?:limits?|caps?|thresholds?|guardrails?|restrictions?)\b|\ballerg\w*[^.\n]{0,40}\b(?:do(?:es)?n'?t|do(?:es)? not|no longer|never) (?:apply|matter|count)|\b(?:unohda|ohita|sivuuta|älä välitä)\b[^.\n]{0,40}\b(?:ohje\w*|sään\w*|raj\w*|hyväksyn\w*|tarkist\w*|budje\w*)|\b(?:ignorera|glöm|bortse från|strunta i)\b[^.\n]{0,40}\b(?:instruktion\w*|regl\w*|gräns\w*|godkänn\w*|granskning\w*)/i,
+  ],
+  [
+    "system_prompt_override",
+    /\b(?:ignore|disregard|forget|override|bypass|skip)\b[^.\n]{0,40}\b(?:system|developer|hidden|previous|prior|your|the|all)?\s*prompts?\b|\b(?:system|developer|admin)\s+(?:override|notice|message|instruction|mode)\b|\b(?:developer|admin|god|debug|maintenance)\s+mode\b|\[\s*(?:system|developer|assistant instruction|admin)\b[^\]]{0,40}\]|<\s*\/?\s*(?:system|developer|instructions?)\s*>|\b(?:system|developer|hidden)\s*(?:prompt|message|instructions?)\b|\bpolicy engine\b[^.\n]{0,30}\b(?:disabled|offline|off|down|bypassed|suspended)\b|\b(?:reveal|disclose|print|output|repeat|send|share|leak)\b[^.\n]{0,40}\b(?:mandate|approval limits?|spending limits?|system prompt|instructions|api[_ ]?keys?|passwords?|credentials|policy)\b/i,
+  ],
+  [
+    "bypass_approval",
+    new RegExp(
+      "\\b(?:skip|bypass|avoid|waive[ds]?|disable[ds]?|remove|without)\\b[^.\\n]{0,30}\\b" + APPROVAL_WORD_RX +
+      "|" + APPROVAL_WORD_RX + "[^.\\n]{0,40}\\b(?:has been |is |was )?(?:waived|skipped|not (?:needed|required|necessary)|disabled|unnecessary|optional)\\b" +
+      "|\\bno (?:need|reason) (?:for|to)\\b[^.\\n]{0,30}\\b(?:approv\\w*|human|review|ask|check)" +
+      "|\\b(?:nobody|no one|no human) (?:has|needs|will have) to (?:approve|review|check|see)" +
+      "|\\bapproval[_ ]required\\s*[=:]\\s*(?:false|0|no)|\\bpolicy\\s*[=:]\\s*(?:none|off|false)|\\brequires?_approval\\s*[=:]\\s*false" +
+      "|\\bauto[- ]?approv\\w*|\\bapprove (?:it|this|everything|all|the order) (?:automatically|directly|now|immediately)" +
+      "|\\b(?:pre[- ]?approved|pre[- ]?authori[sz]ed|pre[- ]?cleared|already (?:been )?(?:approved|authori[sz]ed|signed off|cleared|verified))\\b" +
+      "|\\b(?:has|have) (?:already )?signed off\\b|\\bauthori[sz]ed by (?:the|our|your) (?:cfo|ceo|cto|coo|director|manager|board|owner|boss)" +
+      "|\\bmark (?:it|this|the order|the quote|them) as (?:verified|approved|pre-?approved|safe|allergen[- ]?safe)" +
+      "|\\b(?:keep|stay)\\w* (?:just )?(?:under|below) the (?:approval |auto[- ]?approve |spending )?(?:limit|threshold)" +
+      "|\\b(?:do it|act|proceed) (?:silently|quietly|secretly)\\b|\\bwithout telling\\b" +
+      "|\\b(?:jo|valmiiksi|etukäteen) hyväksy\\w*|\\bhyväksyn\\w* (?:on )?(?:jo )?(?:annettu|saatu)|\\bhyväksyntää ei (?:tarvita|tarvitse)|\\bälä lähetä\\b[^.\\n]{0,30}hyväksy\\w*|\\bei tarvitse hyväksy\\w*" +
+      "|\\b(?:redan|förhands)\\s?godkän\\w*|\\bhoppa över\\b[^.\\n]{0,30}\\b(?:godkänn\\w*|granskning\\w*|kontroll\\w*)|\\bingen\\b[^.\\n]{0,30}\\b(?:godkänn\\w*|granskning)[^.\\n]{0,20}\\b(?:behövs|krävs)",
+      "i"
+    ),
+  ],
+  [
+    "ai_agent_addressing",
+    /\b(?:note\s+(?:to|for)|message\s+(?:to|for)|attention|dear|p\.?s\.?\s+to|if\s+you\s+are\s+an?)\b[^.\n]{0,20}\b(?:ai|a\.i\.|llm|gpt|gemini|claude|assistant|agent|bot|model|automated|automatic|ordering|purchasing|buying|buyer)\b|\b(?:ai|a\.i\.|llm|gpt|gemini|claude)\s+(?:agents?|assistants?|bots?|buyers?|models?|systems?|purchasers?)\b|\b(?:purchasing|ordering|buying|automated)\s+(?:agents?|assistants?|bots?)\s*[:,]|\b(?:tekoäly\w*|ostobot\w*|ai-(?:inköpare|assistent\w*|agent\w*)|automatiska köpare)\b/i,
+  ],
+  [
+    "role_hijack",
+    /["']role["']\s*:\s*["'](?:system|developer|assistant|tool)["']|\byou are now\b|\bact as (?:an? |the )?(?:admin|administrator|developer|system|root)\b|\bnew instructions?\b|\bjailbreak\b|\bdan mode\b|(?:^|\n)\s*(?:assistant|system|developer)\s*:|\b(?:place_order|create_quote)\b|"?(?:function_call|tool_call|tool_use)"?\s*:|\b(?:output|reply|respond|answer|say|print)(?: only| just)?(?: with)? ["']?(?:approved|yes|ok)["']?\b(?! by)/im,
+  ],
+];
+
+export function screenText(text) {
+  const norm = String(text || "")
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "")
+    .replace(/[ \t]+/g, " ");
+  const reasons = [];
+  for (const [reason, rx] of STRONG_SCREEN_RULES) {
+    if (rx.test(norm) && !reasons.includes(reason)) reasons.push(reason);
+  }
+  return { suspicious: reasons.length > 0, reasons, layers: ["regex"] };
+}
+
+function screenNeed(need) {
+  if (!need || typeof need !== "object") return cleanScreen();
+  const combined = (need.raw_text || "") + "\n" + (need.product_query || "");
+  return screenText(combined);
+}
+
+function applyRequestScreenToPlan(plan) {
+  if (!plan || typeof plan !== "object") return plan;
+  plan.lines = (plan.lines || []).map((l) => ({ ...l, injection_screen: l.injection_screen || cleanScreen() }));
+  plan.candidates = (plan.candidates || []).map((c) => ({ ...c, injection_screen: c.injection_screen || cleanScreen() }));
+  const reqScreen = screenNeed(plan.need);
+  if (reqScreen.suspicious) {
+    const prefix = "Warning: the request contains instructions aimed at AI agents (" + reqScreen.reasons.join(", ") + "). They were ignored, and the customer's policy will ask a human to confirm. ";
+    const cur = String(plan.explanation || "");
+    if (!cur.startsWith(REQUEST_WARN_PREFIX)) {
+      plan.explanation = prefix + cur;
+    }
+  }
+  return plan;
+}
+
+function defaultApproverRole(customerId) {
+  return CUSTOMERS.find((c) => c.customer_id === customerId)?.approvers?.[0]?.role || "approver";
+}
+
+function applyRequestScreenToDecision(quote, decision) {
+  const base = decision ? structuredClone(decision) : {
+    outcome: "auto_approve",
+    approver_role: null,
+    policy_id: quote?.customer_id || "hotel-aurora",
+    policy_version: "2026-11-14.1",
+    hits: [],
+  };
+  const reqScreen = screenNeed(quote?.need);
+  const prefFlags = Array.isArray(quote?.need?.preferences?.injection_flags) ? quote.need.preferences.injection_flags.map(String).filter(Boolean) : [];
+  if (reqScreen.suspicious || prefFlags.length > 0) {
+    const reasons = reqScreen.suspicious ? reqScreen.reasons : prefFlags;
+    const role = base.approver_role || defaultApproverRole(quote?.customer_id);
+    const roleText = role.replace(/_/g, " ");
+    base.hits = (base.hits || []).filter((h) => h.rule_id !== "injection:request");
+    base.hits.unshift({
+      rule_id: "injection:request",
+      outcome: "needs_approval",
+      message: `The buyer request itself contains instructions aimed at AI agents (${reasons.join(", ")}). The agent must not follow them; a ${roleText} should confirm the order was not influenced.`,
+    });
+    if (base.outcome !== "reject") {
+      base.outcome = "needs_approval";
+      base.approver_role = role;
+    }
+  }
+  return base;
+}
 
 function hotelPlan(need) {
   const P = hotelProducts();
   const O = hotelOffers();
+  const qty = Math.max(1, Math.ceil(Number(need?.quantity ?? 1000)));
+  const lineTotal = Math.round(qty * 1.01 * 100) / 100;
   const candidates = [
     {
       product: P["464306"], offer: O["464306"], tier: "best", rank_score: 0.94,
@@ -137,15 +243,15 @@ function hotelPlan(need) {
     },
   ];
   const lines = [{
-    product_id: "464306", product_name: P["464306"].name, tier: "best", qty_sales_units: 1000, sales_unit: "ST",
-    covered_amount: 1000, unit_price: 1.01, line_total: 1010.0,
+    product_id: "464306", product_name: P["464306"].name, tier: "best", qty_sales_units: qty, sales_unit: "ST",
+    covered_amount: qty, unit_price: 1.01, line_total: lineTotal,
     reasons: candidates[0].reasons.slice(0, 2), flags: ["pack_substitution"],
     injection_screen: cleanScreen(),
   }];
-  return {
-    need, lines, candidates, covered_amount: 1000, shortfall: 0, total_net: 1010.0,
+  return applyRequestScreenToPlan({
+    need, lines, candidates, covered_amount: qty, shortfall: 0, total_net: lineTotal,
     explanation: "Your usual 10 L Novobox (463038) missed its order cut-off (Thu 12 Nov 15:00), so it cannot arrive by Monday. The best substitute is the same Valio Eila semi-skimmed lactose-free milk in 1 L cartons, in stock at €1.01/L, covering all 1,000 L in one line. Arla 1 L (€2.48/L) has only 384 units and would cost €952 more for the same volume.",
-  };
+  });
 }
 
 function hotelDecision() {
@@ -164,14 +270,17 @@ function hotelDecision() {
 
 // ------------------------------------------------------------------ school fixtures (ILLUSTRATIVE prices/stock)
 const TUE = "2026-11-18";
-function schoolScenario(text) {
+function schoolScenario(text, needOverrides) {
   const base = { category: "oat drinks", content_unit: "L", content_amount: 1, sales_unit: "ST", co2_kg_per_kg: null, delivery_reliability: null, claims: [] };
   const f = NOW_ISO();
   const off = (id, price, amt) => ({ product_id: id, requested_date: TUE, available: true, available_amount: amt, logistic_model: "Stock", closing_time: "2026-11-17T12:00:00Z", sales_unit: "ST", unit_price: price, comparison_price: price, comparison_unit: "L", currency: "EUR", fetched_at: f, issues: [] });
   const need = {
     raw_text: text, customer_id: "school-tampere", product_query: "oat drink (milk-free)", required_claims: [],
     excluded_allergens: ["milk", "nuts"], quantity: 120, unit: "L", delivery_by: TUE, preferred_product_ids: [], preferences: { use: "school lunch drink" },
+    ...(needOverrides || {}),
   };
+  const qty = Math.max(1, Math.ceil(Number(need.quantity ?? 120)));
+  const lineTotal = Math.round(qty * 1.65 * 100) / 100;
   const P = {
     "468465": { ...base, id: "468465", name: "Oddlygood® oat drink 1l UHT gluten free", brand: "Oddlygood" },
     "472833": { ...base, id: "472833", name: "Fazer Aito Oat Drink 1L UHT", brand: "Fazer Aito" },
@@ -188,8 +297,8 @@ function schoolScenario(text) {
     { product: P["471424"], offer: off("471424", 2.1, 120), tier: "rejected", rank_score: 0, reasons: ["Contains nuts (hazelnut)"], flags: ["allergen_contains"], injection_screen: cleanScreen() },
     { product: P["470863"], offer: off("470863", 1.59, 800), tier: "rejected", rank_score: 0, reasons: ["Allergen data missing for nuts: treated as unknown, never safe"], flags: ["allergen_unknown"], injection_screen: cleanScreen() },
   ];
-  const lines = [{ product_id: "468465", product_name: P["468465"].name, tier: "best", qty_sales_units: 120, sales_unit: "ST", covered_amount: 120, unit_price: 1.65, line_total: 198, reasons: candidates[0].reasons.slice(0, 1), flags: [], injection_screen: cleanScreen() }];
-  const plan = { need, lines, candidates, covered_amount: 120, shortfall: 0, total_net: 198, explanation: "Three oat drinks are milk- and nut-safe by structured data. The cheapest safe option covers all 120 L. One lactose-free milk was dropped because it contains milk, one barista drink because it contains hazelnut, and one oat drink because its nut data is missing." };
+  const lines = [{ product_id: "468465", product_name: P["468465"].name, tier: "best", qty_sales_units: qty, sales_unit: "ST", covered_amount: qty, unit_price: 1.65, line_total: lineTotal, reasons: candidates[0].reasons.slice(0, 1), flags: [], injection_screen: cleanScreen() }];
+  const plan = applyRequestScreenToPlan({ need, lines, candidates, covered_amount: qty, shortfall: 0, total_net: lineTotal, explanation: "Three oat drinks are milk- and nut-safe by structured data. The cheapest safe option covers all 120 L. One lactose-free milk was dropped because it contains milk, one barista drink because it contains hazelnut, and one oat drink because its nut data is missing." });
   const decision = {
     outcome: "auto_approve", approver_role: null, policy_id: "school-tampere", policy_version: "2026-11-14.1",
     hits: [
@@ -208,7 +317,7 @@ function schoolScenario(text) {
 // 465773 says "Gluten-Free" in its name but its structured allergen data says CONTAINS gluten; 472147 MAY CONTAIN;
 // 460395 (fresh dill) has no allergen data at all. Prices, stock and the 473328 stock-out are ILLUSTRATIVE.
 const WED = "2026-11-18";
-function hospitalScenario(text) {
+function hospitalScenario(text, needOverrides) {
   const f = NOW_ISO();
   const off = (id, unit, price, amt, perKg, x = {}) => ({ product_id: id, requested_date: WED, available: amt !== 0, available_amount: amt, logistic_model: "Stock", closing_time: "2026-11-17T10:00:00Z", sales_unit: unit, unit_price: price, comparison_price: perKg, comparison_unit: "KG", currency: "EUR", fetched_at: f, issues: [], ...x });
   const P = {
@@ -224,6 +333,7 @@ function hospitalScenario(text) {
     raw_text: text, customer_id: "hospital-meilahti", product_query: "gluten-free sliced bread", required_claims: ["FREE_FROM_GLUTEN"],
     excluded_allergens: ["gluten"], quantity: 40, unit: "KG", delivery_by: WED, preferred_product_ids: ["473328"],
     preferences: { extra_item: "2 kg fresh dill", diet: "coeliac wards" },
+    ...(needOverrides || {}),
   };
   const candidates = [
     { product: P["461765"], offer: off("461765", "KI", 38.4, 25, 8.0), tier: "best", rank_score: 0.88, reasons: ["Gluten: structured FREE_FROM data", "Sliced dark bread like the usual Schär loaf; frozen 8 × 600 g case", "Covers all 40 kg with 9 cases (43.2 kg)"], flags: ["outside_preference"], injection_screen: cleanScreen() },
@@ -237,10 +347,10 @@ function hospitalScenario(text) {
     { product_id: "461765", product_name: P["461765"].name, tier: "best", qty_sales_units: 9, sales_unit: "KI", covered_amount: 43.2, unit_price: 38.4, line_total: 345.6, reasons: candidates[0].reasons.slice(0, 2), flags: ["outside_preference"], injection_screen: cleanScreen() },
     { product_id: "460395", product_name: P["460395"].name, tier: "best", qty_sales_units: 20, sales_unit: "ST", covered_amount: 0, unit_price: 1.95, line_total: 39.0, reasons: ["Second item in the request: 2 kg fresh dill", "No allergen data: gluten status unknown"], flags: ["allergen_unknown"], injection_screen: cleanScreen() },
   ];
-  const plan = {
+  const plan = applyRequestScreenToPlan({
     need, lines, candidates, covered_amount: 43.2, shortfall: 0, total_net: 384.6,
     explanation: "The usual Schär sliced bread is out of stock for Wednesday. Moilas gluten-free dark bread (frozen, 8 × 600 g) is gluten-free by structured data and covers 40 kg with 9 cases. Two products that call themselves gluten-free were dropped: Fazer Seed bread's allergen data says it contains gluten, and Reissumies may contain gluten. The fresh dill has no allergen data, so it is marked unknown, never safe.",
-  };
+  });
   const decision = {
     outcome: "needs_approval", approver_role: "dietitian", policy_id: "hospital-meilahti", policy_version: "1.0.0",
     hits: [
@@ -356,13 +466,92 @@ export async function createMockApi() {
   const orders = new Map(); // order_id -> {order, quote, decision, run}
   const runs = new Map();   // run_id -> {emit, customer_id, ...}
 
-  async function makeQuote(customer_id, plan) {
+  function resolveCustomer(bodyCid, hdrCid, requireKnown = true) {
+    const h = String(hdrCid || "").trim();
+    const b = String(bodyCid || "").trim();
+    if (h && b && h !== b) throw Object.assign(new Error("403 X-Customer-Id disagrees with body customer_id"), { status: 403, code: "customer_mismatch" });
+    const cid = h || b;
+    if (requireKnown && !cid) throw Object.assign(new Error("401 identity_required"), { status: 401, code: "identity_required" });
+    if (cid && !CUSTOMERS.some((c) => c.customer_id === cid)) throw Object.assign(new Error(`403 unknown customer ${cid}`), { status: 403, code: "unknown_customer" });
+    return cid;
+  }
+
+  function mockCatalogMap() {
+    const map = { ...hotelProducts(), ...schoolScenario("").P, ...hospitalScenario("").P };
+    for (const row of SALMON) {
+      if (row[4]) {
+        const [pid, name, sales_unit, content_amount, unit_price] = row[4];
+        if (!map[pid]) map[pid] = { id: pid, name, sales_unit, content_amount, unit_price };
+        else if (map[pid].unit_price == null) map[pid] = { ...map[pid], unit_price };
+      }
+    }
+    map["464306"] = { ...map["464306"], unit_price: 1.01 };
+    map["469363"] = { ...map["469363"], unit_price: 2.48 };
+    map["462775"] = { ...map["462775"], unit_price: 1.79 };
+    map["468465"] = { ...map["468465"], unit_price: 1.65 };
+    map["472833"] = { ...map["472833"], unit_price: 1.79 };
+    map["472598"] = { ...map["472598"], unit_price: 1.95 };
+    map["461765"] = { ...map["461765"], unit_price: 38.4 };
+    map["460395"] = { ...map["460395"], unit_price: 1.95 };
+    return map;
+  }
+
+  function spendPolicyFor(customerId) {
+    if (customerId === "school-tampere") return { auto_max: 300, approval_max: 3000, role: "kitchen_manager" };
+    if (customerId === "hospital-meilahti") return { auto_max: 1000, approval_max: 8000, role: "dietitian" };
+    return { auto_max: 500, approval_max: 5000, role: "procurement_manager" };
+  }
+
+  function evaluateMockQuote(quote) {
+    const cid = quote.customer_id;
+    const { auto_max, approval_max, role } = spendPolicyFor(cid);
+    const total = Number(quote.total_net || 0);
+    const hits = [];
+    let outcome = "auto_approve";
+    if (total <= auto_max) {
+      hits.push({ rule_id: "spend", outcome: "allow", message: `Order total €${total.toFixed(2)} is within the €${auto_max.toFixed(2)} auto-approve limit.` });
+    } else if (total <= approval_max) {
+      outcome = "needs_approval";
+      hits.push({ rule_id: "spend", outcome: "needs_approval", message: `Order total €${total.toFixed(2)} is above the €${auto_max.toFixed(2)} auto-approve limit, so a ${role.replace(/_/g, " ")} must approve it.` });
+    } else {
+      outcome = "reject";
+      hits.push({ rule_id: "spend", outcome: "reject", message: `Order total €${total.toFixed(2)} exceeds the €${approval_max.toFixed(2)} maximum an agent may order at once.` });
+    }
+    let supplierInj = false;
+    for (const ln of quote.lines || []) {
+      const injFlags = (ln.flags || []).filter((f) => String(f).includes("injection"));
+      if (injFlags.length) {
+        supplierInj = true;
+        if (outcome === "auto_approve") outcome = "needs_approval";
+        hits.push({
+          rule_id: `injection:${ln.product_id}`,
+          outcome: "needs_approval",
+          message: `Supplier text for '${ln.product_name}' (${ln.product_id}) contains instructions aimed at AI agents (${injFlags.join(", ")}). The agent must not follow them; a ${role.replace(/_/g, " ")} should confirm this order was not influenced.`,
+        });
+      }
+    }
+    const baseDecision = {
+      outcome,
+      approver_role: outcome === "needs_approval" ? role : null,
+      policy_id: cid,
+      policy_version: "2026-11-14.1",
+      hits,
+    };
+    const finalDecision = applyRequestScreenToDecision(quote, baseDecision);
+    if (!supplierInj && !finalDecision.hits.some((h) => h.rule_id === "injection:request")) {
+      finalDecision.hits.push({ rule_id: "injection", outcome: "allow", message: "No prompt-injection signals in the request or supplier text." });
+    }
+    return finalDecision;
+  }
+
+  async function makeQuote(customer_id, plan, agentId) {
     const now = new Date();
+    const aid = agentId ? (String(agentId).includes("/") ? String(agentId) : `${customer_id}/${agentId}`) : `${customer_id}/buyer-1`;
     const q = {
-      quote_id: rid("Q"), customer_id, agent_id: `${customer_id}/buyer-1`, delivery_date: plan.need.delivery_by,
-      lines: plan.lines.map((l) => ({ product_id: l.product_id, product_name: l.product_name, qty_sales_units: l.qty_sales_units, sales_unit: l.sales_unit, unit_price: l.unit_price, line_total: l.line_total, tier: l.tier, flags: l.flags })),
+      quote_id: rid("Q"), customer_id, agent_id: aid, delivery_date: plan.delivery_date || plan.need?.delivery_by || MON,
+      lines: plan.lines.map((l) => ({ product_id: l.product_id, product_name: l.product_name, qty_sales_units: l.qty_sales_units, sales_unit: l.sales_unit, unit_price: l.unit_price, line_total: l.line_total, tier: l.tier, flags: l.flags || [] })),
       total_net: plan.total_net, total_gross: null, currency: "EUR", created_at: iso(now),
-      expires_at: iso(new Date(now.getTime() + 15 * 60 * 1000)), need: plan.need,
+      expires_at: iso(new Date(now.getTime() + 15 * 60 * 1000)), need: plan.need ?? null,
     };
     q.quote_hash = "sha256:" + (await sha256Hex(canon(q)));
     q.signature = await sign(q.quote_hash);
@@ -417,7 +606,7 @@ export async function createMockApi() {
     }
 
     if (customer_id === "hotel-aurora") {
-      const need = hotelNeed(text);
+      const need = run.product_query ? { ...hotelNeed(text), product_query: run.product_query } : hotelNeed(text);
       step("thought", "Parsed the request into a structured need", { need, text: "Gemini structured output: Need schema." });
       await audit(agent, "need.parsed", run_id, "Parsed the request: 1,000 L lactose-free semi-skimmed milk, delivery Mon 16 Nov, usual item 463038.", { need });
       await sleep(500);
@@ -463,12 +652,13 @@ export async function createMockApi() {
       step("quote", `Signed quote ${quote.quote_id}`, { quote });
       await sleep(700);
 
-      const decision = hotelDecision();
+      const rawDecision = hotelDecision();
       const swap = (learned["hotel-aurora"] || []).find((x) => x.product_id === "464306" || (x.scope === "product_type" && x.product_type === "milk"));
       if (swap) {
-        const i = decision.hits.findIndex((x) => x.rule_id === "substitution.pack");
-        decision.hits[i] = { rule_id: "substitution.learned", outcome: "allow", learned: true, message: `Allowed: you approved this swap on ${new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Helsinki", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(swap.approved_at))} (${swap.approved_by}): 1 L cartons instead of the 10 L Novobox.` };
+        const i = rawDecision.hits.findIndex((x) => x.rule_id === "substitution.pack");
+        rawDecision.hits[i] = { rule_id: "substitution.learned", outcome: "allow", learned: true, message: `Allowed: you approved this swap on ${new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Helsinki", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(swap.approved_at))} (${swap.approved_by}): 1 L cartons instead of the 10 L Novobox.` };
       }
+      const decision = applyRequestScreenToDecision(quote, rawDecision);
       let order;
       await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 74, async () => {
         order = newOrder(quote, decision, "pending_approval");
@@ -487,7 +677,7 @@ export async function createMockApi() {
     }
 
     if (customer_id === "school-tampere") {
-      const { need, plan, decision, P } = schoolScenario(text);
+      const { need, plan, decision: rawDecision, P } = schoolScenario(text, run.product_query ? { product_query: run.product_query } : undefined);
       step("thought", "Parsed the request into a structured need", { need });
       await audit(agent, "need.parsed", run_id, "Parsed the request: 120 L milk-free drink, excluded allergens milk and nuts, delivery Wed 18 Nov.", { need });
       await sleep(500);
@@ -520,7 +710,24 @@ export async function createMockApi() {
       });
       step("quote", `Signed quote ${quote.quote_id}`, { quote });
       await sleep(500);
+      const decision = applyRequestScreenToDecision(quote, rawDecision);
       let order;
+      if (decision.outcome === "needs_approval") {
+        await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 70, async () => {
+          order = newOrder(quote, decision, "pending_approval");
+          orders.set(order.order_id, { order, quote, decision, run });
+          await audit("system:trust", "policy.evaluated", order.order_id, "Policy school-tampere: needs approval by the Kitchen Manager (injection:request).", { outcome: decision.outcome, quote_hash: quote.quote_hash });
+          await audit("system:gateway", "order.pending_approval", order.order_id, `Order ${order.order_id} is held for approval. Nothing is sent to the warehouse until a human approves this exact quote.`, { quote_id: quote.quote_id, run_id });
+          return { summary: `Order ${order.order_id} held: needs approval`, result: { order_id: order.order_id, status: order.status } };
+        });
+        step("decision", "Policy verdict: needs approval by the Kitchen Manager", { decision, order });
+        await sleep(400);
+        step("approval_wait", "Waiting for the Kitchen Manager to approve", { order_id: order.order_id, approver_role: decision.approver_role || "kitchen_manager" });
+        run.awaiting = order.order_id;
+        run.deliveryLabel = "Wed 18 Nov";
+        run.finalSummary = (q) => `120 L of Oddlygood oat drink confirmed for Wed 18 Nov at €198.00 net, approved by the Kitchen Manager against signed quote ${q.quote_id}.`;
+        return;
+      }
       await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 70, async () => {
         order = newOrder(quote, decision, "placed");
         order.response_code = "AP";
@@ -538,7 +745,7 @@ export async function createMockApi() {
     }
 
     if (customer_id === "hospital-meilahti") {
-      const { need, plan, decision, P } = hospitalScenario(text);
+      const { need, plan, decision: rawDecision, P } = hospitalScenario(text, run.product_query ? { product_query: run.product_query } : undefined);
       step("thought", "Parsed the request into a structured need", { need, text: "Two items: 40 kg gluten-free bread and 2 kg fresh dill. Gluten is a hard exclusion for coeliac wards." });
       await audit(agent, "need.parsed", run_id, "Parsed the request: 40 kg gluten-free bread plus 2 kg fresh dill, excluded allergen gluten, delivery Wed 18 Nov.", { need });
       await sleep(500);
@@ -570,6 +777,7 @@ export async function createMockApi() {
       });
       step("quote", `Signed quote ${quote.quote_id}`, { quote });
       await sleep(500);
+      const decision = applyRequestScreenToDecision(quote, rawDecision);
       let order;
       await tool("place_order", { quote_id: quote.quote_id, quote_hash: quote.quote_hash }, 71, async () => {
         order = newOrder(quote, decision, "pending_approval");
@@ -625,10 +833,97 @@ export async function createMockApi() {
       return { intent, confidence: intent === "unclear" ? 0.4 : 0.9, source: "rules", transcript: t, decides: false };
     },
     voiceTranscribe: async () => { throw Object.assign(new Error("No ElevenLabs in mock mode"), { status: 503 }); },
-    async startRun({ text, customer_id, model, thinking, image }) {
+    async startRun({ text, customer_id, model, thinking, image, product_query }) {
       const run_id = rid("run");
-      runs.set(run_id, { run_id, customer_id, text, model, thinking, image, buffer: [], listeners: new Set(), started: false });
+      runs.set(run_id, { run_id, customer_id, text, model, thinking, image, product_query, buffer: [], listeners: new Set(), started: false });
       return { run_id };
+    },
+    async plan(need = {}, customerId) {
+      await sleep(120);
+      const cid = resolveCustomer(need?.customer_id, customerId, true);
+      if (need?.quantity != null && Number(need.quantity) <= 0) {
+        throw Object.assign(new Error("422 quantity must be > 0"), { status: 422, code: "invalid_quantity" });
+      }
+      const overrides = Object.fromEntries(Object.entries(need || {}).filter(([, v]) => v !== undefined));
+      let planObj;
+      if (cid === "school-tampere") {
+        planObj = schoolScenario(need?.raw_text || "", { ...overrides, customer_id: cid }).plan;
+      } else if (cid === "hospital-meilahti") {
+        planObj = hospitalScenario(need?.raw_text || "", { ...overrides, customer_id: cid }).plan;
+      } else {
+        const mergedNeed = { ...hotelNeed(need?.raw_text || ""), ...overrides, customer_id: cid };
+        planObj = hotelPlan(mergedNeed);
+      }
+      return structuredClone(applyRequestScreenToPlan(planObj));
+    },
+    async createQuote(body = {}, customerId, agentId) {
+      await sleep(90);
+      const cid = resolveCustomer(body?.customer_id || body?.need?.customer_id, customerId, true);
+      const rawLines = Array.isArray(body?.lines) ? body.lines : [];
+      if (!rawLines.length) throw Object.assign(new Error("422 lines required"), { status: 422, code: "lines_required" });
+      const cat = mockCatalogMap();
+      const lines = rawLines.map((l) => {
+        const qty = Number(l.qty_sales_units ?? l.quantity ?? 0);
+        if (!(qty > 0)) throw Object.assign(new Error("422 qty_sales_units must be > 0"), { status: 422, code: "invalid_quantity" });
+        const item = cat[String(l.product_id)] || { name: l.product_name || String(l.product_id), sales_unit: l.sales_unit || "ST", unit_price: Number(l.unit_price ?? 1.0) };
+        const price = Number(l.unit_price ?? item.unit_price ?? 1.0);
+        return {
+          product_id: String(l.product_id),
+          product_name: l.product_name || item.name,
+          qty_sales_units: qty,
+          sales_unit: l.sales_unit || item.sales_unit || "ST",
+          unit_price: price,
+          line_total: Math.round(qty * price * 100) / 100,
+          tier: l.tier || "best",
+          flags: l.flags || [],
+        };
+      });
+      const total = Math.round(lines.reduce((a, l) => a + l.line_total, 0) * 100) / 100;
+      const needObj = body?.need ? { ...body.need, customer_id: cid } : null;
+      const quote = await makeQuote(cid, { delivery_date: body?.delivery_date || needObj?.delivery_by || MON, need: needObj, lines, total_net: total }, agentId);
+      await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id}: ${lines.length} line(s), €${total.toFixed(2)} net.`, { quote_hash: quote.quote_hash });
+      return structuredClone(quote);
+    },
+    async placeOrder(body = {}, customerId, agentId) {
+      await sleep(80);
+      const cid = resolveCustomer(body?.customer_id, customerId, true);
+      const quote = quotes.get(body?.quote_id);
+      if (!quote) throw Object.assign(new Error("404 quote not found"), { status: 404, code: "quote_not_found" });
+      if (cid !== quote.customer_id) throw Object.assign(new Error("403 customer_mismatch"), { status: 403, code: "customer_mismatch" });
+      if (agentId) {
+        const fullAid = String(agentId).includes("/") ? String(agentId) : `${cid}/${agentId}`;
+        if (fullAid !== quote.agent_id) throw Object.assign(new Error("403 agent_mismatch"), { status: 403, code: "agent_mismatch" });
+      }
+      if (body?.quote_hash && body.quote_hash !== quote.quote_hash) {
+        throw Object.assign(new Error("409 quote hash mismatch"), { status: 409, code: "quote_hash_mismatch" });
+      }
+      const decision = evaluateMockQuote(quote);
+      const status = decision.outcome === "reject" ? "rejected" : decision.outcome === "needs_approval" ? "pending_approval" : "placed";
+      const order = newOrder(quote, decision, status);
+      if (status === "placed") {
+        order.response_code = "AP";
+        order.approved_by = `policy:${cid}`;
+        order.response_lines = quote.lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: "" }));
+      }
+      orders.set(order.order_id, { order, quote, decision, run: null });
+      await audit("system:trust", "policy.evaluated", order.order_id, `Policy ${cid}: ${decision.outcome} (€${Number(quote.total_net).toFixed(2)}).`, { outcome: decision.outcome, quote_hash: quote.quote_hash });
+      if (status === "placed") {
+        await audit("system:gateway", "order.placed", order.order_id, `Order ${order.order_id} placed. Order response AP.`, { response_code: "AP", quote_id: quote.quote_id });
+      } else if (status === "pending_approval") {
+        await audit("system:gateway", "order.pending_approval", order.order_id, `Order ${order.order_id} is held for approval.`, { quote_id: quote.quote_id });
+      } else {
+        await audit("system:gateway", "order.rejected", order.order_id, `Order ${order.order_id} rejected by policy.`, { quote_id: quote.quote_id });
+      }
+      return structuredClone(order);
+    },
+    async request(method, path, body, extraHeaders = {}) {
+      const m = String(method || "GET").toUpperCase();
+      const hdrCid = extraHeaders["X-Customer-Id"] || extraHeaders["x-customer-id"];
+      const hdrAid = extraHeaders["X-Agent-Id"] || extraHeaders["x-agent-id"];
+      if (m === "POST" && path === "/v1/plan") return this.plan(body, hdrCid);
+      if (m === "POST" && path === "/v1/quotes") return this.createQuote(body, hdrCid, hdrAid);
+      if (m === "POST" && path === "/v1/orders") return this.placeOrder(body, hdrCid, hdrAid);
+      throw Object.assign(new Error(`404 unsupported mock route ${m} ${path}`), { status: 404 });
     },
     async answer(runId, body = {}, customerId) {
       await sleep(250);
@@ -672,26 +967,27 @@ export async function createMockApi() {
     },
     async orderQuoteRequest(qr, customerId, agentId) {
       await sleep(700);
-      const hdrCid = String(customerId || "").trim();
-      const bodyCid = String(qr?.customer_id || "").trim();
-      if (hdrCid && bodyCid && hdrCid !== bodyCid) throw Object.assign(new Error("403 X-Customer-Id disagrees with body customer_id"), { status: 403, code: "customer_mismatch" });
-      const cid = hdrCid || bodyCid;
-      if (!cid) throw Object.assign(new Error("401 identity_required"), { status: 401, code: "identity_required" });
-      if (!CUSTOMERS.some((c) => c.customer_id === cid)) throw Object.assign(new Error(`403 unknown customer ${cid}`), { status: 403, code: "unknown_customer" });
-      const lines = qr.lines.map((l) => { const x = SALMON.find((r) => r[4]?.[0] === l.product_id)[4]; return { product_id: l.product_id, product_name: x[1], qty_sales_units: l.qty_sales_units, sales_unit: x[2], unit_price: x[4], line_total: Math.round(l.qty_sales_units * x[4] * 100) / 100, tier: "best", flags: l.flags || [] }; });
+      const cid = resolveCustomer(qr?.customer_id, customerId, true);
+      const cat = mockCatalogMap();
+      const lines = qr.lines.map((l) => {
+        const item = cat[String(l.product_id)];
+        return { product_id: l.product_id, product_name: item.name, qty_sales_units: l.qty_sales_units, sales_unit: item.sales_unit, unit_price: item.unit_price, line_total: Math.round(l.qty_sales_units * item.unit_price * 100) / 100, tier: "best", flags: l.flags || [] };
+      });
       const total = Math.round(lines.reduce((a, l) => a + l.line_total, 0) * 100) / 100;
-      const quote = await makeQuote(cid, { need: { delivery_by: qr.delivery_date }, lines, total_net: total });
-      if (agentId) quote.agent_id = String(agentId).includes("/") ? String(agentId) : `${cid}/${agentId}`;
-      quote.need = null;
-      const auto = total <= 500;
-      const decision = { outcome: auto ? "auto_approve" : "needs_approval", approver_role: auto ? null : "procurement_manager", policy_id: cid, policy_version: "2026-11-14.1",
-        hits: [{ rule_id: "spend", outcome: auto ? "allow" : "needs_approval", message: `The order total €${total.toFixed(2)} is ${auto ? "within" : "above"} the €500 auto-approve limit.` }] };
-      const order = newOrder(quote, decision, auto ? "placed" : "pending_approval");
-      if (auto) { order.response_code = "AP"; order.approved_by = `policy:${cid}`; order.response_lines = lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: "" })); }
+      const needObj = qr?.need ? { ...qr.need, customer_id: cid, delivery_by: qr.need.delivery_by || qr.delivery_date } : null;
+      const quote = await makeQuote(cid, { delivery_date: qr.delivery_date, need: needObj, lines, total_net: total }, agentId);
+      const { auto_max, role } = spendPolicyFor(cid);
+      const auto = total <= auto_max;
+      const baseDecision = { outcome: auto ? "auto_approve" : "needs_approval", approver_role: auto ? null : role, policy_id: cid, policy_version: "2026-11-14.1",
+        hits: [{ rule_id: "spend", outcome: auto ? "allow" : "needs_approval", message: `The order total €${total.toFixed(2)} is ${auto ? "within" : "above"} the €${auto_max} auto-approve limit.` }] };
+      const decision = applyRequestScreenToDecision(quote, baseDecision);
+      const isAuto = decision.outcome === "auto_approve";
+      const order = newOrder(quote, decision, isAuto ? "placed" : "pending_approval");
+      if (isAuto) { order.response_code = "AP"; order.approved_by = `policy:${cid}`; order.response_lines = lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: "" })); }
       orders.set(order.order_id, { order, quote, decision, run: null });
       await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id} for a recipe plan: ${lines.length} lines, €${total.toFixed(2)} net.`, {});
-      await audit("system:trust", "policy.evaluated", order.order_id, `Policy ${cid}: ${auto ? "auto-approved" : "needs approval"} (€${total.toFixed(2)}).`, {});
-      if (auto) await audit("system:gateway", "order.placed", order.order_id, `Order ${order.order_id} placed. Order response AP.`, {});
+      await audit("system:trust", "policy.evaluated", order.order_id, `Policy ${cid}: ${isAuto ? "auto-approved" : "needs approval"} (€${total.toFixed(2)}).`, {});
+      if (isAuto) await audit("system:gateway", "order.placed", order.order_id, `Order ${order.order_id} placed. Order response AP.`, {});
       return structuredClone({ quote, order });
     },
     streamRun(runId, onStep, onEnd) {
