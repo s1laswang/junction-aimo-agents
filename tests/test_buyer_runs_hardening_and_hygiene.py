@@ -694,3 +694,74 @@ def test_create_run_bad_inputs_and_execute_error_recovery(
     view = err_run.view()
     assert view["steps"][-1]["kind"] == "final"
     assert view["steps"][-1]["data"]["status"] == "error"
+
+
+def test_create_run_rejects_unknown_customer_on_fake_transport_and_strips_operator_only_faults(
+    clean_registry: runs.RunRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = FastAPI()
+    app.include_router(runs.router)
+    client = TestClient(app)
+
+    r_fake_unk = client.post(
+        "/v1/agent/runs",
+        json={"text": "10 L milk", "customer_id": "rogue-corp", "transport": "fake"},
+    )
+    assert r_fake_unk.status_code == 403
+    assert r_fake_unk.json()["error"] == "unknown_customer"
+
+    seen: dict[str, Any] = {}
+
+    class StubRun:
+        run_id = "run-guard"
+
+    def stub_start(req: runs.RunRequest, **kw: Any) -> Any:
+        seen["req"] = req
+        return StubRun()
+
+    monkeypatch.setattr(clean_registry, "start", stub_start)
+
+    monkeypatch.delenv("AIMO_DEMO_FAULTS", raising=False)
+    r_no_demo = client.post(
+        "/v1/agent/runs",
+        json={
+            "text": "10 L milk",
+            "customer_id": "hotel-aurora",
+            "transport": "inproc",
+            "faults": "price_shock:*:0.01",
+        },
+    )
+    assert r_no_demo.status_code == 200
+    assert seen["req"].faults is None
+    assert seen["req"].transport is None
+    assert sorted(r_no_demo.json()["ignored"]) == ["faults", "transport"]
+
+    monkeypatch.setenv("AIMO_DEMO_FAULTS", "1")
+    r_demo = client.post(
+        "/v1/agent/runs",
+        json={
+            "text": "10 L milk",
+            "customer_id": "hotel-aurora",
+            "transport": "inproc",
+            "faults": "partial:*:400",
+        },
+    )
+    assert r_demo.status_code == 200
+    assert seen["req"].faults == "partial:*:400"
+    assert seen["req"].transport == "inproc"
+    assert "ignored" not in r_demo.json()
+
+    monkeypatch.setenv("AIMO_ENV", "production")
+    r_prod = client.post(
+        "/v1/agent/runs",
+        json={
+            "text": "10 L milk",
+            "customer_id": "hotel-aurora",
+            "transport": "fake",
+            "faults": "price_shock:*:0.01",
+        },
+    )
+    assert r_prod.status_code == 200
+    assert seen["req"].faults is None
+    assert seen["req"].transport is None
+    assert sorted(r_prod.json()["ignored"]) == ["faults", "transport"]
