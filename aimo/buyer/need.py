@@ -44,7 +44,15 @@ MONTHS = {m: i + 1 for i, m in enumerate(
      "october", "november", "december"])}
 MONTHS.update({m[:3]: i for m, i in list(MONTHS.items())})
 MONTHS.update({"sept": 9, "januari": 1, "februari": 2, "mars": 3, "maj": 5, "juni": 6, "juli": 7,
-               "augusti": 8, "oktober": 10})
+               "augusti": 8, "oktober": 10, "okt": 10})
+for _idx, _fi_mon in enumerate(
+    ["tammikuu", "helmikuu", "maaliskuu", "huhtikuu", "toukokuu", "kesäkuu",
+     "heinäkuu", "elokuu", "syyskuu", "lokakuu", "marraskuu", "joulukuu"],
+    1,
+):
+    MONTHS[_fi_mon] = _idx
+    MONTHS[_fi_mon + "ta"] = _idx
+    MONTHS[_fi_mon + "n"] = _idx
 
 
 def now_helsinki() -> datetime:
@@ -169,15 +177,37 @@ def resolve_date(text: str, now: datetime | None = None) -> tuple[date, str] | N
         except ValueError:
             pass
     month_pat = "|".join(sorted(MONTHS, key=len, reverse=True))
-    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th|:a|:e)?\s+(" + month_pat + r")\b", t) or \
-        re.search(r"\b(" + month_pat + r")\s+(\d{1,2})(?:st|nd|rd|th)?\b", t)
+    not_unit = (
+        r"(?!\s*(?:l|dl|ml|kg|g|st|pcs|pkt|kpl|förp|litr|liter|kilo|gram|"
+        r"kappale|styck|pack|purkki|tölkki|tolkki|laatikko|rasia|pullo|"
+        r"bottle|carton|box|unit|piece|portion)\b)"
+    )
+    m = (
+        re.search(
+            r"\b(\d{1,2})(?:(?:st|nd|rd|th|:a|:e)\b\s*|\.\s*|\s+)(?:of\s+)?("
+            + month_pat
+            + r")\b(?:,?\s+(20\d{2})\b"
+            + not_unit
+            + r")?",
+            t,
+        )
+        or re.search(
+            r"\b("
+            + month_pat
+            + r")\s+(\d{1,2})(?:(?:st|nd|rd|th|:a|:e)\b|\.(?!\d)|\b)(?:,?\s+(20\d{2})\b"
+            + not_unit
+            + r")?",
+            t,
+        )
+    )
     if m:
-        a, b = m.group(1), m.group(2)
+        a, b, yr = m.group(1), m.group(2), m.group(3)
         day, mon = (int(a), MONTHS[b]) if a.isdigit() else (int(b), MONTHS[a])
+        y = int(yr) if yr else today.year
         try:
-            d = date(today.year, mon, day)
-            if d < today:
-                d = date(today.year + 1, mon, day)
+            d = date(y, mon, day)
+            if not yr and d < today:
+                d = date(y + 1, mon, day)
             return d, m[0]
         except ValueError:
             pass
@@ -307,7 +337,7 @@ def detect_allergens(text: str) -> list[str]:
 
 _DATE_PREP = (
     r"(?:(?:by|on|for|before|until|till|due|delivered|delivery|"
-    r"på|senast|före|innan|leverans|toimitus|viimeistään)\s+){0,3}"
+    r"på|senast|före|innan|leverans|toimitus|viimeistään|den)\s+){0,3}"
 )
 _WEEK_MOD = (
     r"(?:(?:next\s+week(?:'s)?|this\s+week(?:'s)?|ensi\s+viikon|ensi\s+viikolla|"
@@ -322,7 +352,7 @@ _MEAL = (
     r"(?:\s+(?:lunch|dinner|evening|morning|breakfast|night|afternoon|service|"
     r"lounaalle|lounaaksi|lounas|aamiaiselle|aamiainen|päivälliselle|illalliselle|frukost|middag))?"
 )
-_POST_DATE = r"(?:\s+mennessä)?"
+_POST_DATE = r"(?:\s+päivä(?:nä|än|ksi)?(?:\s+mennessä)?|\s+mennessä)?"
 _MONTH_PAT = "|".join(sorted(MONTHS, key=len, reverse=True))
 _DATE_PHRASE = re.compile(
     r"\b" + _DATE_PREP + _WEEK_MOD + _WD_ANY + r"\b" + _MEAL + _POST_DATE
@@ -331,9 +361,14 @@ _DATE_PHRASE = re.compile(
     + r"ylihuomenna|ylihuomiseksi|huomenna|huomiseksi|tänään|ensi viikolla|ensi viikon|"
     + r"i övermorgon|övermorgon|imorgon|i morgon|idag|i dag|ikväll|i kväll|nästa vecka)\b" + _MEAL + _POST_DATE
     + r"|\b" + _DATE_PREP + r"\d{4}-\d{2}-\d{2}\b" + _POST_DATE
-    + r"|\b" + _DATE_PREP + r"\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?" + _POST_DATE
-    + r"|\b" + _DATE_PREP + r"\d{1,2}(?:st|nd|rd|th|:a|:e)?\s+(?:" + _MONTH_PAT + r")\b" + _POST_DATE
-    + r"|\b" + _DATE_PREP + r"(?:" + _MONTH_PAT + r")\s+\d{1,2}(?:st|nd|rd|th)?\b" + _POST_DATE,
+    + r"|\b" + _DATE_PREP + r"\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?" + _MEAL + _POST_DATE
+    + r"|\b" + _DATE_PREP + r"\d{1,2}(?:(?:st|nd|rd|th|:a|:e)\b\s*|\.\s*|\s+)(?:of\s+)?(?:" + _MONTH_PAT + r")\b(?:,?\s+20\d{2}\b)?" + _MEAL + _POST_DATE
+    + r"|\b" + _DATE_PREP + r"(?:" + _MONTH_PAT + r")\s+\d{1,2}(?:(?:st|nd|rd|th|:a|:e)\b|\.(?!\d)|\b)(?:,?\s+20\d{2}\b)?" + _MEAL + _POST_DATE,
+    re.I,
+)
+_LEADING_DATE_RE = re.compile(r"^(?:" + _DATE_PHRASE.pattern + r")\s*", re.I)
+_CLAUSE_SPLIT_RE = re.compile(
+    r"[;:!?\n](?!\d)|,(?!\d)|(?<!\d)\.(?!\d)|(?<=\d)\.(?!\d)(?!\s*(?:" + _MONTH_PAT + r"|mennessä|päivä)\b)",
     re.I,
 )
 _ALLERGY_CLAUSE = re.compile(r"allerg\w*|intoleran\w*|coeliac|celiac|kelia\w*|yliherk\w*|cannot eat|can't eat", re.I)
@@ -423,13 +458,17 @@ def _normalize_product_query(q: str) -> str:
 
 
 def _clauses(text: str) -> list[str]:
-    return [c.strip() for c in re.split(r"[.;:!?\n](?!\d)|,(?!\d)", text) if c.strip()]
+    return [c.strip() for c in _CLAUSE_SPLIT_RE.split(text) if c.strip()]
 
 
 def _residual(clause: str) -> str:
     """The product noun phrase of a clause: quantities, date phrases, filler and trailing
     'for/at/by ...' tails removed. '120 l oat drink for Wednesday lunch' -> 'oat drink'."""
     words = re.sub(r"\s+", " ", _QTY_RE.sub(" ", clause)).strip().split(" ")
+    while words and words[0].lower() in _LEAD_FILLER:
+        words.pop(0)
+    s = _LEADING_DATE_RE.sub("", " ".join(words)).strip()
+    words = [w for w in s.split(" ") if w]
     while words and words[0].lower() in _LEAD_FILLER:
         words.pop(0)
     s = _TAIL.sub("", " ".join(words))
