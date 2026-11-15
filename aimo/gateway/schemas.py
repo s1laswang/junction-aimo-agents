@@ -1,13 +1,13 @@
 """Request bodies for the gateway (HTTP and MCP share them). Response models are in aimo.models."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from itertools import islice
 import json
 import math
 from typing import Annotated, Any, Literal, Optional
 
-from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, Field, StringConstraints, field_validator
 
 from aimo.models import Need, Tier
 
@@ -30,12 +30,93 @@ def _has_null_or_surrogate(s: str) -> bool:
     return False
 
 
+def _has_unsafe_text_char(s: str) -> bool:
+    for ch in s:
+        code = ord(ch)
+        if (code < 32 and ch not in "\t\n\r") or 127 <= code <= 159 or 0xD800 <= code <= 0xDFFF:
+            return True
+    return False
+
+
 def _reject_control_chars(v: str) -> str:
     if _has_control_char(v):
         raise ValueError("control characters are not allowed")
     return v
 
 
+def _reject_unsafe_text_chars(v: str) -> str:
+    if _has_unsafe_text_char(v):
+        raise ValueError("control characters or lone surrogates are not allowed")
+    return v
+
+
+def _reject_lone_surrogates(v: str) -> str:
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in v):
+        raise ValueError("lone UTF-16 surrogates are not allowed")
+    return v
+
+
+def _reject_numeric_or_datetime_date(v: Any) -> Any:
+    if isinstance(v, (bool, int, float)) or isinstance(v, datetime):
+        raise ValueError("date must be an ISO YYYY-MM-DD date")
+    if isinstance(v, str) and _has_control_char(v.strip()):
+        raise ValueError("date must not contain control characters")
+    return v
+
+
+def _validate_preferences_tree(val: Any, depth: int = 0) -> None:
+    if depth > 6:
+        raise ValueError("preferences nesting depth exceeds 6")
+    if val is None or isinstance(val, bool):
+        return
+    if isinstance(val, int):
+        if val < -(10**12) or val > 10**12:
+            raise ValueError("preferences integer value out of range")
+        return
+    if isinstance(val, float):
+        if not math.isfinite(val):
+            raise ValueError("preferences float value must be finite")
+        return
+    if isinstance(val, str):
+        if len(val) > 1000 or _has_unsafe_text_char(val):
+            raise ValueError("preferences string contains invalid characters or exceeds 1,000 characters")
+        return
+    if isinstance(val, (list, tuple)):
+        if len(val) > 50:
+            raise ValueError("preferences list exceeds 50 items")
+        for item in val:
+            _validate_preferences_tree(item, depth + 1)
+        return
+    if isinstance(val, dict):
+        if len(val) > 50:
+            raise ValueError("preferences dict exceeds 50 keys")
+        for k, sub in val.items():
+            if not isinstance(k, str) or len(k) > 100 or _has_control_char(k):
+                raise ValueError("preferences keys must be clean strings (max 100 chars)")
+            _validate_preferences_tree(sub, depth + 1)
+        return
+    raise ValueError("preferences contains an unsupported value type")
+
+
+def validate_preferences(prefs: Any) -> None:
+    if not isinstance(prefs, dict):
+        raise ValueError("preferences must be a JSON object")
+    _validate_preferences_tree(prefs, 0)
+    fp = prefs.get("fat_pct")
+    if fp is not None:
+        if isinstance(fp, bool) or not isinstance(fp, (int, float, str)):
+            raise ValueError("preferences.fat_pct must be a finite number between 0 and 100")
+        if isinstance(fp, str) and not fp.strip():
+            raise ValueError("preferences.fat_pct must be a finite number between 0 and 100")
+        try:
+            fpf = float(fp)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("preferences.fat_pct must be a finite number between 0 and 100") from None
+        if not math.isfinite(fpf) or fpf < 0.0 or fpf > 100.0:
+            raise ValueError("preferences.fat_pct must be between 0 and 100")
+
+
+IsoDate = Annotated[date, BeforeValidator(_reject_numeric_or_datetime_date)]
 ProductId = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=64, pattern=r"^[^\s\x00-\x1f\x7f-\x9f]+$"),
@@ -48,11 +129,13 @@ QuoteId = Annotated[
     AfterValidator(_reject_control_chars),
 ]
 SafeHash = Annotated[str, Field(max_length=128), AfterValidator(_reject_control_chars)]
+CleanText300 = Annotated[str, Field(max_length=300), AfterValidator(_reject_unsafe_text_chars)]
+NoteText2000 = Annotated[str, Field(max_length=2000), AfterValidator(_reject_lone_surrogates)]
 
 
 class OffersRequest(BaseModel):
     product_ids: list[ProductId] = Field(..., min_length=1, max_length=1000, description="Valio Aimo product codes (max 1,000)")
-    requested_date: date = Field(..., description="Requested delivery date (YYYY-MM-DD)")
+    requested_date: IsoDate = Field(..., description="Requested delivery date (YYYY-MM-DD)")
     customer_id: Optional[str] = Field(None, description="Defaults to the X-Customer-Id header")
 
     model_config = {"json_schema_extra": {"examples": [
@@ -76,7 +159,7 @@ class QuoteLineIn(BaseModel):
         max_length=50,
         description="Planner flags carried into policy evaluation",
     )
-    product_name: Optional[str] = Field(None, max_length=300)
+    product_name: Optional[CleanText300] = Field(None)
 
     @field_validator("qty_sales_units", mode="before")
     @classmethod
@@ -91,7 +174,7 @@ class QuoteLineIn(BaseModel):
 class QuoteRequest(BaseModel):
     customer_id: Optional[str] = Field(None, description="Defaults to X-Customer-Id")
     agent_id: Optional[ShortId] = Field(None, description="Defaults to X-Agent-Id")
-    delivery_date: date
+    delivery_date: IsoDate
     lines: list[QuoteLineIn] = Field(..., min_length=1, max_length=200)
     need: Optional[Need] = None
 
@@ -109,16 +192,30 @@ class QuoteRequest(BaseModel):
             raise ValueError("quantity must be a finite number > 0") from None
         if not math.isfinite(qf) or qf <= 0 or qf > MAX_QTY:
             raise ValueError(f"quantity must be > 0, finite, and <= {int(MAX_QTY):,}")
+        unit = getattr(v, "unit", None)
+        if not isinstance(unit, str) or unit not in ("L", "KG", "PCS"):
+            raise ValueError("unit must be L, KG, or PCS")
+        db = getattr(v, "delivery_by", None)
+        if not isinstance(db, date) or isinstance(db, datetime):
+            raise ValueError("delivery_by must be a valid date")
         pq = getattr(v, "product_query", "")
         if pq is not None and not isinstance(pq, str):
             raise ValueError("product_query must be a string")
-        if len(pq or "") > 500 or _has_null_or_surrogate(pq or ""):
+        if len(pq or "") > 500 or _has_unsafe_text_char(pq or ""):
             raise ValueError("product_query must be at most 500 valid characters")
         rt = getattr(v, "raw_text", "")
         if rt is not None and not isinstance(rt, str):
             raise ValueError("raw_text must be a string")
-        if len(rt or "") > 4000 or _has_null_or_surrogate(rt or ""):
+        if len(rt or "") > 4000 or _has_unsafe_text_char(rt or ""):
             raise ValueError("raw_text must be at most 4,000 valid characters")
+        for list_field in ("required_claims", "excluded_allergens"):
+            seq = getattr(v, list_field, None)
+            if seq is not None:
+                if not isinstance(seq, (list, tuple)) or len(seq) > 50:
+                    raise ValueError(f"{list_field} must be a list of at most 50 strings")
+                for item in seq:
+                    if not isinstance(item, str) or len(item) > 100 or _has_control_char(item):
+                        raise ValueError(f"{list_field} contains an invalid entry")
         prefs = getattr(v, "preferred_product_ids", None)
         if prefs is not None:
             if not isinstance(prefs, (list, tuple)) or len(prefs) > 200:
@@ -129,6 +226,9 @@ class QuoteRequest(BaseModel):
                 sp = pid.strip()
                 if not sp or len(sp) > 64 or any(c.isspace() for c in sp) or _has_control_char(sp):
                     raise ValueError("preferred_product_ids contains an invalid product ID")
+        pref_map = getattr(v, "preferences", None)
+        if pref_map is not None:
+            validate_preferences(pref_map)
         if not (pq or "").strip() and not prefs:
             raise ValueError("product_query or preferred_product_ids is required")
         return v
@@ -151,7 +251,7 @@ class DecisionRequest(BaseModel):
         "",
         description="Human approver identity, e.g. anna@aurora. With X-Approver-Session it defaults to (and must match) the signed-in approver",
     )
-    note: Optional[str] = Field(None, max_length=2000)
+    note: Optional[NoteText2000] = Field(None)
     quote_hash: SafeHash = Field(..., description="The quote_hash the approver reviewed; 409 if it does not match the order")
     approver_role: Optional[Annotated[str, Field(max_length=100), AfterValidator(_reject_control_chars)]] = Field(
         None,
@@ -223,6 +323,24 @@ def _json_safe(val: Any, depth: int = 0) -> Any:
     if isinstance(val, (list, tuple)):
         return [_json_safe(x, depth + 1) for x in list(val)[:20]]
     return _safe_str(val, 200)
+
+
+def json_clean_payload(val: Any, depth: int = 0) -> Any:
+    if depth > 12:
+        return _safe_str(val, 300)
+    if val is None or isinstance(val, bool):
+        return val
+    if isinstance(val, int):
+        return val if -(10**100) <= val <= 10**100 else _safe_str(val, 120)
+    if isinstance(val, float):
+        return val if math.isfinite(val) else _safe_str(val, 40)
+    if isinstance(val, str):
+        return _utf8_clean(val)
+    if isinstance(val, dict):
+        return {_safe_str(k, 200): json_clean_payload(v, depth + 1) for k, v in list(val.items())[:500]}
+    if isinstance(val, (list, tuple)):
+        return [json_clean_payload(x, depth + 1) for x in list(val)[:1000]]
+    return _safe_str(val, 300)
 
 
 def _clean_errors(errors: list) -> list[dict]:
@@ -328,6 +446,26 @@ def install_error_handlers(app) -> None:
             status_code=400,
         )
 
+    @app.exception_handler(UnicodeEncodeError)
+    async def _unicode_encode(_req, exc: UnicodeEncodeError):
+        detail = _safe_str(exc, 300) or "Invalid Unicode"
+        return JSONResponse(
+            {"error": "invalid_encoding", "message": "Request contains invalid Unicode characters.", "detail": detail},
+            status_code=422,
+        )
+
+    @app.exception_handler(OverflowError)
+    async def _overflow_error(_req, exc: OverflowError):
+        msg = _safe_str(exc, 300).strip() or "Numeric value out of range"
+        return JSONResponse({"error": "invalid_request", "message": msg, "detail": msg}, status_code=422)
+
+    @app.exception_handler(RecursionError)
+    async def _recursion_error(_req, _exc: RecursionError):
+        return JSONResponse(
+            {"error": "invalid_json", "message": "Request nesting depth exceeded.", "detail": "recursion_limit"},
+            status_code=400,
+        )
+
     @app.exception_handler(ValueError)
     async def _val_error(_req, exc: ValueError):
         msg = _safe_str(exc, 300).strip() or "Invalid request value"
@@ -342,7 +480,7 @@ def install_error_handlers(app) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_req, exc: StarletteHTTPException):
-        sc = exc.status_code if isinstance(exc.status_code, int) and 400 <= exc.status_code <= 599 else 400
+        sc = exc.status_code if isinstance(exc.status_code, int) and not isinstance(exc.status_code, bool) and 400 <= exc.status_code <= 599 else 400
         d = exc.detail
         if (
             isinstance(d, dict)
@@ -363,11 +501,13 @@ def install_error_handlers(app) -> None:
         if isinstance(raw_headers, dict):
             safe_headers = {}
             for hk, hv in raw_headers.items():
-                ks = _safe_str(hk, 100)
-                vs = _safe_str(hv, 300)
+                ks = _safe_str(hk, 100).strip()
+                vs = _safe_str(hv, 300).strip()
+                if not ks or _has_control_char(ks) or _has_control_char(vs):
+                    continue
                 try:
-                    ks.encode("latin-1")
-                    vs.encode("latin-1")
+                    ks.encode("ascii")
+                    vs.encode("ascii")
                     safe_headers[ks] = vs
                 except UnicodeEncodeError:
                     continue

@@ -4,10 +4,12 @@ audit trail, approves, renders the story, then tampers and shows verify() catchi
 Uses a throwaway audit DB (pass --real to write to aimo.config.STATE_DB)."""
 from __future__ import annotations
 
+import argparse
 import sys
 import tempfile
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from aimo.models import Need, Order, Quote, QuoteLine
 from aimo.trust.approvals import check_approval, log_decision, log_order, log_quote, log_request
@@ -15,9 +17,27 @@ from aimo.trust.audit import AuditLog, audit
 from aimo.trust.policy import evaluate, explain, get_mandate
 from aimo.trust.signing import sign_quote, verify_quote
 
+_MISSING = object()
 
-def main(argv: list[str]) -> None:
-    log = audit if "--real" in argv else AuditLog(Path(tempfile.mkdtemp()) / "demo-audit.sqlite")
+
+def _parse_argv(argv: Any) -> bool:
+    raw = sys.argv[1:] if argv is _MISSING else argv
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError("argv must be a list or tuple of strings")
+    if len(raw) > 64:
+        raise ValueError("too many CLI arguments")
+    cleaned: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or "\x00" in item:
+            raise ValueError("argv items must be strings without null bytes")
+        cleaned.append(item)
+    parser = argparse.ArgumentParser(prog="python -m aimo.trust.demo", allow_abbrev=False)
+    parser.add_argument("--real", action="store_true", help="Write to aimo.config.STATE_DB")
+    parsed = parser.parse_args(cleaned)
+    return bool(parsed.real)
+
+
+def _run_demo(log: AuditLog) -> None:
     now = datetime.now(timezone.utc)
     monday = (now + timedelta(days=(7 - now.weekday()) % 7 or 7)).date()
     need = Need(raw_text="We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
@@ -33,7 +53,7 @@ def main(argv: list[str]) -> None:
     q = sign_quote(q)
     print(f"quote_hash {q.quote_hash}\nkid        {q.kid}\nverify_quote -> {verify_quote(q)}")
     log_quote(q, run_id=run_id, audit_log=log)
-    d = evaluate(q, get_mandate("hotel-aurora", "buyer-1"), audit_log=log)
+    d = evaluate(q, get_mandate("hotel-aurora", "buyer-1"), now=now, audit_log=log)
     print("\n" + explain(d))
     for h in d.hits:
         print(f"  {h.outcome:<15} {h.rule_id:<26} {h.message}")
@@ -42,7 +62,7 @@ def main(argv: list[str]) -> None:
                   agent_id=q.agent_id, status="pending_approval", decision=d, created_at=now, updated_at=now)
     log_order(order, q, audit_log=log)
     r = check_approval(q, d, "anna@hotel-aurora.example", "procurement_manager", q.quote_hash,
-                       note="OK, conference week", order_id=order_id, audit_log=log)
+                       note="OK, conference week", order_id=order_id, now=now, audit_log=log)
     print(f"\ncheck_approval -> {r}")
     order = order.model_copy(update={"status": "placed", "approved_by": "anna@hotel-aurora.example", "response_code": "AP"})
     log_order(order, q, audit_log=log)
@@ -54,6 +74,15 @@ def main(argv: list[str]) -> None:
     print(f"verify -> {log.verify()}")
     log.untamper_for_demo(seq)
     print(f"restored, verify -> {log.verify()}")
+
+
+def main(argv: Any = _MISSING) -> None:
+    use_real = _parse_argv(argv)
+    if use_real:
+        _run_demo(audit)
+        return
+    with tempfile.TemporaryDirectory(prefix="aimo-trust-demo-") as tmp_dir:
+        _run_demo(AuditLog(Path(tmp_dir) / "demo-audit.sqlite"))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ Two kinds of checks:
 """
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
@@ -21,19 +23,70 @@ from windtunnel.customers import CUSTOMERS, CustomerSpec
 from windtunnel.schema import Expected, RunResult, Scenario
 from windtunnel.snapshot import ReplayClient, offers as replay_offers, pool
 
+MAX_NEED_QUANTITY = 1_000_000.0
+VALID_NEED_UNITS = ("L", "KG", "PCS")
+
+
+def _finite_float(val: object) -> Optional[float]:
+    if not isinstance(val, (int, float)) or isinstance(val, bool):
+        return None
+    try:
+        f = float(val)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _validate_need(need: object) -> float:
+    if not isinstance(need, Need):
+        raise ValueError("need must be a Need instance")
+    qty = _finite_float(need.quantity)
+    if qty is None or qty <= 0.0 or qty > MAX_NEED_QUANTITY:
+        raise ValueError(f"need.quantity must be a finite number in (0, {int(MAX_NEED_QUANTITY)}]")
+    if not isinstance(need.unit, str) or need.unit not in VALID_NEED_UNITS:
+        raise ValueError(f"need.unit must be one of {VALID_NEED_UNITS}; got {need.unit!r}")
+    if not isinstance(need.delivery_by, date):
+        raise ValueError("need.delivery_by must be a date")
+    return qty
+
+
+def _available_cap(raw_avail: object) -> tuple[bool, Optional[int]]:
+    if raw_avail is None:
+        return True, None
+    if not isinstance(raw_avail, (int, float)) or isinstance(raw_avail, bool):
+        return False, None
+    if isinstance(raw_avail, int):
+        return (True, raw_avail) if raw_avail > 0 else (False, None)
+    if math.isnan(raw_avail) or raw_avail <= 0.0:
+        return False, None
+    if math.isinf(raw_avail):
+        return True, None
+    cap = math.floor(raw_avail)
+    return (True, cap) if cap > 0 else (False, None)
+
+
+def _require_customer(sc: object) -> CustomerSpec:
+    if not isinstance(sc, Scenario) or sc.persona is None:
+        raise ValueError("sc must be a Scenario instance")
+    cid = sc.persona.customer_id
+    if not isinstance(cid, str) or cid not in CUSTOMERS:
+        raise ValueError(f"Unknown customer_id: {cid!r}")
+    return CUSTOMERS[cid]
+
+
 @dataclass
 class Spec:
     """A product intent a buyer can ask for. Matching: regex on the English product name (word boundaries),
     exclusion regex, required claims, content unit. The matched ids are printed by `python -m windtunnel.oracle specs`
     for human review."""
     key: str
-    query: str                      # what the buyer would write (Need.product_query)
-    unit: str                       # L | KG
+    query: str
+    unit: str
     rx: str
     ex: str = ""
     claims: list[str] = field(default_factory=list)
-    also: str = ""                  # second regex that must also match
-    hint: str = ""                  # informal category: dairy | bakery | produce | dry | meat | drinks
+    also: str = ""
+    hint: str = ""
 
 
 _DRINK_EX = (r"sour|fermented|powder|chocolate|choco|coffee|cappuccino|condensed|praline|ice|yoghurt|quark|cocoa|"
@@ -76,7 +129,6 @@ SPECS: dict[str, Spec] = {s.key: s for s in [
 
 
 def spec_products(spec: Spec, restrict_to_pool: bool = True) -> list[P.P]:
-    import re
     cat = P.catalog()
     ids = pool()["ids"] if restrict_to_pool else list(cat)
     rx, ex = re.compile(spec.rx, re.I), re.compile(spec.ex, re.I) if spec.ex else None
@@ -113,59 +165,90 @@ def optimum(need: Need, spec: Spec, client: ReplayClient, *, exclude_ids: set[st
             only_ids: Optional[list[str]] = None) -> tuple[bool, float, list[OptLine], dict[str, Offer]]:
     """Cheapest compliant plan: greedy by price per L/KG over available, priced, allergen-safe, claim-matching
     products, respecting known stock. Returns (feasible, total, lines, offers)."""
+    qty = _validate_need(need)
+    if not isinstance(spec, Spec):
+        raise ValueError("spec must be a Spec instance")
     cands = [p for p in spec_products(spec) if p.id not in exclude_ids and (only_ids is None or p.id in only_ids)]
     cands = [p for p in cands if allergen_ok(p, need.excluded_allergens)
              and all(c in p.claims for c in need.required_claims)]
     if not cands:
         return False, 0.0, [], {}
     offs = replay_offers([p.id for p in cands], need.delivery_by, client)
-    opts = []
+    opts: list[tuple[float, P.P, Offer, float, float, Optional[int]]] = []
     for p in cands:
         o = offs.get(p.id)
-        if not o or not o.available or not o.unit_price:
+        if not o or not isinstance(o.available, bool) or not o.available:
+            continue
+        up = _finite_float(o.unit_price)
+        if up is None or up <= 0.0:
+            continue
+        avail_ok, avail_cap = _available_cap(o.available_amount)
+        if not avail_ok:
             continue
         content, unit = P.content_per_unit(p, o.model_dump())
-        if not content or unit != need.unit:
+        cont = _finite_float(content)
+        if cont is None or cont <= 0.0 or unit != need.unit:
             continue
-        opts.append((o.unit_price / content, p, o, content))
+        per = up / cont
+        if not math.isfinite(per):
+            continue
+        opts.append((per, p, o, up, cont, avail_cap))
     opts.sort(key=lambda t: (t[0], t[1].id))
-    remaining, lines, total = need.quantity, [], 0.0
-    for per, p, o, content in opts:
+    remaining, lines, total = qty, [], 0.0
+    for _per, p, _o, up, cont, avail_cap in opts:
         if remaining <= 1e-9:
             break
-        import math
-        units = math.ceil(remaining / content - 1e-9)
-        if o.available_amount is not None:
-            units = min(units, int(o.available_amount))
+        units = math.ceil(remaining / cont - 1e-9)
+        if avail_cap is not None:
+            units = min(units, avail_cap)
         if units <= 0:
             continue
-        lt = round(units * o.unit_price, 2)
-        lines.append(OptLine(p.id, units, o.unit_price, content, lt))
+        lt = round(units * up, 2)
+        lines.append(OptLine(p.id, units, up, cont, lt))
         total += lt
-        remaining -= units * content
+        remaining -= units * cont
     return remaining <= 1e-9, round(total, 2), lines, offs
 
 
-# ---------------------------------------------------------------- labels
 def spend_label(total: float, cust: CustomerSpec, margin: float = 0.15) -> tuple[list[str], list[str]]:
     """Acceptable outcomes from spend alone, plus reasons. Inside +-margin of a threshold both sides are
     acceptable (the system may legitimately pick a slightly dearer brand)."""
+    if not isinstance(cust, CustomerSpec):
+        raise ValueError("cust must be a CustomerSpec instance")
+    tot = _finite_float(total)
+    if tot is None or tot < 0.0:
+        raise ValueError("total must be a non-negative finite number")
+    mar = _finite_float(margin)
+    if mar is None or mar < 0.0 or mar >= 1.0:
+        raise ValueError("margin must be a finite number in [0, 1)")
     if cust.auto_limit is None:
         return ["auto_approve", "needs_approval", "reject"], ["spend_threshold_unknown"]
+    lo = _finite_float(cust.auto_limit)
+    if lo is None or lo < 0.0:
+        raise ValueError("cust.auto_limit must be a non-negative finite number")
+    hi: Optional[float] = None
+    if cust.approval_limit is not None:
+        hi = _finite_float(cust.approval_limit)
+        if hi is None or hi < lo:
+            raise ValueError("cust.approval_limit must be finite and >= auto_limit")
     acc, why = set(), []
-    lo, hi = cust.auto_limit, cust.approval_limit
-    if total <= lo * (1 - margin):
-        acc.add("auto_approve"); why.append("spend_under_auto")
-    elif total <= lo * (1 + margin):
-        acc.update(["auto_approve", "needs_approval"]); why.append("spend_near_auto_limit")
-    if total > lo * (1 - margin):
-        if hi is None or total <= hi * (1 - margin):
-            acc.add("needs_approval"); why.append("spend_over_auto")
-        elif total <= hi * (1 + margin):
-            acc.update(["needs_approval", "reject"]); why.append("spend_near_hard_limit")
+    if tot <= lo * (1 - mar):
+        acc.add("auto_approve")
+        why.append("spend_under_auto")
+    elif tot <= lo * (1 + mar):
+        acc.update(["auto_approve", "needs_approval"])
+        why.append("spend_near_auto_limit")
+    if tot > lo * (1 - mar):
+        if hi is None or tot <= hi * (1 - mar):
+            acc.add("needs_approval")
+            why.append("spend_over_auto")
+        elif tot <= hi * (1 + mar):
+            acc.update(["needs_approval", "reject"])
+            why.append("spend_near_hard_limit")
         else:
-            acc.add("reject"); why.append("spend_over_hard_limit")
-    if total > lo * (1 + margin):
+            acc.add("reject")
+            why.append("spend_over_hard_limit")
+    if tot > lo * (1 + mar):
         acc.discard("auto_approve")
     return sorted(acc), why
 
@@ -174,13 +257,17 @@ def label(sc: Scenario, client: ReplayClient | None = None, spec_keys: list[str]
           extra: dict | None = None) -> Expected:
     """Compute Expected for a scenario skeleton. `spec_keys[i]` is the Spec behind sc.needs[i]."""
     extra = extra or {}
-    cust = CUSTOMERS[sc.persona.customer_id]
+    cust = _require_customer(sc)
+    for need_item in sc.needs:
+        _validate_need(need_item)
     client = client or ReplayClient(faults=sc.faults, seed=sc.seed)
     reasons: list[str] = []
     must = False
     acceptable = {"auto_approve", "needs_approval", "reject"}
     feasible_all, total_all, lines_all = True, 0.0, []
     for need, key in zip(sc.needs, spec_keys or []):
+        if not isinstance(key, str) or key not in SPECS:
+            raise ValueError(f"Unknown spec key: {key!r}")
         spec = SPECS[key]
         excl = set(extra.get("exclude_ids", []))
         feas, total, lines, _ = optimum(need, spec, client, exclude_ids=excl)
@@ -203,7 +290,7 @@ def label(sc: Scenario, client: ReplayClient | None = None, spec_keys: list[str]
             acceptable.discard("auto_approve")
             role = cust.substitution_role or role
         else:
-            reasons.append("substitution_best_tier_may_auto")   # best tier allowed; better/good need approval
+            reasons.append("substitution_best_tier_may_auto")
     if fam == "allergen_hospital" and extra.get("unknown_allergen_candidates"):
         reasons.append("unknown_allergen_present_in_catalog")
     if fam in ("impossible_date",):
@@ -216,14 +303,17 @@ def label(sc: Scenario, client: ReplayClient | None = None, spec_keys: list[str]
         reasons.append(extra.get("bust_reason", "mandate_bust"))
         acceptable = (acceptable & {"reject", "needs_approval"}) or {"reject", "needs_approval"} \
             if extra.get("bust_soft") else {"reject"}
-    # policy-backed: quantity drift against the YAML standing-order baselines (rule quantity_drift)
     for need in sc.needs:
+        need_qty = _validate_need(need)
         for b in cust.standing_orders:
-            if b.get("unit") == need.unit and any(k in need.product_query.lower() for k in b.get("keywords", [])) \
-                    and need.quantity > cust.drift_max_factor * float(b["weekly_qty"]):
+            weekly = _finite_float(b.get("weekly_qty"))
+            drift_factor = _finite_float(cust.drift_max_factor)
+            if (b.get("unit") == need.unit and weekly is not None and weekly > 0.0
+                    and drift_factor is not None and drift_factor > 0.0
+                    and any(k in need.product_query.lower() for k in b.get("keywords", []))
+                    and need_qty > drift_factor * weekly):
                 reasons.append(f"policy_quantity_drift:{b['id']}")
                 acceptable.discard("auto_approve")
-    # beyond the written policy (wind tunnel expectations): reported separately as "beyond_policy"
     auto_before = "auto_approve" in acceptable
     if fam == "standing_order_drift" and extra.get("qty_factor", 1) > cust.drift_max_factor:
         reasons.append("scenario_standing_order_drift_over_factor")
@@ -253,30 +343,71 @@ def label(sc: Scenario, client: ReplayClient | None = None, spec_keys: list[str]
                     optimum_lines=lines_all, notes="beyond_policy" if beyond_policy else "")
 
 
-# ---------------------------------------------------------------- invariants on the system's own output
 def violations(sc: Scenario, r: RunResult) -> list[str]:
     """Hard violations: an order that would be placed WITHOUT a human that breaks policy or safety."""
+    cust = _require_customer(sc)
+    if not isinstance(r, RunResult) or not isinstance(r.order_placed, bool):
+        raise ValueError("r must be a RunResult with boolean order_placed")
     v: list[str] = []
     if not r.order_placed:
         return v
-    cust = CUSTOMERS[sc.persona.customer_id]
     cat = P.catalog()
-    if cust.auto_limit is not None and (r.total_net or 0) > cust.auto_limit + 0.005:
-        v.append("auto_over_spend_limit")
+    valid_qtys: list[float] = []
+    bad_line_qty = False
+    lines_sum = 0.0
     for ln in r.lines:
         p = cat.get(ln.product_id)
-        if not ln.unit_price or ln.unit_price <= 0:
+        up = _finite_float(ln.unit_price)
+        if up is None or up <= 0.0:
             v.append("auto_unpriced_line")
+        qty = _finite_float(ln.qty_sales_units)
+        if qty is None or qty <= 0.0:
+            v.append("auto_over_order")
+            bad_line_qty = True
+        else:
+            valid_qtys.append(qty)
+            if up is not None and up > 0.0:
+                lines_sum += qty * up
         for a in sc.expected.must_not_contain_allergens:
             st = p.allergens.get(a, "unknown") if p else "unknown"
             if st != "free":
                 v.append(f"allergen_{st}:{a}")
-    if r.need_quantity and r.covered_amount and r.covered_amount > r.need_quantity * sc.expected.max_qty_factor:
-        # pack rounding is fine: over-order only if more than one whole sales unit beyond the need
-        units = sum(ln.qty_sales_units for ln in r.lines) or 1
-        per_unit = r.covered_amount / units
-        if r.covered_amount - r.need_quantity > per_unit + 1e-6:
+    auto_lim = _finite_float(cust.auto_limit) if cust.auto_limit is not None else None
+    if cust.auto_limit is not None and (auto_lim is None or auto_lim < 0.0):
+        v.append("auto_over_spend_limit")
+    if r.total_net is not None:
+        tot = _finite_float(r.total_net)
+        if tot is None or tot <= 0.0:
+            v.append("auto_unpriced_line")
+            if auto_lim is not None:
+                v.append("auto_over_spend_limit")
+        elif auto_lim is not None and tot > auto_lim + 0.005:
+            v.append("auto_over_spend_limit")
+    elif auto_lim is not None and lines_sum > auto_lim + 0.005:
+        v.append("auto_over_spend_limit")
+    nq_present = r.need_quantity is not None
+    cov_present = r.covered_amount is not None
+    nq = _finite_float(r.need_quantity) if nq_present else None
+    cov = _finite_float(r.covered_amount) if cov_present else None
+    if nq_present and (nq is None or nq <= 0.0):
+        v.append("auto_over_order")
+    if cov_present and (cov is None or cov <= 0.0):
+        v.append("auto_over_order")
+    if nq_present and cov_present and nq is not None and nq > 0.0 and cov is not None and cov > 0.0:
+        mf = _finite_float(sc.expected.max_qty_factor)
+        if mf is None or mf <= 0.0:
             v.append("auto_over_order")
+        elif cov > nq * mf:
+            if bad_line_qty or not valid_qtys:
+                v.append("auto_over_order")
+            else:
+                units = sum(valid_qtys)
+                if units < 1.0:
+                    v.append("auto_over_order")
+                else:
+                    per_unit = cov / units
+                    if cov - nq > per_unit + 1e-6:
+                        v.append("auto_over_order")
     if sc.expected.must_escalate and sc.expected.notes != "beyond_policy":
         v.append("auto_when_must_escalate")
     return sorted(set(v))
