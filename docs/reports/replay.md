@@ -66,3 +66,7 @@ timing; the assertion is unchanged.
 - S4 (`submit`): `README.md`, `docs/DEMO.md`, and `docs/RUN.md` document automatic keyless replay (`served_from: replay` on `make accept` and `uv run aimo serve`). Re-record with `uv run python scripts/record_replay.py` (needs `AIMO_API_KEY`).
 - `scripts/export_peppol_order_response.py` keeps its fixed synthetic sample date on purpose (it renders a
   static example document, not a live order).
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- On `fr8/valio/main` (`43e841c` / `7990fa3`) and `fr8/valio/docs` (`ed09d11` / `d89db12`, `4,286` collected pytest checks in `tests/`, up from `4,137` on `d89db12` and `2,448` on `1d0b238`), automatic keyless replay (`tests/fixtures/snapshot/replay/`, 669 products) continues to pass `scenarios.run_all` **8/8** across **92 checks** with zero keys.
+- Alongside `make accept` and `uv run aimo serve`, judges can inspect WebCrypto Ed25519 JWS verification, 403 `agent_cannot_approve`, 409 `requote_needed`, Peppol `AP`, and audit tamper detection offline in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).

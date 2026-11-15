@@ -102,3 +102,7 @@ M1 curl walkthrough (headers `X-Customer-Id: hotel-aurora`, `X-Agent-Id: buyer-1
 - **MCP DNS-rebinding protection is off by default,** so it works behind tunnels. Set `AIMO_MCP_ALLOWED_HOSTS` to enable it.
 - **`uv.lock` is untracked.** Please decide whether to commit it on main.
 - **Approvals are not exposed as an MCP tool,** on purpose: an agent cannot approve its own order.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- On `fr8/valio/main` (`43e841c` / `7990fa3`) and `fr8/valio/docs` (`ed09d11` / `d89db12`, `4,286` collected pytest checks in `tests/`), the gateway advertises **13 MCP tools** (`0 approval tools`), enforces known-customer 403 `unknown_customer` across `/v1` and MCP, requires human `X-Approver-Session` / `X-Approver-Pin` on approvals and `/v1/agent/runs`, enforces `409 requote_needed` (`reason: partial_stock`), gates `X-Aimo-Now` / `X-Aimo-Faults` behind `AIMO_DEMO_FAULTS=1`, and passes **44/44** `otap/0.1` conformance on two wholesalers.
+- Judges can verify WebCrypto Ed25519 JWS signatures, 403 `agent_cannot_approve`, 409 `requote_needed`, Peppol `AP` XML export, and hash-chained audit tamper detection with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).

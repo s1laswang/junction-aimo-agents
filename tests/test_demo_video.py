@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import threading
 import time
+import tokenize
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -605,6 +608,7 @@ def test_live_playwright_e2e_demo_beats(tmp_path: Path, monkeypatch: pytest.Monk
             assert placed_order["response_code"] == "AP"
 
             expect(page.locator("#timeline .tl-item.k-final")).to_be_visible(timeout=10000)
+            expect(page.locator("#request-card")).to_contain_text("Finished", timeout=10000)
 
             expect(page.locator("#order-response")).to_be_visible(timeout=10000)
             expect(page.locator("#order-response")).to_contain_text("Placed", timeout=10000)
@@ -622,12 +626,25 @@ def test_live_playwright_e2e_demo_beats(tmp_path: Path, monkeypatch: pytest.Monk
             assert "order.approved" in audit_actions
             assert "order.placed" in audit_actions
 
+            page.wait_for_timeout(550)
             page.locator("#tab-audit").click()
             expect(page.locator("#view-audit")).to_be_visible(timeout=10000)
-            page.locator("#view-audit button", has_text="Whole ledger").click()
+            with page.expect_response(
+                lambda r: r.url.endswith("/v1/audit") and r.request.method == "GET",
+                timeout=10000,
+            ):
+                page.locator("#view-audit button", has_text="Whole ledger").click()
+            expect(page.locator("#view-audit")).to_contain_text(
+                "Whole ledger, every agent and every customer",
+                timeout=10000,
+            )
             expect(page.locator("#view-audit ol.chain li")).not_to_have_count(0, timeout=10000)
 
-            page.locator("#view-audit .audit-tools button", has_text="Verify chain").click()
+            with page.expect_response(
+                lambda r: "/v1/audit/verify" in r.url and r.request.method == "GET",
+                timeout=10000,
+            ):
+                page.locator("#view-audit .audit-tools button", has_text="Verify chain").click()
             expect(page.locator("#view-audit .verify-result.ok")).to_contain_text("Chain intact", timeout=10000)
             verify_ok = httpx.get(f"{base_url}/v1/audit/verify", timeout=10.0).json()
             assert verify_ok["ok"] is True
@@ -713,11 +730,10 @@ def test_live_playwright_injection_screen_plan_ui(tmp_path: Path, monkeypatch: p
 
 def test_committed_demo_backup_mp4() -> None:
     mp4 = ROOT / "docs" / "demo-backup.mp4"
-    if not mp4.exists():
-        pytest.skip("docs/demo-backup.mp4 not yet merged")
+    assert mp4.is_file(), "docs/demo-backup.mp4 must exist"
 
     size = mp4.stat().st_size
-    assert 50_000 <= size <= 10_000_000
+    assert 50_000 <= size < 5_000_000
 
     info = _probe_mp4(mp4)
     video_streams = [s for s in info.get("streams", []) if s.get("width") is not None]
@@ -730,11 +746,13 @@ def test_committed_demo_backup_mp4() -> None:
     duration = float((info.get("format") or {}).get("duration") or 0.0)
     assert duration >= 15.0
 
+    demo_doc = (ROOT / "docs" / "DEMO.md").read_text(encoding="utf-8")
+    assert f"{size:,}" in demo_doc
+
 
 def test_record_demo_video_script_fast(tmp_path: Path) -> None:
     script = ROOT / "scripts" / "record_demo_video.py"
-    if not script.exists():
-        pytest.skip("scripts/record_demo_video.py not yet merged")
+    assert script.is_file(), "scripts/record_demo_video.py must exist"
 
     out_mp4 = tmp_path / "test.mp4"
     env = dict(os.environ)
@@ -765,3 +783,55 @@ def test_record_demo_video_script_fast(tmp_path: Path) -> None:
     assert stream.get("pix_fmt") == "yuv420p"
     assert int(stream.get("width")) == 1280
     assert int(stream.get("height")) == 800
+
+
+def test_demo_video_script_and_doc_hygiene() -> None:
+    em_dash = chr(0x2014)
+    anchor_sep = chr(35)
+
+    for py_rel in ("scripts/record_demo_video.py", "tests/test_demo_video.py"):
+        raw_py = (ROOT / py_rel).read_text(encoding="utf-8")
+        assert em_dash not in raw_py, f"Em dash found in {py_rel}"
+        comments = [
+            tok.string
+            for tok in tokenize.generate_tokens(io.StringIO(raw_py).readline)
+            if tok.type == tokenize.COMMENT
+        ]
+        assert comments == [], f"Python comments found in {py_rel}: {comments}"
+
+    script_raw = (ROOT / "scripts" / "record_demo_video.py").read_text(encoding="utf-8")
+    assert anchor_sep not in script_raw
+
+    demo_path = ROOT / "docs" / "DEMO.md"
+    demo_raw = demo_path.read_text(encoding="utf-8")
+    assert em_dash not in demo_raw
+    for required_token in (
+        "10:45 Peer Review: Keyless 3-Minute Click Script",
+        "demo-backup.mp4",
+        "scripts/record_demo_video.py",
+        "Try to Scam the Agent",
+        "One-Page Judge Walkthrough",
+        "docs/arena/index.html",
+        "docs/demo/index.html",
+        "docs/demo/ASSETS.md",
+        "Prompt-injection screen: clean",
+        "403 agent_cannot_approve",
+        "409 requote_needed",
+    ):
+        assert required_token in demo_raw, f"docs/DEMO.md missing {required_token!r}"
+
+    stripped = re.sub(r"```.*?```", "", demo_raw, flags=re.DOTALL)
+    stripped = re.sub(r"`[^`\n]+`", "", stripped)
+    link_re = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+    for raw_target in link_re.findall(stripped):
+        target = raw_target.strip().split()[0]
+        if target.startswith(("http://", "https://", "mailto:", "data:", anchor_sep)):
+            continue
+        clean = target.split(anchor_sep, 1)[0].split("?", 1)[0]
+        if not clean:
+            continue
+        resolved = (demo_path.parent / clean).resolve()
+        assert resolved.is_relative_to(ROOT.resolve())
+        assert resolved.exists(), f"Broken relative link in docs/DEMO.md: {raw_target}"
+        if resolved.is_file():
+            assert resolved.stat().st_size > 0
