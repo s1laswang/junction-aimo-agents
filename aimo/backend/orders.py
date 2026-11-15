@@ -91,6 +91,107 @@ def conn() -> sqlite3.Connection:
         return c
 
 
+def _valid_id(val: Any) -> bool:
+    if not isinstance(val, str) or not val or not val.strip() or len(val) > 256 or "\x00" in val:
+        return False
+    try:
+        val.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _strip_bad_chars(val: str) -> str:
+    cleaned = val.replace("\x00", "")
+    try:
+        cleaned.encode("utf-8")
+        return cleaned
+    except UnicodeEncodeError:
+        return cleaned.encode("utf-8", "replace").decode("utf-8")
+
+
+def _clean_field(val: Any, max_len: int = 256) -> str:
+    if val is None or isinstance(val, bool):
+        return ""
+    raw = val if isinstance(val, str) else str(val)
+    return _strip_bad_chars(raw)[:max_len]
+
+
+def _parse_quote(raw: Any) -> Quote | None:
+    if not isinstance(raw, (str, bytes, bytearray)):
+        return None
+    try:
+        return Quote.model_validate_json(raw)
+    except Exception:
+        return None
+
+
+def _parse_order(raw: Any) -> Order | None:
+    if not isinstance(raw, (str, bytes, bytearray)):
+        return None
+    try:
+        return Order.model_validate_json(raw)
+    except Exception:
+        return None
+
+
+def _valid_filter_str(val: Any) -> bool:
+    if not isinstance(val, str) or len(val) > 256 or "\x00" in val:
+        return False
+    try:
+        val.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _coerce_limit(limit: Any) -> int:
+    if isinstance(limit, bool):
+        return 200
+    if isinstance(limit, int):
+        return max(1, min(1000, limit))
+    if isinstance(limit, float):
+        if math.isnan(limit):
+            return 200
+        if math.isinf(limit):
+            return 1000 if limit > 0 else 1
+        if limit <= 0:
+            return 1
+        return 200
+    if isinstance(limit, str):
+        s = limit.strip()
+        if s and (s.isdigit() or (s[0] in "+-" and s[1:].isdigit())):
+            return max(1, min(1000, int(s)))
+        return 200
+    return 200
+
+
+def _json_clean(val: Any) -> Any:
+    if val is None or isinstance(val, bool):
+        return val
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return val if math.isfinite(val) else None
+    if isinstance(val, str):
+        return _strip_bad_chars(val)
+    if isinstance(val, (list, tuple)):
+        return [_json_clean(x) for x in val]
+    if isinstance(val, dict):
+        return {_strip_bad_chars(str(k)): _json_clean(v) for k, v in val.items()}
+    return _strip_bad_chars(str(val))
+
+
+def _parse_fallback_event(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, (str, bytes, bytearray)):
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 # ------------------------------------------------------------------ quotes
 def save_quote(q: Quote) -> Quote:
     with _lock:
@@ -103,9 +204,11 @@ def save_quote(q: Quote) -> Quote:
 
 
 def get_quote(quote_id: str) -> Quote | None:
+    if not _valid_id(quote_id):
+        return None
     with _lock:
         row = conn().execute("SELECT body FROM gw_quotes WHERE quote_id=?", (quote_id,)).fetchone()
-    return Quote.model_validate_json(row[0]) if row else None
+    return _parse_quote(row[0]) if row else None
 
 
 # ------------------------------------------------------------------ orders
@@ -120,24 +223,19 @@ def save_order(o: Order) -> Order:
 
 
 def get_order(order_id: str) -> Order | None:
+    if not _valid_id(order_id):
+        return None
     with _lock:
         row = conn().execute("SELECT body FROM gw_orders WHERE order_id=?", (order_id,)).fetchone()
-    return Order.model_validate_json(row[0]) if row else None
+    return _parse_order(row[0]) if row else None
 
 
 def list_orders(status: str | None = None, customer_id: str | None = None, limit: int = 200) -> list[Order]:
-    if status is not None and not isinstance(status, str):
+    if status is not None and not _valid_filter_str(status):
         return []
-    if customer_id is not None and not isinstance(customer_id, str):
+    if customer_id is not None and not _valid_filter_str(customer_id):
         return []
-    if isinstance(limit, bool):
-        lim = 200
-    elif isinstance(limit, int):
-        lim = max(1, min(1000, limit))
-    elif isinstance(limit, float) and math.isinf(limit):
-        lim = 1000 if limit > 0 else 1
-    else:
-        lim = 200
+    lim = _coerce_limit(limit)
     sql, args = "SELECT body FROM gw_orders WHERE 1=1", []
     if status:
         sql += " AND status=?"
@@ -145,34 +243,56 @@ def list_orders(status: str | None = None, customer_id: str | None = None, limit
     if customer_id:
         sql += " AND customer_id=?"
         args.append(customer_id)
-    sql += " ORDER BY created_at DESC LIMIT ?"
-    args.append(lim)
+    sql += " ORDER BY created_at DESC"
+    out: list[Order] = []
     with _lock:
-        rows = conn().execute(sql, args).fetchall()
-    return [Order.model_validate_json(r[0]) for r in rows]
+        cur = conn().execute(sql, args)
+        try:
+            for r in cur:
+                parsed = _parse_order(r[0])
+                if parsed is not None:
+                    out.append(parsed)
+                    if len(out) >= lim:
+                        break
+        finally:
+            cur.close()
+    return out
 
 
 def order_for_quote(quote_id: str) -> Order | None:
+    if not _valid_id(quote_id):
+        return None
     with _lock:
-        row = conn().execute(
-            "SELECT body FROM gw_orders WHERE quote_id=? ORDER BY created_at DESC LIMIT 1", (quote_id,)
-        ).fetchone()
-    return Order.model_validate_json(row[0]) if row else None
+        rows = conn().execute(
+            "SELECT body FROM gw_orders WHERE quote_id=? ORDER BY created_at DESC", (quote_id,)
+        ).fetchall()
+    for r in rows:
+        parsed = _parse_order(r[0])
+        if parsed is not None:
+            return parsed
+    return None
 
 
 # ------------------------------------------------------------------ approvals
 def record_approval(order_id: str, decision: str, approver: str, note: str | None, quote_hash: str) -> dict[str, Any]:
+    oid = _clean_field(order_id, 256)
+    dec = _clean_field(decision, 64)
+    app = _clean_field(approver, 256)
+    qh = _clean_field(quote_hash, 256)
+    nt = None if note is None or isinstance(note, bool) else _clean_field(note, 4096)
     ts = _now().isoformat()
     with _lock:
         conn().execute(
             "INSERT INTO gw_approvals (order_id, decision, approver, note, quote_hash, ts) VALUES (?,?,?,?,?,?)",
-            (order_id, decision, approver, note, quote_hash, ts),
+            (oid, dec, app, nt, qh, ts),
         )
-    return {"order_id": order_id, "decision": decision, "approver": approver, "note": note,
-            "quote_hash": quote_hash, "ts": ts}
+    return {"order_id": oid, "decision": dec, "approver": app, "note": nt,
+            "quote_hash": qh, "ts": ts}
 
 
 def approvals_for(order_id: str) -> list[dict[str, Any]]:
+    if not _valid_id(order_id):
+        return []
     with _lock:
         rows = conn().execute(
             "SELECT order_id, decision, approver, note, quote_hash, ts FROM gw_approvals WHERE order_id=? ORDER BY id",
@@ -247,21 +367,51 @@ def fallback_audit_append(event: dict[str, Any]) -> dict[str, Any]:
     """Hash-chained, UNSIGNED audit event. Used only when aimo.trust.audit is unavailable."""
     import hashlib
 
+    raw_event = event if isinstance(event, dict) else {}
+    cleaned = _json_clean(
+        {
+            k: v
+            for k, v in raw_event.items()
+            if _strip_bad_chars(str(k)) not in ("seq", "ts", "prev_hash", "hash", "signature", "kid")
+        }
+    )
     with _lock:
         c = conn()
-        row = c.execute("SELECT seq, body FROM gw_audit_fallback ORDER BY seq DESC LIMIT 1").fetchone()
-        seq = (row[0] + 1) if row else 1
-        prev = json.loads(row[1])["hash"] if row else "0" * 64
-        ev = {"seq": seq, "ts": _now().isoformat(), **event, "prev_hash": prev, "signature": "", "kid": "unsigned-fallback"}
+        cur = c.execute("SELECT seq, body FROM gw_audit_fallback ORDER BY seq DESC")
+        try:
+            seq = 1
+            prev = "0" * 64
+            first = True
+            for r in cur:
+                if first:
+                    seq = (int(r[0]) + 1) if isinstance(r[0], int) and not isinstance(r[0], bool) else 1
+                    first = False
+                parsed = _parse_fallback_event(r[1])
+                if parsed is not None:
+                    h = parsed.get("hash")
+                    if isinstance(h, str) and h:
+                        prev = _strip_bad_chars(h)
+                        break
+        finally:
+            cur.close()
+        ev = {"seq": seq, "ts": _now().isoformat(), **cleaned, "prev_hash": prev, "signature": "", "kid": "unsigned-fallback"}
         canon = json.dumps({k: v for k, v in ev.items() if k not in ("hash", "signature", "kid")},
                            sort_keys=True, separators=(",", ":"), default=str)
-        ev["hash"] = hashlib.sha256(canon.encode()).hexdigest()
+        ev["hash"] = hashlib.sha256(canon.encode("utf-8")).hexdigest()
         c.execute("INSERT INTO gw_audit_fallback VALUES (?,?)", (seq, json.dumps(ev, default=str)))
     return ev
 
 
 def fallback_audit_events(subject_id: str | None = None) -> list[dict[str, Any]]:
+    if subject_id is not None and not _valid_filter_str(subject_id):
+        return []
     with _lock:
         rows = conn().execute("SELECT body FROM gw_audit_fallback ORDER BY seq").fetchall()
-    evs = [json.loads(r[0]) for r in rows]
-    return [e for e in evs if subject_id is None or e.get("subject_id") == subject_id]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        parsed = _parse_fallback_event(r[0])
+        if parsed is None:
+            continue
+        if subject_id is None or parsed.get("subject_id") == subject_id:
+            out.append(parsed)
+    return out
