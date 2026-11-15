@@ -45,8 +45,29 @@ class Content:
     sales_unit_size: float = 1.0          # base units per sales unit
 
 
-def _to_float(s: str) -> float:
-    return float(s.replace(",", "."))
+_MAX_NAME_LEN = 1000
+_MAX_MULT = 100_000
+
+
+def _to_float(s: Any) -> Optional[float]:
+    if isinstance(s, bool):
+        return None
+    if isinstance(s, (int, float)):
+        try:
+            fv = float(s)
+        except OverflowError:
+            return None
+        return fv if math.isfinite(fv) else None
+    if not isinstance(s, str):
+        return None
+    st = s.strip().replace(",", ".")
+    if not st or len(st) > _MAX_NAME_LEN:
+        return None
+    try:
+        fv = float(st)
+    except (ValueError, OverflowError):
+        return None
+    return fv if math.isfinite(fv) else None
 
 
 def _norm_unit(u: str) -> tuple[str, float]:
@@ -116,7 +137,7 @@ def drained_quantity(name: str) -> Optional[Qty]:
     Mixed weight/volume pairs ('1000ml/1090g', '280g/425ml') -> the volume."""
     if not isinstance(name, str) or not name:
         return None
-    name = _ESTIMATE_RE.sub("", name)
+    name = _ESTIMATE_RE.sub("", name[:_MAX_NAME_LEN])
     m = _PAIR_RE.search(name)
     if not m:
         return None
@@ -140,13 +161,19 @@ def parse_name_quantity(name: str) -> tuple[Optional[Qty], int]:
     """
     if not isinstance(name, str) or not name:
         return None, 1
-    name = _ESTIMATE_RE.sub("", name)
+    name = _ESTIMATE_RE.sub("", name[:_MAX_NAME_LEN])
     name = re.sub(r"\([^)]*\)", " ", name)
     mult = 1
     for a, b in _MULT_TOKEN_RE.findall(name):
-        k = int(a or b)
+        tok = (a or b).lstrip("0")
+        if not tok:
+            continue
+        if len(tok) > 6:
+            mult = _MAX_MULT
+            continue
+        k = int(tok)
         if k > 0:
-            mult *= k
+            mult = min(mult * k, _MAX_MULT)
     m = _MULTI_RE.search(name)
     if m:
         unit, f = _norm_unit(m.group(3))
@@ -332,14 +359,15 @@ def reconcile_with_price(content_amount: Optional[float], content_unit: Optional
     rounded to cents, so allow `tol` relative error; beyond that the price-derived value wins.
     """
     ca = _pos_finite(content_amount)
+    cu = content_unit.strip() if isinstance(content_unit, str) and content_unit.strip() else None
     fallback_amt = ca if content_amount is not None else None
     up = _pos_finite(unit_price)
     cp = _pos_finite(comparison_price)
     if up is None or cp is None or comparison_unit not in ("L", "KG"):
-        return fallback_amt, content_unit, None
+        return fallback_amt, cu, None
     derived = _div_pos(up, cp)
     if derived is None:
-        return fallback_amt, content_unit, None
+        return fallback_amt, cu, None
     tol_f = 0.03
     if not isinstance(tol, bool) and isinstance(tol, (int, float)):
         try:
@@ -348,16 +376,16 @@ def reconcile_with_price(content_amount: Optional[float], content_unit: Optional
                 tol_f = tf
         except OverflowError:
             pass
-    if ca is not None and content_unit == comparison_unit:
+    if ca is not None and cu == comparison_unit:
         rel_err = abs(derived - ca) / ca
         if math.isfinite(rel_err) and rel_err <= tol_f:
-            return ca, content_unit, None
+            return ca, cu, None
     snapped = _snap(derived)
     if not math.isfinite(snapped) or snapped <= 0.0:
-        return fallback_amt, content_unit, None
+        return fallback_amt, cu, None
     note = (f"content per sales unit from price ({up:.2f} / {cp:.2f} per {comparison_unit}"
             f" = {snapped:g} {comparison_unit}); static data said "
-            f"{ca if ca is not None else 'n/a'} {content_unit or ''}".strip())
+            f"{ca if ca is not None else 'n/a'} {cu or ''}".strip())
     return snapped, comparison_unit, note
 
 
@@ -386,20 +414,14 @@ def _snap(x: float) -> float:
 
 def fat_pct(raw_nutrition: dict[str, float], name: str) -> Optional[float]:
     if isinstance(raw_nutrition, dict) and "FAT" in raw_nutrition:
-        v = raw_nutrition["FAT"]
-        if not isinstance(v, bool) and isinstance(v, (int, float)):
-            try:
-                fv = float(v)
-                if math.isfinite(fv) and fv >= 0.0:
-                    return fv
-            except OverflowError:
-                pass
-    s_name = name if isinstance(name, str) else ""
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", s_name)
-    if m:
+        fv = _to_float(raw_nutrition["FAT"])
+        if fv is not None and 0.0 <= fv <= 100.0:
+            return 0.0 if fv == 0.0 else fv
+    s_name = name[:_MAX_NAME_LEN] if isinstance(name, str) else ""
+    for m in re.finditer(r"(\d+(?:[.,]\d+)?)\s*%", s_name):
         fv = _to_float(m.group(1))
-        if math.isfinite(fv) and fv >= 0.0:
-            return fv
+        if fv is not None and 0.0 <= fv <= 100.0:
+            return 0.0 if fv == 0.0 else fv
     n = s_name.lower()
     if "semi skimmed" in n or "semi-skimmed" in n or "kevyt" in n:
         return 1.5
@@ -415,17 +437,18 @@ def describe_pack(amount: Optional[float], unit: Optional[str], size: float, bas
     """'2 x 10 L (20 L per KI)' style label."""
     su = sales_unit if isinstance(sales_unit, str) else ""
     amt = _pos_finite(amount)
-    if amt is None or not isinstance(unit, str) or not unit:
+    u = unit.strip() if isinstance(unit, str) else ""
+    if amt is None or not u:
         return su
     def f(x: float) -> str:
         return f"{x:g}"
-    if unit == "PCS":
+    if u == "PCS":
         return f"{f(amt)} pcs per {su}"
     sz = _pos_finite(size)
     ba = _pos_finite(base_amount)
     if sz is not None and sz > 1.0 and ba is not None:
-        return f"{f(sz)} x {f(ba)} {unit} ({f(amt)} {unit} per {su})"
-    return f"{f(amt)} {unit} per {su}"
+        return f"{f(sz)} x {f(ba)} {u} ({f(amt)} {u} per {su})"
+    return f"{f(amt)} {u} per {su}"
 
 
 def as_dict(c: Content) -> dict[str, Any]:
