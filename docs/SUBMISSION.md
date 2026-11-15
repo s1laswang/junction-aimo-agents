@@ -7,7 +7,7 @@ Deadline: Sun 15 Nov 2026 10:00 Helsinki (code freeze and tag `aimo-v1` at 06:00
 |---|---|
 | Repository (public) | https://github.com/s1laswang/junction-aimo-agents (judged version: tag `aimo-v1`) |
 | Demo video | *Filled at the freeze.* Chintufp records it from [DEMO.md](DEMO.md) "Recording the video", uploads it unlisted, and pastes the URL into this cell and into the "Video" field of the Junction submission form. |
-| Public URL | *Filled at the freeze* if a hosted gateway is up (paste it into this cell and the form's "Demo URL" field). Otherwise this cell reads: "Runs locally with one command: `make accept`, then `uv run aimo serve` and open http://localhost:8000/ui (works with no keys: replay mode on recorded mock-API responses and a committed catalog subset; see README, Keyless vs keyed)." |
+| Public URL | *Filled at the freeze* if a hosted gateway is up (paste it into this cell and the form's "Demo URL" field). Otherwise this cell reads: "Runs locally with one command: `make accept`, then `uv run aimo serve` and open http://localhost:8000/ui (works with no keys: replay mode on recorded mock-API responses and a committed catalog subset; see docs/RUN.md, Keyless vs keyed)." |
 
 ## Short version (under 500 characters)
 

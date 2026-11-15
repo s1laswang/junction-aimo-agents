@@ -36,6 +36,24 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 - S1 replay merged: README env table, keyless vs keyed table, quickstart and `make accept` description rewritten (automatic replay, 669-product snapshot and catalog subset, 503 `catalog_missing`, bundled live fallback); DEMO step 1 and the Wi-Fi row drop `AIMO_REPLAY_FALLBACK`; NUMBERS, ASSUMPTIONS, OPENNESS, QA 13 and SUBMISSION updated.
 - Own keyless check (fresh clone, empty `.env`, key variables unset): RESULT: PASS, 16 PASS / 4 SKIP. Keyless pytest has 8 failures from S2/S3 tests that need the full catalog but are not marked `needs_data`; documented in README and NUMBERS (request below).
 
+## Keyless re-score before `aimo-v1` (Sun 15 Nov 02:37–02:55, handed over by the bake-off review session)
+On two `git archive` exports of main 738c93a, no `.env`, every key variable unset. Probe scripts from `~/junction-aimo-team/review-probes/aimo/`, retargeted to local ports; `session_probe.py` was rewritten as `session_v2.py` because sessions now need `{"approver": ...}`.
+| Check | Result |
+|---|---|
+| `make accept` keyless | RESULT: PASS, 16 pass / 0 fail / 4 skip; scenarios 8/8 (replay), conformance 44/44, MILK FLOW OK, order ORD-20261114-8ce7ab61, Peppol AP, audit verify ok (20 events) |
+| Original self-approval exploit (agent headers + anna + remember) | 403 `agent_cannot_approve`; also with lowercase header and with the correct PIN |
+| Wrong, missing, duplicated or query/body PIN; tamper without credential | 401 |
+| Rotating X-Forwarded-For / X-Real-IP / Forwarded | stays locked: 429 (298/300, 30/30, 30/30) |
+| Brute force | 498 of 500 guesses get 429 after the lock; the credential is a 12-character passphrase |
+| anna's session deciding as mikko | 403 `approver_mismatch` |
+| Forged session tokens (truncated, flipped, garbage v1, v1 prefix, approver swapped) | 401 ×5 |
+| MCP create_quote / place_order without identity (HTTP: none, agent-only, customer-only; stdio) | `identity_required`; unknown agent → `scope_missing` |
+| PIN length (judge_accept.sh, run_all.py, generated file) | 12 characters, mode 600 |
+| PIN / session token in logs, audit, JS, 9 endpoints | not found |
+| 2.5 ST; bad `/v1/agent/runs` body; search and plan with no data | 422; 422; 503 `catalog_missing` |
+| Known, documented gap | spoofed `X-Customer-Id` alone lists that customer's inbox (header-only agent identity, QA Q4/Q11) |
+| Learned swap after "remember" | the swap no longer escalates as a substitution; spend and drift still do |
+
 ## Open items
 - Re-check README, SUBMISSION, DEMO and QA against main every hour while the other sessions merge:
   - S1 replay: keyless `make accept` and the catalog subset will change the "Keyless vs keyed" table (catalog row) and NUMBERS "make accept".

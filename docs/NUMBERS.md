@@ -39,7 +39,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | Agent approving as a real approver with the right hash → 403 `agent_cannot_approve`, audited as `approval.refused`; MCP has 0 approval tools | DEMO, SUBMISSION, README, QA | `uv run python docs/pitch/permissions_attack.py --base http://localhost:8000` with a pending order (**replay** or **live**, no credential needed, about 3 s) | 403, refusal in the audit report, exit 0 | R submit, Sat 23:14 |
-| No credential → 401 `approver_auth_required`; session deciding as someone else → 403 `approver_mismatch`; session approval → `placed`; tamper → verify red at #3, untamper → green | README, DEMO, QA | the curl steps in README "REST with curl" and DEMO "Tamper demo" (**replay**) | as stated | R submit, Sat 23:10–23:13 |
+| No credential → 401 `approver_auth_required`; session deciding as someone else → 403 `approver_mismatch`; session approval → `placed`; tamper → verify red at #3, untamper → green | README, DEMO, QA | the curl steps in docs/CONNECT.md "REST with curl" and DEMO "Tamper demo" (**replay**) | as stated | R submit, Sat 23:10–23:13 |
 | Regression tests for the above | TRUST, QA | `uv run --extra dev pytest -q tests/test_human_auth.py` | pass (included in the full run below) | R submit, Sat 23:05 |
 
 ## MCP and openness
