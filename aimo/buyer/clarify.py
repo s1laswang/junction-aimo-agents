@@ -21,17 +21,38 @@ from aimo.buyer.need import _QTY_RE
 from aimo.models import Need
 
 MAX_QUESTIONS = 2
-DAIRY_VARIANT = re.compile(r"\b(milk|maito|cream|kerma|yogh?urt|jogurtti|rahka|quark|piimä|buttermilk)\b", re.I)
+DAIRY_VARIANT = re.compile(
+    r"\b(milk|maito|mjölk|cream|kerma|grädde|yogh?urt|jogurtti|rahka|quark|kvarg|piimä|filmjölk|buttermilk)\b",
+    re.I,
+)
 VARIANT_WORDS = re.compile(
     r"\d+(?:[.,]\d+)?\s*%|skim|semi|whole|full[- ]fat|fat[- ]free|low[- ]fat|light|kevyt|rasvaton|täys|"
-    r"whipping|vispi|cooking|ruoka|sour|hapan|barista|organic|luomu|\b\d+(?:[.,]\d+)?\s*(?:l|dl|ml|kg|g)\b", re.I)
-DAIRY_ANY = re.compile(r"\b(milk|maito|cream|kerma|butter|voi|cheese|juusto|yogh?urt|jogurtti|rahka|quark)\b", re.I)
-PLANT = re.compile(r"\b(oat|kaura|soy|soija|plant|vegan|almond|manteli|pea|herne|coconut|kookos|rice|riisi)\b", re.I)
-LIQUID_OR_BULK = re.compile(r"\b(milk|maito|cream|kerma|drink|juoma|juice|mehu|butter|voi|cheese|juusto|"
-                            r"yogh?urt|jogurtti|flour|jauho|sugar|sokeri|oil|öljy)\b", re.I)
-NEXT_WEEK = re.compile(r"\bnext week\b|\bensi viikolla\b|\bnästa vecka\b", re.I)
-WEEKDAY = re.compile(r"\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b|\b(maanantai|tiistai|keskiviikko|torstai|perjantai|"
-                     r"lauantai|sunnuntai)|\d{1,2}\.\d{1,2}\.|\d{4}-\d{2}-\d{2}", re.I)
+    r"lätt|fettfri|helmjölk|standardmjölk|whipping|vispi|kuohu|vispgrädd|cooking|ruoka|matlagning|"
+    r"sour|hapan|barista|organic|luomu|ekologisk|\b\d+(?:[.,]\d+)?\s*(?:l|dl|ml|kg|g)\b",
+    re.I,
+)
+DAIRY_ANY = re.compile(
+    r"\b(milk|maito|mjölk|cream|kerma|grädde|butter|voi|smör|cheese|juusto|ost|yogh?urt|jogurtti|rahka|quark|kvarg)\b",
+    re.I,
+)
+PLANT = re.compile(
+    r"\b(oat|kaura|havre|soy|soija|soja|plant|vegan|vegansk|almond|manteli|mandel|pea|herne|ärt|coconut|kookos|kokos|rice|riisi|ris)\b",
+    re.I,
+)
+LIQUID_OR_BULK = re.compile(
+    r"\b(milk|maito|mjölk|cream|kerma|grädde|drink|juoma|dryck|juice|mehu|saft|butter|voi|smör|cheese|juusto|ost|"
+    r"yogh?urt|jogurtti|flour|jauho|mjöl|sugar|sokeri|socker|oil|öljy|olja)\b",
+    re.I,
+)
+SMALL_LIQUID_PACK = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:dl|ml|cl)\b", re.I)
+NEXT_WEEK = re.compile(r"\bnext\s+week\b|\bensi\s+viikolla\b|\bensi\s+viikon\b|\bnästa\s+vecka\b", re.I)
+WEEKDAY = re.compile(
+    r"\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b"
+    r"|\b(maanantai|tiistai|keskiviikko|keskiviiko|torstai|perjantai|lauantai|sunnuntai)(?:na|nä|hin|on|oon|ksi|lle|n|lta|ltä)?\b"
+    r"|\b(måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag)(?:en|ens|s)?\b"
+    r"|\d{1,2}\.\d{1,2}\.|\d{4}-\d{2}-\d{2}",
+    re.I,
+)
 
 
 def variant_key(name: str) -> str | None:
@@ -39,9 +60,9 @@ def variant_key(name: str) -> str | None:
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", n)
     if m:
         return m.group(1).replace(",", ".") + " % fat"
-    for pat, key in ((r"semi[- ]?skim|kevyt|1[.,]5", "semi-skimmed (1.5 %)"), (r"fat[- ]?free|skim|rasvaton", "fat-free / skimmed"),
-                     (r"whole|täys|3[.,]5", "whole (3.5 %)"), (r"whipping|vispi", "whipping cream"),
-                     (r"cooking|ruoka", "cooking cream"), (r"low[- ]fat|light", "low-fat"), (r"sour|hapan", "sour"),
+    for pat, key in ((r"semi[- ]?skim|kevyt|lätt|1[.,]5", "semi-skimmed (1.5 %)"), (r"fat[- ]?free|skim|rasvaton|fettfri|minimjölk", "fat-free / skimmed"),
+                     (r"whole|täys|helmjölk|standardmjölk|3[.,]5", "whole (3.5 %)"), (r"whipping|vispi|kuohu|vispgrädd", "whipping cream"),
+                     (r"cooking|ruoka|matlagning", "cooking cream"), (r"low[- ]fat|light", "low-fat"), (r"sour|hapan", "sour"),
                      (r"barista", "barista")):
         if re.search(pat, n):
             return key
@@ -84,7 +105,7 @@ def find_questions(needs: list[Need], profile: dict, text: str, now: datetime,
         q = n.product_query
         # 4. conflict: milk excluded but a dairy product requested
         if "milk" in n.excluded_allergens and DAIRY_ANY.search(q) and not PLANT.search(q):
-            base = "drink" if re.search(r"milk|maito", q, re.I) else DAIRY_ANY.search(q).group(1)
+            base = "drink" if re.search(r"milk|maito|mjölk", q, re.I) else DAIRY_ANY.search(q).group(1)
             hits = _products(search(f"oat {base}", []))[:3]
             opts = [{"id": f"p{j}", "label": f"Plant-based instead: {h['name']}", "product_id": h["id"],
                      "patch": {"product_query": f"oat {base}", "preferred_product_ids": [h["id"]]}}
@@ -118,6 +139,16 @@ def find_questions(needs: list[Need], profile: dict, text: str, now: datetime,
         if DAIRY_VARIANT.search(q) and not VARIANT_WORDS.search(q) and not VARIANT_WORDS.search(_QTY_RE.sub(" ", t)) \
                 and not n.preferred_product_ids:
             hits = _products(search(q, n.required_claims))[:10]
+            pref_brand = str((n.preferences or {}).get("brand") or "").strip().lower()
+            bulk_litres = n.unit == "L" and n.quantity >= 10
+            if pref_brand or bulk_litres:
+                hits = sorted(
+                    hits,
+                    key=lambda h: (
+                        0 if (not pref_brand or str(h.get("brand") or "").strip().lower() == pref_brand) else 1,
+                        1 if (bulk_litres and SMALL_LIQUID_PACK.search(str(h.get("name") or ""))) else 0,
+                    ),
+                )
             groups: dict[str, dict] = {}
             for h in hits:
                 k = variant_key(h.get("name", ""))

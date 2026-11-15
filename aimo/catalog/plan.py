@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from datetime import date
-from typing import Any, Callable, Optional
+from functools import lru_cache
+from typing import Any, Callable, Iterable, Optional
 
+import aimo.catalog.textsearch as _ts
 from aimo.catalog.allergens import (
     PolicyAllergenBlock,
     blocking,
@@ -24,6 +27,207 @@ from aimo.catalog.substitution import TIER_ORDER, rank_substitutes, validate_nee
 from aimo.models import Candidate, Need, Offer, Plan, PlanLine
 
 MAX_OFFER_IDS = 30
+SUPPLIER_TEXT_REASON = "Supplier text contains instructions aimed at AI agents"
+_ORIG_GET_ROWS = get_rows
+_ORIG_FTS_SEARCH = fts_search
+_last_policy_dir: Any = None
+
+_LITERAL_ALLERGEN_PHRASES: dict[str, tuple[str, ...]] = {
+    "milk": ("milk",),
+    "dairy": ("milk",),
+    "cow's milk": ("milk",),
+    "cows milk": ("milk",),
+    "cow milk": ("milk",),
+    "milk protein": ("milk",),
+    "cow's milk protein": ("milk",),
+    "maito": ("milk",),
+    "mjölk": ("milk",),
+    "maitotuotteet": ("milk",),
+    "gluten": ("gluten",),
+    "gluteeni": ("gluten",),
+    "cereals containing gluten": ("gluten",),
+    "nut": ("nuts",),
+    "nuts": ("nuts",),
+    "tree nut": ("nuts",),
+    "tree nuts": ("nuts",),
+    "pähkinä": ("nuts",),
+    "pähkinät": ("nuts",),
+    "nöt": ("nuts",),
+    "nötter": ("nuts",),
+    "peanut": ("peanuts",),
+    "peanuts": ("peanuts",),
+    "groundnut": ("peanuts",),
+    "groundnuts": ("peanuts",),
+    "maapähkinä": ("peanuts",),
+    "maapähkinät": ("peanuts",),
+    "jordnöt": ("peanuts",),
+    "jordnötter": ("peanuts",),
+    "egg": ("eggs",),
+    "eggs": ("eggs",),
+    "kananmuna": ("eggs",),
+    "kanamuna": ("eggs",),
+    "muna": ("eggs",),
+    "munat": ("eggs",),
+    "ägg": ("eggs",),
+    "soy": ("soy",),
+    "soya": ("soy",),
+    "soija": ("soy",),
+    "soja": ("soy",),
+    "soybean": ("soy",),
+    "soybeans": ("soy",),
+    "fish": ("fish",),
+    "kala": ("fish",),
+    "fisk": ("fish",),
+    "sesame": ("sesame",),
+    "sesame seed": ("sesame",),
+    "sesame seeds": ("sesame",),
+    "seesami": ("sesame",),
+    "seesaminsiemenet": ("sesame",),
+    "sesam": ("sesame",),
+    "celery": ("celery",),
+    "selleri": ("celery",),
+    "mustard": ("mustard",),
+    "sinappi": ("mustard",),
+    "senap": ("mustard",),
+    "lupin": ("lupin",),
+    "lupins": ("lupin",),
+    "lupine": ("lupin",),
+    "lupiini": ("lupin",),
+    "crustacean": ("crustaceans",),
+    "crustaceans": ("crustaceans",),
+    "äyriäiset": ("crustaceans",),
+    "äyriäinen": ("crustaceans",),
+    "kräftdjur": ("crustaceans",),
+    "mollusc": ("molluscs",),
+    "molluscs": ("molluscs",),
+    "mollusk": ("molluscs",),
+    "mollusks": ("molluscs",),
+    "nilviäiset": ("molluscs",),
+    "nilviäinen": ("molluscs",),
+    "blötdjur": ("molluscs",),
+    "shellfish": ("crustaceans", "molluscs"),
+    "sulphite": ("sulphites",),
+    "sulphites": ("sulphites",),
+    "sulfite": ("sulphites",),
+    "sulfites": ("sulphites",),
+    "sulphur dioxide": ("sulphites",),
+    "sulfur dioxide": ("sulphites",),
+    "sulfiitit": ("sulphites",),
+    "sulfiitti": ("sulphites",),
+    "rikkidioksidi": ("sulphites",),
+    "sulfit": ("sulphites",),
+    "sulfiter": ("sulphites",),
+}
+
+_IMPLIED_ALLERGEN_PHRASES: dict[str, tuple[str, ...]] = {
+    "rye": ("gluten",),
+    "ruis": ("gluten",),
+    "råg": ("gluten",),
+    "wheat": ("gluten",),
+    "vehnä": ("gluten",),
+    "vete": ("gluten",),
+    "barley": ("gluten",),
+    "ohra": ("gluten",),
+    "korn": ("gluten",),
+    "spelt": ("gluten",),
+    "speltti": ("gluten",),
+    "kamut": ("gluten",),
+    "cream": ("milk",),
+    "kerma": ("milk",),
+    "grädde": ("milk",),
+    "butter": ("milk",),
+    "voi": ("milk",),
+    "smör": ("milk",),
+    "cheese": ("milk",),
+    "juusto": ("milk",),
+    "whey": ("milk",),
+    "hera": ("milk",),
+    "yoghurt": ("milk",),
+    "yogurt": ("milk",),
+    "jogurtti": ("milk",),
+    "quark": ("milk",),
+    "rahka": ("milk",),
+    "piimä": ("milk",),
+    "sour milk": ("milk",),
+    "almond": ("nuts",),
+    "almonds": ("nuts",),
+    "manteli": ("nuts",),
+    "hazelnut": ("nuts",),
+    "hazelnuts": ("nuts",),
+    "hasselpähkinä": ("nuts",),
+    "walnut": ("nuts",),
+    "walnuts": ("nuts",),
+    "saksanpähkinä": ("nuts",),
+    "cashew": ("nuts",),
+    "cashews": ("nuts",),
+    "pistachio": ("nuts",),
+    "pistachios": ("nuts",),
+    "pecan": ("nuts",),
+    "pecans": ("nuts",),
+    "macadamia": ("nuts",),
+}
+
+_PLANT_WORDS = frozenset({
+    "oat", "oats", "kaura", "havre", "soy", "soya", "soija", "soja",
+    "almond", "almonds", "coconut", "rice", "plant", "vegan", "vegaani",
+})
+_NUT_BUTTER_WORDS = frozenset({
+    "peanut", "peanuts", "almond", "almonds", "cashew", "cashews", "hazelnut", "cocoa", "shea",
+})
+_GLUTEN_EXCLUSION_RE = re.compile(
+    r"\b(?:(?:gluten|gluteeni)[\s-]*free|gluteenit\w*|glutenfri\w*"
+    r"|(?:no|without|free[\s-]+(?:from|of)|ei|ilman|utan|fri\s+från)\s+(?:gluten\w*|gluteen\w*))\b",
+    re.I,
+)
+_MILK_EXCLUSION_RE = re.compile(
+    r"\b(?:(?:cow'?s\s+)?(?:milk|dairy|maito|mjölk)[\s-]*free|maidot\w*|mjölkfri\w*"
+    r"|(?:no|without|free[\s-]+(?:from|of)|ei|ilman|utan|fri\s+från)\s+(?:cow'?s\s+)?(?:milk|dairy|maito\w*|mjölk))\b",
+    re.I,
+)
+
+
+def _load_rows(ids: list[str], *, allow_missing: bool = True) -> dict[str, dict[str, Any]]:
+    if not ids:
+        return {}
+    fn = get_rows if get_rows is not _ORIG_GET_ROWS else _ts.get_rows
+    try:
+        return fn(ids)
+    except FileNotFoundError:
+        if allow_missing:
+            return {}
+        raise
+
+
+def _run_fts(query: str, **kwargs: Any) -> list[tuple[str, float]]:
+    fn = fts_search if fts_search is not _ORIG_FTS_SEARCH else _ts.fts_search
+    return fn(query, **kwargs)
+
+
+def _profile_usual_products(customer_id: Optional[str]) -> list[str]:
+    global _last_policy_dir
+    cid = (customer_id or "").strip()
+    if not cid:
+        return []
+    try:
+        from aimo.trust import policy as trust_policy
+
+        if getattr(trust_policy, "POLICY_DIR", None) != _last_policy_dir:
+            if hasattr(trust_policy, "_load_policy_cached"):
+                trust_policy._load_policy_cached.cache_clear()
+            _last_policy_dir = getattr(trust_policy, "POLICY_DIR", None)
+        if hasattr(trust_policy, "planning_profile"):
+            usual = (trust_policy.planning_profile(cid) or {}).get("usual_products") or []
+            return [str(p) for p in usual if p]
+        pol = trust_policy.load_policy(cid)
+    except Exception:
+        return []
+    if not isinstance(pol, dict):
+        return []
+    return list(dict.fromkeys(
+        str(p["product_id"])
+        for p in (pol.get("preferred_products") or [])
+        if isinstance(p, dict) and p.get("product_id")
+    ))
 
 
 def effective_query(need: Need) -> tuple[str, str]:
@@ -31,12 +235,12 @@ def effective_query(need: Need) -> tuple[str, str]:
     (they must never feed search or product-type inference). need.raw_text is only a weak
     fallback when the product_query yields nothing searchable (e.g. a mis-parsed 'by Wednesday')."""
     q1 = clean_query(need.product_query)
-    if parse_query(q1) and fts_search(q1, claims=need.required_claims, limit=1):
+    if parse_query(q1) and _run_fts(q1, claims=need.required_claims, limit=1):
         return q1, "product_query"
     if need.raw_text:
         q2 = clean_query(need.raw_text)
-        if parse_query(q2) and fts_search(q2, claims=need.required_claims, limit=1):
-            return " ".join(c for c, _ in parse_query(q2)), "raw_text"   # 'oat drink', not the whole sentence
+        if parse_query(q2) and _run_fts(q2, claims=need.required_claims, limit=1):
+            return " ".join(c for c, _ in parse_query(q2)), "raw_text"
     return q1 or need.product_query, "product_query"
 
 
@@ -44,6 +248,23 @@ def with_customer_policy(need: Need) -> tuple[Need, list[str], Any]:
     pb = policy_allergen_block(need.customer_id)
     caller_excl = normalize_allergens(need.excluded_allergens)
     merged_excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    if pb.policy_id is None and not pb.excluded and (need.customer_id or "").strip():
+        try:
+            from aimo.trust import policy as trust_policy
+
+            if hasattr(trust_policy, "planning_profile"):
+                prof = trust_policy.planning_profile((need.customer_id or "").strip()) or {}
+                if prof:
+                    prof_excl = normalize_allergens(prof.get("excluded_allergens") or [])
+                    pb = PolicyAllergenBlock(
+                        customer_id=(need.customer_id or "").strip(),
+                        excluded=tuple(prof_excl),
+                        reason=prof.get("allergen_reason"),
+                        policy_id=str(prof.get("policy_id") or (need.customer_id or "").strip()),
+                    )
+                    merged_excl = normalize_allergens([*caller_excl, *prof_excl])
+        except Exception:
+            pass
     added = [a for a in merged_excl if a not in caller_excl]
     updated = need.model_copy(update={"excluded_allergens": merged_excl}) if merged_excl != list(need.excluded_allergens) else need
     return updated, added, pb
@@ -60,36 +281,39 @@ def find_candidates(need: Need, pool: int = 80) -> tuple[dict[str, dict[str, Any
     (optionally) embedding neighbours."""
     rel: dict[str, float] = {}
     excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
-    for pid, s in fts_search(need.product_query, claims=need.required_claims, content_unit=None, limit=pool):
+    for pid, s in _run_fts(need.product_query, claims=need.required_claims, content_unit=None, limit=pool):
         rel[pid] = s
     if excl:
-        for pid, s in fts_search(need.product_query, claims=need.required_claims, free_of=excl,
-                                 limit=pool):
+        for pid, s in _run_fts(need.product_query, claims=need.required_claims, free_of=excl, limit=pool):
             rel[pid] = max(rel.get(pid, -1e9), s) + 2.0
-    pref_rows = get_rows(list(need.preferred_product_ids))
-    con = _con()
+    pref_rows = _load_rows(list(need.preferred_product_ids), allow_missing=False)
+    try:
+        con = _con()
+    except FileNotFoundError:
+        con = None
     cats = {r.get("category") for r in pref_rows.values() if r.get("category")}
     for cat in cats:
-        for pid, s in fts_search(need.product_query, claims=need.required_claims, category=cat, limit=pool):
-            rel[pid] = max(rel.get(pid, -1e9), s) + 1.0  # same category as the usual product
+        for pid, s in _run_fts(need.product_query, claims=need.required_claims, category=cat, limit=pool):
+            rel[pid] = max(rel.get(pid, -1e9), s) + 1.0
     for pid in need.preferred_product_ids:
         rel.setdefault(pid, 100.0)
-        for r in con.execute("select substitute from subs where product = ?", (pid,)):
-            rel.setdefault(r[0], 5.0)
-    try:  # Gemini semantic recall for the query itself (adds products FTS misses)
+        if con is not None:
+            for r in con.execute("select substitute from subs where product = ?", (pid,)):
+                rel.setdefault(r[0], 5.0)
+    try:
         from aimo.catalog.textsearch import semantic_hits
         for pid, sim in semantic_hits(need.product_query, claims=need.required_claims, k=30):
             rel.setdefault(pid, 6.0 * sim)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-    try:  # semantic neighbours of the usual product (Gemini embeddings), if the cache exists
+    try:
         from aimo.catalog.embeddings import similar_products
         for pid in need.preferred_product_ids:
             for sid, sim in similar_products(pid, k=15):
                 rel.setdefault(sid, 4.0 * float(sim))
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-    rows = get_rows(list(rel))
+    rows = _load_rows(list(rel), allow_missing=False)
     return rows, rel
 
 
@@ -124,6 +348,103 @@ def _round_lot(units: float, lot: Optional[float], up: bool = True) -> float:
     return q * step
 
 
+def usual_products_for(need: Need) -> list[str]:
+    if need.preferred_product_ids or any(
+        (need.preferences or {}).get(k) for k in ("brand", "fat_pct", "organic", "pack")
+    ):
+        return []
+    usual = _profile_usual_products(need.customer_id)
+    if not usual:
+        return []
+    from aimo.catalog.substitution import missing_query_concepts
+
+    eff_excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    rows = _load_rows(list(usual))
+    out: list[str] = []
+    for pid in usual:
+        d = rows.get(pid)
+        if not d:
+            continue
+        if d.get("content_unit") != need.unit or not set(need.required_claims) <= set(d.get("claims") or []):
+            continue
+        if blocking(d.get("allergens") or {}, eff_excl, allergen_source=d.get("allergen_source")):
+            continue
+        if missing_query_concepts(need.product_query, d):
+            continue
+        out.append(pid)
+    return out
+
+
+def _excluded_groups_named(query: str, excluded: list[str]) -> tuple[list[str], list[str]]:
+    excl = normalize_allergens(excluded)
+    if not excl or not query:
+        return [], []
+    has_gluten_free = bool(_GLUTEN_EXCLUSION_RE.search(query))
+    has_milk_free = bool(_MILK_EXCLUSION_RE.search(query))
+    cleaned = _GLUTEN_EXCLUSION_RE.sub(" ", clean_query(query))
+    norm = re.sub(r"\u2019", "'", cleaned.lower())
+    words = re.findall(r"[a-zåäö']+", norm)
+    if not words:
+        return [], []
+    joined = " " + " ".join(words) + " "
+    literal: set[str] = set()
+    implied: set[str] = set()
+    for phrase, groups in _LITERAL_ALLERGEN_PHRASES.items():
+        if f" {phrase} " in joined:
+            literal.update(groups)
+    for phrase, groups in _IMPLIED_ALLERGEN_PHRASES.items():
+        if phrase == "butter" and (set(words) & _NUT_BUTTER_WORDS):
+            continue
+        if f" {phrase} " in joined:
+            implied.update(groups)
+    if (set(words) & _PLANT_WORDS) or any(w.startswith(("kaura", "soija", "havre")) for w in words):
+        literal.discard("milk")
+        implied.discard("milk")
+    if has_milk_free:
+        implied.discard("milk")
+    if has_gluten_free:
+        implied.discard("gluten")
+    return [g for g in excl if g in literal], [g for g in excl if g in implied and g not in literal]
+
+
+@lru_cache(maxsize=4096)
+def _screen_supplier_text(text: str) -> tuple[str, ...]:
+    try:
+        from aimo.trust.screening import screen_text
+
+        s = screen_text(text, use_gemini=False)
+    except Exception:
+        from aimo.catalog.screening_bridge import _fallback_screen
+
+        s = _fallback_screen(text)
+    if not s.get("suspicious"):
+        return ()
+    return tuple(s.get("strong_reasons") or s.get("reasons") or ["suspicious"])
+
+
+def mark_supplier_text(
+    cands: list[Candidate],
+    rows: dict[str, dict[str, Any]],
+    texts: Optional[dict[str, str]] = None,
+) -> None:
+    for c in cands:
+        row = rows.get(c.product.id) or {}
+        if texts and c.product.id in texts:
+            text = texts[c.product.id] or ""
+        else:
+            parts = [str(row.get("marketing_text") or "").strip(), str(row.get("ingredients_text") or "").strip()]
+            text = "\n".join(x for x in parts if x)
+        hits = _screen_supplier_text(text) if text.strip() else ()
+        if hits and "supplier_text_injection_suspected" not in c.flags:
+            c.flags = sorted(set([*c.flags, "supplier_text_injection_suspected"]))
+            c.reasons.append(
+                f"{SUPPLIER_TEXT_REASON}, flagged by prompt-injection screen ({', '.join(hits[:3])}); "
+                f"ignored by the agent, and order requires human approval."
+            )
+            if not (c.injection_screen or {}).get("suspicious"):
+                c.injection_screen = {"suspicious": True, "reasons": list(hits), "layers": ["regex"]}
+
+
 def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[str, Offer]]] = None,
               limit: int = 12) -> Plan:
     validate_need(need)
@@ -133,8 +454,173 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
         from aimo.catalog.offers import get_offers
         offers_fn = get_offers
     original = need
+    original_preferred = list(original.preferred_product_ids)
     policy_need, policy_added, pb = with_customer_policy(need)
     need, qsrc = with_effective_query(policy_need)
+    usual = usual_products_for(need)
+    if usual:
+        need = need.model_copy(
+            update={
+                "preferred_product_ids": usual,
+                "preferences": {**(need.preferences or {}), "usual_from_profile": usual},
+            }
+        )
+    plan, full, late_notes = _plan_core(need, offers_fn, limit)
+    notes: list[str] = []
+    if policy_added:
+        pid = pb.policy_id or need.customer_id
+        notes.append(
+            f"Customer policy ({pid}) excludes {', '.join(policy_added)}"
+            + (f" ({pb.reason})" if pb.reason else "")
+            + f". Policy {pid} excludes {', '.join(policy_added)} as a hard block."
+        )
+    if usual:
+        names = ", ".join(f"{l.product_name} ({l.product_id})" for l in plan.lines if l.product_id in usual)
+        notes.append(
+            f"Started from the customer's usual product{'s' if len(usual) > 1 else ''} for this request"
+            + (f": {names}." if names else f" ({', '.join(usual)}), which cannot be used here.")
+        )
+    literal, implied = _excluded_groups_named(need.product_query, need.excluded_allergens)
+    if literal:
+        alt_plan, alt_note = _allergen_safe_alternative(
+            need, plan, offers_fn, limit, literal, original_preferred
+        )
+        if alt_plan is not None:
+            plan, full, late_notes = alt_plan, list(alt_plan.candidates), []
+        else:
+            late_notes = []
+            if plan.lines:
+                sf = round(float(need.quantity), 4)
+                plan = plan.model_copy(
+                    update={
+                        "lines": [],
+                        "covered_amount": 0.0,
+                        "total_net": 0.0,
+                        "shortfall": sf,
+                        "explanation": explain(need, [], plan.candidates, 0.0, sf, 0.0),
+                    }
+                )
+        notes.append(alt_note)
+    named = literal + implied
+    if named:
+        for l in plan.lines:
+            if "allergen_safe_alternative" not in l.flags:
+                l.flags = sorted(set(l.flags) | {"allergen_safe_alternative"})
+                l.reasons.insert(
+                    0,
+                    f"The request names '{need.product_query}', which normally contains "
+                    f"{' and '.join(named)} (excluded by policy). This product is {' and '.join(named)}-free "
+                    f"per supplier data; a human confirms it is a suitable replacement.",
+                )
+        if implied and not literal:
+            notes.append(
+                f"'{need.product_query}' normally contains {' and '.join(implied)}, which this customer's "
+                f"policy excludes: only products confirmed {' and '.join(implied)}-free are planned, and each "
+                f"needs a human's confirmation."
+            )
+    if need.product_query != original.product_query:
+        notes.append(f"Searched the catalog for '{need.product_query}'"
+                     + (" (taken from the request text because the parsed product phrase found nothing)"
+                        if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
+                        " enforced as exclusions, not searched for)") + ".")
+    advice = shortfall_advice(need, plan, full) if plan.shortfall > 1e-9 else []
+    cover = coverage_sentence(need, plan)
+    out_need = (original.model_copy(update={"excluded_allergens": list(policy_need.excluded_allergens)})
+                if list(policy_need.excluded_allergens) != list(original.excluded_allergens) else original)
+    plan = plan.model_copy(update={"need": out_need, "explanation": " ".join(
+        [*notes, cover, plan.explanation, *late_notes, *advice]).strip()})
+    if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
+        _recipe_checks(need, plan)
+    return plan
+
+
+def _allergen_safe_alternative(
+    need: Need,
+    plan: Plan,
+    offers_fn: Any,
+    limit: int,
+    named: list[str],
+    original_preferred: Iterable[str] = (),
+) -> tuple[Optional[Plan], str]:
+    usual = _profile_usual_products(need.customer_id)
+    rows = _load_rows(list(usual)) if usual else {}
+    eff_excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    safe = [
+        pid
+        for pid in usual
+        if pid in rows
+        and rows[pid].get("content_unit") == need.unit
+        and set(need.required_claims) <= set(rows[pid].get("claims") or [])
+        and not blocking(
+            rows[pid].get("allergens") or {},
+            eff_excl,
+            allergen_source=rows[pid].get("allergen_source"),
+        )
+    ]
+    head = (
+        f"'{need.product_query}' is itself {' and '.join(named)}, which this customer's policy excludes, "
+        f"so no {' or '.join(named)} product is planned"
+    )
+    if not safe:
+        return None, head + "; the shortfall is left for a human (no allergen-safe usual product on file)."
+    alt_query = rows[safe[0]].get("name_en") or rows[safe[0]].get("name") or need.product_query
+    alt_prefs = {k: v for k, v in (need.preferences or {}).items() if k != "usual_from_profile"}
+    alt_need = need.model_copy(
+        update={
+            "preferred_product_ids": safe,
+            "product_query": alt_query,
+            "preferences": alt_prefs,
+        }
+    )
+    alt, _full, _late = _plan_core(alt_need, offers_fn, limit)
+    alt_lines = [l for l in alt.lines if l.product_id in safe]
+    if not alt_lines:
+        return (
+            None,
+            head + f"; the customer's allergen-safe usual product ({', '.join(safe)}) is not orderable for this date.",
+        )
+    for l in alt_lines:
+        l.flags = sorted(set(l.flags) | {"allergen_safe_alternative"})
+        l.reasons.insert(
+            0,
+            f"Allergen-safe alternative: the request asked for '{need.product_query}', which contains "
+            f"{' and '.join(named)} (excluded by policy). This is the customer's usual "
+            f"{' and '.join(named)}-free product; a human confirms the swap.",
+        )
+    orig_pref_set = set(original_preferred or ())
+    merged_cands = list(alt.candidates)
+    seen_ids = {c.product.id for c in merged_cands}
+    for c in plan.candidates:
+        if c.tier == "rejected" and c.product.id in orig_pref_set and c.product.id not in seen_ids:
+            merged_cands.append(c)
+            seen_ids.add(c.product.id)
+    extra_rej = 0
+    for c in plan.candidates:
+        if c.tier == "rejected" and c.product.id not in seen_ids:
+            merged_cands.append(c)
+            seen_ids.add(c.product.id)
+            extra_rej += 1
+            if extra_rej >= 6:
+                break
+    covered = round(sum(l.covered_amount for l in alt_lines), 4)
+    total_net = round(sum(l.line_total for l in alt_lines), 2)
+    shortfall = round(max(0.0, need.quantity - covered), 4)
+    alt = alt.model_copy(
+        update={
+            "need": need,
+            "lines": alt_lines,
+            "covered_amount": covered,
+            "total_net": total_net,
+            "shortfall": shortfall,
+            "candidates": merged_cands,
+            "explanation": explain(need, alt_lines, merged_cands, covered, shortfall, total_net),
+        }
+    )
+    names = ", ".join(f"{l.product_name} ({l.product_id})" for l in alt_lines)
+    return alt, head + f"; planned the customer's usual allergen-safe product instead: {names} (needs a human's confirmation)."
+
+
+def _plan_core(need: Need, offers_fn: Any, limit: int) -> tuple[Plan, list[Candidate], list[str]]:
     rows, rel = find_candidates(need)
     eff_excl = list(need.excluded_allergens)
     order = sorted(rows.values(), key=lambda d: _static_priority(need, d, rel.get(d["id"], 0), excl=eff_excl))
@@ -155,29 +641,13 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
         except Exception:
             pass
     full = rank_substitutes(need, offers, limit=200, rows=shortlist, relevance=rel, inferred_allergens=hints)
+    mark_supplier_text(full, shortlist)
     cands = _trim(full, limit)
     plan = fill(need, cands)
     late_notes: list[str] = []
     if plan.shortfall > 1e-9:
         plan, late_notes = _late_split(need, plan, full, shortlist, rel, hints)
-    notes = []
-    if policy_added:
-        notes.append(f"Customer policy ({pb.policy_id or need.customer_id}) excludes {', '.join(policy_added)}"
-                     + (f" ({pb.reason})" if pb.reason else "") + ".")
-    if need.product_query != original.product_query:
-        notes.append(f"Searched the catalog for '{need.product_query}'"
-                     + (" (taken from the request text because the parsed product phrase found nothing)"
-                        if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
-                        " enforced as exclusions, not searched for)") + ".")
-    advice = shortfall_advice(need, plan, full) if plan.shortfall > 1e-9 else []
-    cover = coverage_sentence(need, plan)
-    out_need = (original.model_copy(update={"excluded_allergens": list(policy_need.excluded_allergens)})
-                if list(policy_need.excluded_allergens) != list(original.excluded_allergens) else original)
-    plan = plan.model_copy(update={"need": out_need, "explanation": " ".join(
-        [*notes, cover, plan.explanation, *late_notes, *advice]).strip()})
-    if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
-        _recipe_checks(out_need, plan)
-    return plan
+    return plan, full, late_notes
 
 
 _ORDERABILITY = ("order cut-off passed", "earliest delivery", "not available for the requested date")
@@ -191,7 +661,10 @@ def _only_orderability(c: Candidate) -> bool:
 
 
 def _candidate_injection_reasons(c: Candidate, existing: list[str]) -> list[str]:
-    found = [r for r in c.reasons if "prompt-injection screen" in r and r not in existing]
+    found = [
+        r for r in c.reasons
+        if ("prompt-injection screen" in r or r.startswith(SUPPLIER_TEXT_REASON)) and r not in existing
+    ]
     if found:
         return found
     if (c.injection_screen or {}).get("suspicious") or "supplier_text_injection_suspected" in c.flags:
@@ -280,11 +753,11 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     ranked = [c for c in ranked if c.tier != "rejected" and c.tier in TIER_ORDER and c.product.id in late]
     ranked.sort(key=lambda c: (late[c.product.id][1], TIER_ORDER[c.tier], -_score_key(c.rank_score)))
     remaining = shortfall_val
-    from aimo.catalog.textsearch import get_rows as _gr
-    try:
-        lots = {pid: d.get("allowed_lot_size") for pid, d in _gr([c.product.id for c in ranked]).items()}
-    except FileNotFoundError:
-        lots = {pid: (shortlist.get(pid) or {}).get("allowed_lot_size") for pid in (c.product.id for c in ranked)}
+    loaded_lots = _load_rows([c.product.id for c in ranked])
+    lots = {
+        pid: (loaded_lots[pid].get("allowed_lot_size") if pid in loaded_lots else (shortlist.get(pid) or {}).get("allowed_lot_size"))
+        for pid in (c.product.id for c in ranked)
+    }
     new_lines: list[PlanLine] = []
     for c in ranked:
         if remaining <= 1e-9:
@@ -519,11 +992,7 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
     remaining = float(need.quantity)
     lines: list[PlanLine] = []
     excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
-    from aimo.catalog.textsearch import get_rows as _gr
-    try:
-        rows_by_id = _gr([c.product.id for c in cands])
-    except FileNotFoundError:
-        rows_by_id = {}
+    rows_by_id = _load_rows([c.product.id for c in cands])
     lot = {pid: d.get("allowed_lot_size") for pid, d in rows_by_id.items()}
     for c in sorted(cands, key=lambda c: (TIER_ORDER.get(c.tier, 9), -_score_key(c.rank_score))):
         if remaining <= 1e-9:

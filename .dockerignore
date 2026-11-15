@@ -13,3 +13,4 @@ keys/
 node_modules/
 __pycache__/
 .pytest_cache/
+/conformance-*.json
