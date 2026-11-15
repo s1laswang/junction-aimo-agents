@@ -45,3 +45,7 @@ From `aimo.trust`:
 
 ## Decisions for Silas
 - None blocking. Optional: should the hotel's category scope reject out-of-scope items instead of needing approval? It is currently needs_approval, to keep the demo robust to category-code uncertainty.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- Final-policy `main` and `fr8/valio` add customer allergen hard-blocking inside `plan_need`, per-approver passphrases (`X-Approver-Session` / `X-Approver-Pin`), `unknown_customer` 403 on `/v1`, `PlanLine.injection_screen` plus `need.product_query` screening, and listed pack-swap rules (`69.5%` escalation precision, `99.7%` recall, and `0` policy / `0` allergen violations on `wt640`).
+- Judges can inspect the Ed25519 JWS verification, 403 `agent_cannot_approve` refusal, 409 requote, Peppol `AP` export, and hash-chained audit tamper detection with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).
