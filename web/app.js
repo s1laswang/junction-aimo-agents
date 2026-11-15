@@ -453,8 +453,8 @@ function voiceCard(o, q) {
       oninput: (e) => { V.typed = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter" && inp.value.trim()) understand(o, inp.value.trim(), "typed"); } });
     body.push(V.note ? h("div", { class: "faint small" }, V.note) : null,
       h("div", { class: "row" }, inp, h("button", { type: "button", class: "btn btn-sm", onclick: () => inp.value.trim() && understand(o, inp.value.trim(), "typed") }, "Send"), again));
-    if (!V.focused) { V.focused = true; setTimeout(() => inp.focus(), 30); }
-    else if (document.activeElement?.id === "voice-typed") setTimeout(() => { const n = $("voice-typed"); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }, 0);
+    if (!V.focused) { V.focused = true; setTimeout(() => inp.focus({ preventScroll: true }), 30); }
+    else if (document.activeElement?.id === "voice-typed") setTimeout(() => { const n = $("voice-typed"); if (n) { n.focus({ preventScroll: true }); n.setSelectionRange(n.value.length, n.value.length); } }, 0);
   }
   if (V.phase === "thinking") body.push(V.transcript ? h("div", { class: "voice-heard" }, "Heard: ", h("q", null, V.transcript)) : null,
     h("div", { class: "row" }, h("span", { class: "spinner" }), h("span", { class: "muted small" }, "Understanding the answer")));
@@ -596,14 +596,15 @@ function renderRequest() {
 async function startRun() {
   if (closeStream) closeStream();
   S.editing = false;
-  S.run = { id: null, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null, image: S.image?.preview || null };
+  const custId = S.customerId;
+  S.run = { id: null, customer_id: custId, status: "running", steps: [], need: null, plan: null, quote: null, decision: null, order: null, error: null, image: S.image?.preview || null };
   S.requote = null;
   S.audit.verify = null;
   renderRequest(); renderTimeline(); renderPlan(); updateCounts();
   setTab("plan");
   try {
     const image = S.image ? { mime: S.image.mime, data_b64: S.image.data_b64, name: S.image.name } : null;
-    const { run_id } = await api.startRun({ text: S.text, customer_id: S.customerId, model: S.model, thinking: S.thinking, image });
+    const { run_id } = await api.startRun({ text: S.text, customer_id: custId, model: S.model, thinking: S.thinking, image });
     S.run.id = run_id;
     $("run-meta").textContent = run_id;
     closeStream = api.streamRun(run_id, onStep, (info) => {
@@ -885,7 +886,7 @@ function clarCard(step) {
     S.answers[step.seq] = { label: answer, pending: true };
     rerenderStep(step);
     try {
-      await api.answer(S.run.id, option_id != null ? { option_id, question_id: d.question_id } : { text: answer, question_id: d.question_id });
+      await api.answer(S.run.id, option_id != null ? { option_id, question_id: d.question_id } : { text: answer, question_id: d.question_id }, S.run.customer_id || S.customerId);
       S.answers[step.seq] = { label: answer };
       if (S.run.status === "input") S.run.status = "running";
       renderRequest();
@@ -995,13 +996,28 @@ function perL(c) {
   return { v: null, u: c.product.content_unit || "L" };
 }
 
+function planScreenEl(item, showClean = true) {
+  const flagged = Boolean(item.injection_screen?.suspicious)
+    || (item.flags || []).some((f) => f === "supplier_text_injection_suspected" || f === "injection_flagged");
+  if (flagged) {
+    const reasons = item.injection_screen?.reasons?.length ? ` (${item.injection_screen.reasons.join(", ")})` : "";
+    return h("div", { class: "plan-screen bad" },
+      h("b", null, "Prompt-injection screen: FLAGGED"),
+      `${reasons} - untrusted supplier text ignored; requires human approval`);
+  }
+  if (showClean && item.injection_screen && !item.injection_screen.suspicious) {
+    return h("div", { class: "plan-screen ok" }, "Prompt-injection screen: clean");
+  }
+  return null;
+}
+
 function planLines(p) {
   return h("div", { class: "card" },
     h("div", { class: "card-head" }, h("h3", null, "Order lines the agent proposes"), h("span", { class: "muted sm" }, `Delivery by ${day(p.need?.delivery_by)}`)),
     h("table", { class: "t" },
       h("thead", null, h("tr", null, h("th", null, "Product"), h("th", null, "Tier"), h("th", { class: "n" }, "Qty"), h("th", { class: "n" }, "Unit price"), h("th", { class: "n" }, "Covers"), h("th", { class: "n" }, "CO₂e"), h("th", { class: "n" }, "Line total"))),
       h("tbody", null, (p.lines || []).map((l) => h("tr", null,
-        h("td", null, h("div", { style: { fontWeight: 500 } }, l.product_name), h("div", { class: "faint small mono" }, l.product_id), (l.flags || []).length ? h("div", { class: "row wrap", style: { marginTop: "4px" } }, l.flags.map(flagEl)) : null),
+        h("td", null, h("div", { style: { fontWeight: 500 } }, l.product_name), h("div", { class: "faint small mono" }, l.product_id), planScreenEl(l, true), (l.flags || []).length ? h("div", { class: "row wrap", style: { marginTop: "4px" } }, l.flags.map(flagEl)) : null),
         h("td", null, h("span", { class: `tier-tag ${l.tier}` }, TIER_LABEL[l.tier] || l.tier)),
         h("td", { class: "n" }, `${num(l.qty_sales_units)} ${l.sales_unit}`),
         h("td", { class: "n" }, eur(l.unit_price)),
@@ -1093,6 +1109,7 @@ function candCard(c, p, inPlan, wins = {}, rankNo = null) {
         fact("Reliability", prod.delivery_reliability != null ? pct(prod.delivery_reliability) : "no data"),
         fact("CO₂e / kg", prod.co2_kg_per_kg != null ? `${num(prod.co2_kg_per_kg)} kg` : "no data")),
       (c.reasons || []).length ? h("ul", { class: "reasons" }, c.reasons.map((x) => h("li", null, x))) : null,
+      planScreenEl(c, false),
       (c.flags || []).length || (prod.claims || []).length || (prod.labels || []).length ? h("div", { class: "row wrap" },
         (prod.labels || []).map(labelName).filter(Boolean).map((x) => h("span", { class: "flag label" }, x)),
         (prod.claims || []).map((x) => h("span", { class: "flag ok" }, claimLabel(x))), (c.flags || []).map(flagEl)) : null));
@@ -1303,8 +1320,9 @@ function decisionForm(o, q) {
         h("span", { class: "binding-note" }, "Your decision is bound to quote hash ", h("span", { class: "mono" }, shortHash(q.quote_hash)), ". If the price or lines change, it no longer applies."),
         h("button", { class: "btn btn-voice", disabled: busy || expired || voiceBusy(), title: "Hear the order read out, answer approve or reject, then confirm on screen", onclick: () => startVoice(o, q) }, micIcon(), "Decide by voice"),
         h("button", { class: "btn btn-bad", disabled: busy, onclick: () => decide(o, q, "reject") }, "Reject"),
-        h("button", { class: "btn btn-ok btn-lg", disabled: busy || expired, title: expired ? "The price lock has expired: the agent must request a new quote" : "",
-          onclick: () => decide(o, q, "approve") }, busy ? [h("span", { class: "spinner" }), "Placing order"] : `Approve ${eur(q.total_net)}`))));
+        h("button", { class: `btn btn-lg ${expired ? "btn-primary" : "btn-ok"}`, disabled: busy,
+          title: expired ? "The price lock has expired. The gateway re-prices the same lines; you review the difference before ordering." : "",
+          onclick: () => decide(o, q, "approve") }, busy ? [h("span", { class: "spinner" }), expired ? "Re-pricing" : "Placing order"] : expired ? "Price lock expired: re-price and review" : `Approve ${eur(q.total_net)}`))));
 }
 
 async function decide(o, q, decision, voiceNote) {
@@ -1335,7 +1353,7 @@ async function decide(o, q, decision, voiceNote) {
     if (e.code === "requote_needed" || fresh) {
       // Prices moved since the quote was signed: show old vs new and let the approver approve the fresh quote in one click.
       S.requote = { order_id: o.order_id, old: q, fresh: fresh || null, new_order_id: det.new_order?.order_id || det.new_order_id || det.order_id || o.order_id,
-        changes: det.changes || null, reason: e.body?.message || e.message };
+        changes: det.changes || null, why: det.reason || null, reason: e.body?.message || e.message };
       S.voice = null;
       if (!fresh && (det.new_quote_id || det.quote_id)) { try { S.requote.fresh = await api.getQuote(det.new_quote_id || det.quote_id); } catch { /* shown as missing */ } }
       renderApprovals();
@@ -1358,7 +1376,10 @@ function requoteCard(it) {
   const delta = fresh ? fresh.total_net - old.total_net : null;
   const diffCell = (a, b, fmt) => a === b || b == null ? h("span", null, a == null ? "–" : fmt(a)) : h("span", null, h("s", { class: "faint" }, a == null ? "–" : fmt(a)), " ", h("b", { class: b > a ? "up" : "down" }, fmt(b)));
   return h("div", { class: "card requote decide-sticky" },
-    h("div", { class: "card-head" }, h("h3", { class: "grow" }, "Prices changed: re-quote needed"),
+    h("div", { class: "card-head" }, h("h3", { class: "grow" },
+      R.why === "cutoff_passed" ? "Cut-off passed while waiting: re-planned"
+        : R.why === "line_unavailable" ? "A line became unavailable: re-planned"
+        : delta ? "Prices changed: re-quote needed" : R.why === "quote_expired" ? "Price lock expired: fresh quote, same price" : "Re-quote needed"),
       delta != null ? h("span", { class: `delta ${delta > 0 ? "up" : "down"}` }, `${delta > 0 ? "+" : ""}${eur(delta)} (${num((delta / old.total_net) * 100, 1)}%)`) : null),
     h("div", { class: "card-body sm muted" }, R.reason, " Your approval was bound to the old quote hash, so it did not apply. Nothing was ordered."),
     h("table", { class: "t" },
