@@ -1,68 +1,71 @@
 # PLAN: Valio Aimo Trusted Trade Agents (Junction 2026)
 
-Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
+Owner: CEO (Claude). Last updated: Sun 15 Nov 2026, 05:15 Helsinki (questions + rubric status synced with `9742758` / `e97a367` / `c98e72e`). Deadline: **Sun 15 Nov 10:00**. Main submission-ready from **Sun 06:00**.
 
-## Questions for Silas
-1. **Momin's code: approve the merge plan in [docs/MERGE-MOMIN.md](MERGE-MOMIN.md).** I reviewed it read-only: `junction26-valio` dev on freighter. It's a solid deterministic gateway with all 8 brief scenarios as runnable acceptance scripts, but it runs with no LLM by default.
-   - **Recommendation:** submit **junction-aimo-agents**. Gemini is essential throughout it, it has the richer live UI, a red-teamed trust layer, 123 tests, and it's on GitHub. Port four things from Momin's repo, credited to him: recipe → order, the proactive seller agent, the standing-order drift detector, and his s0–s7 acceptance suite plus Dockerfile.
-   - **Optional:** retarget the fleet's `valio` team to open `fr8/valio/*` PRs against our repo.
-   - I won't touch the fleet's board, repos, jobs or branches without your OK. **Porting is done** (Sat 19:00): recipe → order, seller, drift and the s0–s7 suite (8/8 PASS live, `uv run python -m scenarios.run_all`) are all on main and credited to Momin. Say so if you prefer Momin's as the base.
-2. **Live demo hosting: decided.** A cloudflared tunnel from the demo laptop, plus replay mode as the fallback.
-3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
-4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
-5. **When is the pitch slot?** The live "by Monday" story depends on a real mock-API cut-off. Stock milk can be ordered for Monday delivery only until **Sun 15 Nov 17:00**. If judging runs after about 16:30 on Sunday, we switch the request to "by Tuesday", or use the recorded video or mock mode. Tell us the slot once you know it.
-6. **ElevenLabs: approved (Sat 20:30). Still needed: put the key in `.env` as `ELEVENLABS_API_KEY`** (never commit it). The voice engineer is building it on team/voice, with a Web Speech fallback until the key lands. Use: a voice approval call. The procurement manager gets a phone-style voice prompt, "Approve €1,010 lactose-free milk for Monday?", answers by voice, and the approval is still bound to the quote hash and audited. ElevenLabs does speech-to-text and text-to-speech; Gemini stays the brain. It's optional and scores on "autonomy and controls" plus the demo. If you don't want it, we skip it.
+## Questions for Silas (refreshed Sun 15 Nov 05:15)
+Resolved overnight (kept for the record):
+- **Momin's code and `fr8/valio/*` / `combined` status:** we submit **junction-aimo-agents**; recipe -> order, proactive seller, standing-order drift and the `s0-s7` acceptance suite (8/8 PASS) were ported Sat 19:00, and single fleet functions (per-approver credentials, request-text injection screen, unknown-customer 403) were ported onto `main` Sun 03:40 (`5e599fd`, `ccab8f5`, `fc63fc8`), each credited in [docs/MERGE-MOMIN.md](MERGE-MOMIN.md). On `fr8/valio/*` (`0f0ece1` / `c98e72e`) and `combined` (`80c978a`), all 6 judge-review gap closures (`quantity <= 0` pre-planning 422 guard, keyless scripted buyer for `aimo demo`, customer policy allergen hard-block inside `plan_need`, known-customer `/v1` + MCP auth and per-approver credentials, `PlanLine.injection_screen` + buyer request/query screening, and 13 MCP tools in `README.md` / [docs/CONNECT.md](CONNECT.md)) are integrated and audited in [docs/COMBINE.md](COMBINE.md).
+- **Hosting:** no hosted instance required; judges run it locally in 3 commands with no keys (automatic replay mode, `make accept` -> `RESULT: PASS`; see [docs/RUN.md](RUN.md)), with an optional laptop `cloudflared` tunnel for live stage demos.
+- **Pitch after Sun 17:00:** solved without changing the story: replay mode anchors the clock at the snapshot recording (`2026-11-14T23:50:28+0200`), and `AIMO_NOW` sets it explicitly ([docs/DEMO.md](DEMO.md) step 5; `X-Aimo-Now` and `X-Aimo-Faults` are ignored on agent-authenticated requests unless `AIMO_DEMO_FAULTS=1`).
+- **ElevenLabs:** voice approval (`aimo/voice/`) is built with a browser Web Speech fallback; `ELEVENLABS_API_KEY` is optional.
+- **FR8 data dir:** no longer needed (keyless replay bundles a 669-product snapshot and catalog subset in `tests/fixtures/snapshot/replay/`).
+
+Open, needs you:
+1. **Tag `aimo-v1` at 07:30** after the CEO's final gate: OK to push the public tag? (`README.md` already clones `--branch aimo-v1`.)
+2. **Gemini quota:** the shared key returned `429 RESOURCE_EXHAUSTED` on `gemini-3.8-flash` at 05:05; `7c290cf` added automatic `GEMINI_FALLBACK_MODELS` failover (`gemini-3.5-flash`, `gemini-4-hydrogen`) so live runs answer immediately on the fallback model, and the keyless scripted buyer path works with no key. Confirm quota reset or billing before stage runs if `gemini-3.8-flash` primary is wanted.
+3. **Video:** keep the narrated walkthrough (`docs/pitch/demo-walkthrough.mp4` / `docs/demo-backup.mp4`), or record a live screen run from [docs/DEMO.md](DEMO.md) before 09:30?
+4. **Who presents, and when is the slot?** Default: Silas presents, Chintufp drives.
 
 ## Scoring checklist (official rubric, JUDGING.md)
-Tick a box only with evidence: a command, a test or a file. Updated Sun 15 Nov 02:48 Helsinki.
+Tick a box only with evidence: a command, a test or a file. Updated Sun 15 Nov 05:15 Helsinki (`origin/main` `9742758` / `e97a367` and `fr8/valio/docs` `c98e72e`).
 
 **Must-haves**
-- [x] Product, price and availability lookup in structured form: `/v1/products/search`, `/v1/offers`, and MCP `search_products`/`get_offers`, hitting the live mock API.
+- [x] Product, price and availability lookup in structured form: `/v1/products/search`, `/v1/offers`, and MCP `search_products`/`get_offers`, hitting the live mock API or automatic bundled replay.
 - [x] Inquiry, then an order at fixed prices: a signed quote with a 15-minute price lock, then `place_order`. Quotes re-price live (gateway round 3).
-- [x] Permissions plus human approval: YAML policies, directory-only human approvers bound to the quote hash (`POST /v1/auth/approver-session`, per-approver passphrases in `approver_pins.json`), agents never approve (`403 agent_cannot_approve`).
+- [x] Permissions plus human approval: YAML policies, directory-only human approvers bound to the quote hash (`POST /v1/auth/approver-session`, per-approver 12-char passphrases in `approver_pins.json` / `AIMO_APPROVER_PINS`), agents never approve (`403 agent_cannot_approve`).
 
 **1. Working end-to-end demo (30%): full request -> lookup -> order/approval in the mocked environment**
-- [x] The browser hero flow works live: Gemini agent -> MCP -> plan -> signed quote -> needs approval -> approve -> AP -> audit verified, plus keyless scripted buyer fallback in `uv run aimo demo` (`aimo/buyer/mock_model.py`, `tests/test_scripted_buyer.py`).
-- [x] Montage 6/6 live (`docs/demo-montage.md`); s0-s7 8/8 live (`docs/SCENARIOS.md`).
-- [x] The demo runs after Sun 17:00 and offline: `AIMO_NOW` simulated clock (`aimo/backend/clock.py`) plus replay mode (`aimo/backend/replay.py`, `tests/fixtures/snapshot`, `docs/DEMO.md` checklist step 5).
-- [ ] Public URL through optional laptop `cloudflared` tunnel, smoke-tested from a phone (submission documents the one-command local/replay run `make accept` and `uv run aimo serve` -> `http://localhost:8000/ui` in `docs/SUBMISSION.md`, D-ops).
-- [x] Committed backup video `docs/demo-backup.mp4` (`uv run python scripts/record_demo_video.py`, linked in `docs/SUBMISSION.md`; optional live stopwatch rehearsals by Chintufp).
+- [x] The browser hero flow works live and keyless: Gemini agent (with `GEMINI_FALLBACK_MODELS` quota failover) -> MCP -> plan -> signed quote -> needs approval -> approve -> AP -> audit verified, plus keyless scripted buyer fallback on the real in-process replay gateway in `uv run aimo demo` (`aimo/buyer/mock_model.py`, `tests/test_scripted_buyer.py`, [docs/reports/live.md](reports/live.md)).
+- [x] Montage 6/6 live ([docs/demo-montage.md](demo-montage.md)); `s0-s7` 8/8 live and keyless replay ([docs/SCENARIOS.md](SCENARIOS.md)); 9-row rubric exception matrix in [docs/RUN.md](RUN.md).
+- [x] The demo runs after Sun 17:00 and offline: `AIMO_NOW` simulated clock (`aimo/backend/clock.py`) plus automatic replay mode (`aimo/backend/replay.py`, `tests/fixtures/snapshot/replay/`, [docs/DEMO.md](DEMO.md) checklist step 5).
+- [ ] Hosted public URL through optional laptop `cloudflared` tunnel, smoke-tested from a phone ([docs/SUBMISSION.md](SUBMISSION.md) and [docs/RUN.md](RUN.md) document zero-key local evaluation in 3 commands: `make accept` -> `RESULT: PASS`, `uv run aimo serve` -> `http://localhost:8000/ui`).
+- [x] Backup video `docs/demo-backup.mp4` documented in [docs/SUBMISSION.md](SUBMISSION.md) (`uv run python scripts/record_demo_video.py`; optional live stopwatch rehearsals by Chintufp).
 
 **2. Solving the user need (20%): matches what the buyer asked, least manual correction**
-- [x] The hero request needs zero correction; recipe -> order, event, school and hospital all work live, with customer policy allergen hard-blocks enforced inside `plan_need` (`aimo/catalog/plan.py`, `tests/test_allergen_plan.py`).
+- [x] The hero request needs zero correction; recipe -> order, event, school and hospital all work live and in replay, with customer policy allergen hard-blocks enforced inside `plan_need` (`aimo/catalog/plan.py`, `tests/test_allergen_plan.py`).
 - [ ] Zero-correction rate >=95% on a 1,000-request gold set across 10 segments in fi/sv/en (20-request smoke set in `tests/fixtures/gold/gold-buyer-20.jsonl`; unmeasured at 1k scale, disclosed in `docs/NUMBERS.md`).
-- [ ] Escalation precision >=90% at recall >=99% (measured on `wt640`: improved from 54.0% at 98.8% recall to 68.2% at 99.7% recall with 0 policy and 0 allergen violations after verified-best + learned approvals; 90% target not met, disclosed in `docs/windtunnel-results.md` and `docs/reports/need.md`).
+- [ ] Escalation precision >=90% at recall >=99% (measured on `wt640` on final code: improved from 54.0% at 98.8% recall to 68.2% at 99.7% recall with 0 policy and 0 allergen violations after verified-best + learned approvals; 90% target not met, disclosed in `docs/windtunnel-results.md` and `docs/pitch/QA.md` Q21).
 - [ ] Product-type taxonomy for all 17,546 products; line acceptability >=98% (`aimo/catalog/taxonomy.py` experiment recorded in `docs/GEMINI.md` §5).
 - [x] The agent asks one clarifying question instead of guessing (`needs_clarification` + `POST /v1/agent/runs/{id}/answer`, `docs/reports/frontend/s5-clarifying-question.png`, `docs/reports/ui.md`).
 - [x] Photo intake for handwritten orders and menus (`aimo/buyer/vision.py`, `image_b64` on `POST /v1/agent/runs`, `aimo demo --image`; accuracy unmeasured and not claimed).
-- [ ] A mentor validates the approval matrix and tiers, quoted in the pitch (**delegated to Ivar**; output swarm/A/out/A-mentor.md).
+- [ ] A mentor validates the approval matrix and tiers, quoted in the pitch (**delegated to Ivar**; output `swarm/A/out/A-mentor.md`).
 
 **3. Autonomy and controls (20%): what is autonomous vs human sign-off, logged and auditable**
 - [x] Policy engine with plain-language reasons; approvals bound to the quote hash; signed, hash-chained audit log with a readable report and live tamper detection.
-- [x] Red-teamed holes closed: self-approval (`403 agent_cannot_approve`), per-approver credentials and lockout (`tests/test_per_approver_auth.py`), known-customer enforcement (`tests/test_auth_known_customer.py`), forged tiers, identity mismatch, quote hijack.
+- [x] Red-teamed holes closed: self-approval (`403 agent_cannot_approve`), per-approver credentials and lockout (`tests/test_per_approver_auth.py`), known-customer enforcement across `/v1` and MCP (`403 unknown_customer`, `tests/test_auth_known_customer.py`), operator-only `X-Aimo-Now` / `X-Aimo-Faults` (`AIMO_DEMO_FAULTS=1`), forged tiers, identity mismatch, quote hijack.
 - [x] Explicit autonomy matrix in the UI and docs: auto vs needs approval vs reject, per customer (`docs/TRUST.md` §3, `web/`).
 - [x] Learned approvals ("always allow this swap"), audited (`aimo/trust/learned.py`, `GET /v1/customers/{id}/learned`, audit `approval.remembered`).
 - [x] Split-order aggregation and price-drift rules (`split_order` 7-day rolling window and `price_jump` >15% in `aimo/trust/policy.py`, `docs/reports/need.md`).
 
 **4. Robustness (15%): partial availability, substitutions, delivery constraints**
-- [x] Cut-off passed, partial stock split, stock-out, allergen-safe substitution, injection (`injection_screen` surfaced on `PlanLine` and `Candidate`, `tests/test_plan_injection_screen.py`) and drift are each handled in a live scenario, with pre-planning input validation (`quantity <= 0` -> 4xx, `tests/test_plan_input_validation.py`, `tests/test_fuzz.py`).
-- [ ] 40 exception-family test cards green (swarm B `B-exc-*`: split across dates, late delivery never accepted, Terminal unknown quantity, lot/pack rounding, multi-line constraints; covered in `tests/test_edge_cases.py` and `windtunnel/`).
-- [x] Re-quote flow when the price changes or the cut-off passes during approval (`409 requote_needed` with old-vs-new diff, replacement signed quote, `order.requoted` audit event, and `/ui` diff card `docs/reports/frontend/s5-requote-diff.png`; `docs/DEMO.md`).
-- [ ] Chaos matrix 100% graceful; wind tunnel at scale: 0 violations over >=10k attacks (largest measured runs: `wt640` 640 Gemini scenarios with 0 policy and 0 allergen violations, plus `wt2560` 2,560 template scenarios; `docs/windtunnel-results.md`).
+- [x] Cut-off passed, partial stock split, stock-out, allergen-safe substitution, prompt injection (`PlanLine.injection_screen` and `Candidate.injection_screen` surfaced on plan lines, plus `need.raw_text` and `need.product_query` screening; `tests/test_plan_injection_screen.py`) and drift are each handled in a live/replay scenario, with pre-planning input validation (`quantity <= 0` -> 422 before planning, `tests/test_plan_input_validation.py`, `tests/test_fuzz.py`).
+- [ ] 40 exception-family test cards green (swarm B `B-exc-*`: split across dates, late delivery never accepted, Terminal unknown quantity, lot/pack rounding, multi-line constraints; covered in `tests/test_edge_cases.py`, [docs/RUN.md](RUN.md), and `windtunnel/`).
+- [x] Re-quote flow when the price changes, stock drops below the quoted quantity (`reason: partial_stock`, never silent partial `CA`), or the cut-off passes during approval (`409 requote_needed` with old-vs-new diff, replacement signed quote, `order.requoted` audit event, and `/ui` diff card `docs/reports/frontend/s5-requote-diff.png`; [docs/DEMO.md](DEMO.md)).
+- [ ] Chaos matrix 100% graceful; wind tunnel at scale: 0 violations over >=10k attacks (largest measured runs: `wt640` 640 Gemini scenarios re-scored on final code with committed inputs in `docs/evidence/windtunnel/` at 0 policy and 0 allergen violations, plus `wt2560` 2,560 template scenarios; `docs/windtunnel-results.md`).
 
 **5. Openness / path to production (15%): open standards, visible assumptions, justified choices, next steps**
-- [x] MCP (13 tools) plus OpenAPI 3.1, otap.json discovery, JWKS, Peppol AP/CA/RE + T116 XML export, GS1 GTIN; `docs/ARCHITECTURE.md`, `docs/TRUST.md`.
-- [x] `docs/ASSUMPTIONS.md` (visible assumptions: no upstream order API, invented customers, inferred categories, mock-API quirks) and `docs/DECISIONS.md` (each choice justified, alternatives rejected), plus a phased "Next steps" section (`docs/ARCHITECTURE.md` §5, `README.md`).
-- [x] Conformance suite passes 44/44 on our gateway and second wholesaler Nordic Bakery Supply (`toywholesaler/`), and both the Gemini buyer and keyless scripted buyer order from it with zero code changes (`docs/OPENNESS.md`, `tests/test_openness.py`, `tests/test_toywholesaler_scripted_buyer.py`).
-- [ ] Minimal OAuth 2.1 client-credentials and protected-resource metadata (documented as Phase 3 production path in `docs/ARCHITECTURE.md` §5; demo enforces known-customer directory + optional `X-Agent-Key`).
-- [x] Every number reproducible from `docs/NUMBERS.md` (`docs/evidence/montage_stats.py`, `docs/pitch/repro_injection_fp.py`).
+- [x] MCP (13 tools, zero approval tools) plus OpenAPI 3.1, `otap.json` discovery, JWKS, Peppol AP/CA/RE + T116 XML export (with opt-in XSD validation in `docs/peppol/`), GS1 GTIN; `docs/ARCHITECTURE.md`, `docs/TRUST.md`, [docs/CONNECT.md](CONNECT.md), [docs/OPENNESS.md](OPENNESS.md).
+- [x] `docs/ASSUMPTIONS.md` (visible assumptions: no upstream order API, invented customers, inferred categories, mock-API quirks) and `docs/DECISIONS.md` (each choice justified, alternatives rejected), plus a phased "Production path" and pilot KPIs ([docs/OPENNESS.md](OPENNESS.md), `docs/ARCHITECTURE.md` §5, `README.md`).
+- [x] Conformance suite passes 44/44 on our gateway and second wholesaler Nordic Bakery Supply (`toywholesaler/`), and both the Gemini buyer and keyless scripted buyer order from it with zero code changes ([docs/OPENNESS.md](OPENNESS.md), `tests/test_openness.py`, `tests/test_toywholesaler_scripted_buyer.py`).
+- [ ] Minimal OAuth 2.1 client-credentials and protected-resource metadata (documented as Phase 3 production path in [docs/OPENNESS.md](OPENNESS.md) and `docs/ARCHITECTURE.md` §5; demo enforces known-customer directory + optional `X-Agent-Key`).
+- [x] Every number reproducible from `docs/NUMBERS.md` (`docs/evidence/montage_stats.py`, `docs/pitch/repro_injection_fp.py`, `docs/evidence/windtunnel/`).
 
 **Google DeepMind (stackable):** problem, integration, innovation, why Gemini -> `docs/GEMINI.md`:
 - [x] function calling over MCP;
-- [x] thinking-level escalation (`windtunnel/thinking.py` benchmark in `docs/GEMINI.md` §3);
+- [x] thinking-level escalation (`windtunnel/thinking.py` benchmark in `docs/GEMINI.md` §3) and automatic `GEMINI_FALLBACK_MODELS` quota failover;
 - [x] embeddings (`gemini-embedding-2` over 17,546 products);
 - [x] allergen inference (4,076 products, advisory block-only);
-- [x] cost per order ($0.0339 after token trim, reproducible from `docs/evidence/`);
+- [x] cost per order ($0.0339 after Sat token trim, $0.0352 on Sun V3 final-code run; reproducible from `docs/evidence/`);
 - [x] multimodal photo intake (`aimo/buyer/vision.py`) and voice approval intent (`aimo/voice/`, `tests/test_voice.py`);
 - [ ] Batch API taxonomy for 17.5k products (submitted 878-request job, interactive fallback labelled; disclosed in `docs/GEMINI.md` §5);
 - [ ] gold-set accuracy chart (not claimed, disclosed in `docs/NUMBERS.md`).
@@ -86,16 +89,17 @@ Done: Momin010, ivarakerholm-wq and Chintufp are invited as collaborators. **Sil
 Everything else is decided below. Change it here if you disagree.
 
 ## Status (Sun 15 Nov, Helsinki)
-- **On `main` (`738c93a`) and `combined` / `fr8/valio/*` (`627c692` / `6973c2d`), verified:**
-  - full hero flow in browser and over REST/MCP, plus keyless scripted buyer fallback in `uv run aimo demo`;
-  - human-only approvals with per-approver 12-char passphrases (`approver_pins.json`), `X-Approver-Session`, per-`(approver, client)` lockout, known-customer enforcement, quote ownership, server-verified tiers, and `409 requote_needed` diff flow;
-  - customer policy allergen hard-blocks enforced inside `plan_need`, pre-planning quantity validation (`quantity <= 0` -> 4xx) and `/v1` fuzzing (`tests/test_fuzz.py`), and `injection_screen` surfaced on `PlanLine` and `Candidate`;
-  - Gemini buyer montage 6/6 PASS at $0.0339 per order (`docs/demo-montage.md`), `s0-s7` acceptance suite 8/8 PASS live and keyless in replay (`docs/SCENARIOS.md`), and `otap/0.1` conformance 44/44 on both Valio Aimo and Nordic Bakery Supply (`docs/OPENNESS.md`);
-  - wind tunnel `wt640` (640 Gemini scenarios: 0 policy and 0 allergen violations, 99.7% recall, 68.2% precision after S3 policy update, vs 372 policy and 193 allergen violations for the naive baseline) and `wt2560` folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md` and `NUMBERS.md`;
-  - 1,257 collected pytest checks in `tests/` (`1,150 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline on `6973c2d`, `1,146 passed` across `1,253` collected on `fr8/valio/main` `627c692`, `743 passed, 7 skipped, 2 xfailed` with full 17,546-product catalog JSON on `2468bdd`, and `344 passed, 7 skipped, 1 xfailed, 1 xpassed` keyed on standalone `main` `738c93a`; S1 replay bundles a 669-product catalog subset so `scenarios.run_all` passes 8/8 keyless across 88 checks).
-- **Remaining before freeze (Sun 06:00, tag `aimo-v1`):**
-  - final sync between `fr8/valio/main`, `combined` and `main` (see [docs/COMBINE.md](COMBINE.md));
-  - committed headless Playwright backup video `docs/demo-backup.mp4` (`uv run python scripts/record_demo_video.py`) and one-command local/replay run (`make accept`, `uv run aimo serve` -> `http://localhost:8000/ui`) documented in `docs/SUBMISSION.md`.
+- **On `main` (`9742758` / `e97a367` / `7c290cf`) and `combined` / `fr8/valio/*` (`627c692` / `c98e72e`), verified:**
+  - full hero flow in browser and over REST/MCP (with `GEMINI_FALLBACK_MODELS` quota failover), plus keyless scripted buyer fallback on the real in-process replay gateway in `uv run aimo demo` (`aimo/buyer/mock_model.py`, [docs/reports/live.md](reports/live.md));
+  - human-only approvals with per-approver 12-char passphrases (`approver_pins.json` / `AIMO_APPROVER_PINS`), `X-Approver-Session`, per-`(approver, client)` lockout, known-customer `403 unknown_customer` across `/v1` and MCP, operator-only `X-Aimo-Now` / `X-Aimo-Faults` (`AIMO_DEMO_FAULTS=1`), quote ownership, server-verified tiers, and `409 requote_needed` diff flow (including `reason: partial_stock` so buyers never silently receive partial `CA` orders);
+  - customer policy allergen hard-blocks enforced inside `plan_need`, pre-planning quantity validation (`quantity <= 0` -> 422 before planning), `/v1` fuzzing (`tests/test_fuzz.py`), and `injection_screen` surfaced on `PlanLine` and `Candidate` plus `need.raw_text` and `need.product_query` screening;
+  - 13 MCP tools (`build_mcp().list_tools()`, zero approval tools), [docs/RUN.md](RUN.md) (keyless runbook + 9-row rubric exception matrix), [docs/CONNECT.md](CONNECT.md), and [docs/OPENNESS.md](OPENNESS.md) production path;
+  - Gemini buyer montage 6/6 PASS ($0.0339 per order after Sat token trim, $0.0352 per order on Sun V3 final-code run; [docs/demo-montage.md](demo-montage.md)), `s0-s7` acceptance suite 8/8 PASS live and keyless in replay ([docs/SCENARIOS.md](SCENARIOS.md)), and `otap/0.1` conformance 44/44 on both Valio Aimo and Nordic Bakery Supply ([docs/OPENNESS.md](OPENNESS.md));
+  - wind tunnel `wt640` re-scored on final code with committed inputs under `docs/evidence/windtunnel/` (640 Gemini scenarios: 0 policy and 0 allergen violations, 99.7% recall, 68.2% precision after S3 policy update, vs 372 policy and 193 allergen violations for the naive baseline) and `wt2560` folded into `DEMO.md`, `deck.md`, `SUBMISSION.md`, `GEMINI.md` and `NUMBERS.md`;
+  - 1,275 collected pytest checks in `tests/` (`1,168 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline with 0 failures on `fr8/valio/docs` `c98e72e`, `743 passed, 7 skipped, 2 xfailed` with full 17,546-product catalog JSON on `2468bdd`, and `362 passed` keyed / `261 passed, 0 failed` keyless on standalone `main` `9742758`, `366 passed` after `7c290cf`; S1 replay bundles a 669-product catalog subset so `scenarios.run_all` passes 8/8 keyless across 88 checks).
+- **Remaining before freeze (tag `aimo-v1`):**
+  - final merge sync between `fr8/valio/main`, `combined` and `main` (see [docs/COMBINE.md](COMBINE.md));
+  - confirm `aimo-v1` tag push and video choice (`docs/demo-backup.mp4` vs live stage screen recording; 3-command local keyless run `make accept` and `uv run aimo serve` -> `http://localhost:8000/ui` already documented in [docs/SUBMISSION.md](SUBMISSION.md) and [docs/RUN.md](RUN.md)).
 
 ## The idea in one line
 **An open "Trusted Trade" gateway that lets any company's AI purchasing agent find, compare, quote and order from Valio Aimo, inside guardrails the customer controls, with every decision signed and explained.** The Gemini buyer agent is the reference client. MCP plus OpenAPI is the open door. The policy engine and signed audit trail are the trust layer.
