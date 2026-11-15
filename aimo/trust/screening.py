@@ -198,3 +198,13 @@ def screen_text(text: str | None, use_gemini: bool | None = None) -> dict:
             layers.append("gemini:unavailable")
     return {"suspicious": bool(strong), "reasons": reasons, "strong_reasons": strong, "matches": matches,
             "layers": layers}
+
+
+def format_plan_screen(screen: dict | None, flags: list[str] | None = None) -> str:
+    data = screen if isinstance(screen, dict) else {}
+    if bool(data.get("suspicious")) or "supplier_text_injection_suspected" in (flags or []):
+        reasons = [str(r) for r in (data.get("reasons") or []) if str(r).strip()]
+        return "screen: FLAGGED (" + ", ".join(reasons) + ")" if reasons else "screen: FLAGGED"
+    if isinstance(screen, dict):
+        return "screen: clean"
+    return "screen: unscreened"

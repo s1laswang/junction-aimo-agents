@@ -33,6 +33,16 @@ def known_customer_ids() -> set[str]:
 
 
 MAX_CUSTOMER_ID_LEN = 128
+MAX_AGENT_ID_LEN = 128
+
+
+def _utf8(value: str) -> bytes:
+    return value.encode("utf-8", errors="surrogatepass")
+
+
+def _is_unsafe_char(ch: str) -> bool:
+    code = ord(ch)
+    return code < 32 or 127 <= code <= 159 or 0xD800 <= code <= 0xDFFF
 
 
 def _clean_customer_id(customer_id: Optional[str]) -> str:
@@ -41,18 +51,33 @@ def _clean_customer_id(customer_id: Optional[str]) -> str:
     return str(customer_id).strip(" \t\r\n")
 
 
+def _clean_agent_id(agent_id: Optional[str]) -> str:
+    if agent_id is None:
+        return ""
+    return str(agent_id).strip(" \t\r\n")
+
+
 def _is_unsafe_customer_id(cid: str) -> bool:
     return (
         len(cid) > MAX_CUSTOMER_ID_LEN
         or ".." in cid
         or "/" in cid
         or "\\" in cid
-        or any(ord(ch) < 32 or ord(ch) == 127 for ch in cid)
+        or any(_is_unsafe_char(ch) for ch in cid)
+    )
+
+
+def _is_unsafe_agent_id(aid: str) -> bool:
+    return (
+        len(aid) > MAX_AGENT_ID_LEN
+        or ".." in aid
+        or "\\" in aid
+        or any(_is_unsafe_char(ch) for ch in aid)
     )
 
 
 def _safe_customer_preview(cid: str) -> str:
-    cleaned = "".join(ch if ord(ch) >= 32 and ord(ch) != 127 else "?" for ch in cid)
+    cleaned = "".join("?" if _is_unsafe_char(ch) else ch for ch in cid)
     return cleaned[:80]
 
 
@@ -104,7 +129,7 @@ def _configured_agent_keys() -> dict[str, str]:
             return {
                 str(k).strip(): str(v).strip()
                 for k, v in parsed.items()
-                if str(k).strip() and v is not None and str(v).strip()
+                if str(k).strip() and isinstance(v, (str, int)) and not isinstance(v, bool) and str(v).strip()
             }
     out: dict[str, str] = {}
     for entry in raw.split(","):
@@ -128,22 +153,29 @@ def check_agent_key(customer_id: str, x_agent_key: Optional[str] = None) -> None
     keys = _configured_agent_keys()
     if not keys:
         return
-    cid = (customer_id or "").strip()
+    cid = _clean_customer_id(customer_id)
+    safe_cid = _safe_customer_preview(cid)
     expected = keys.get(cid) or keys.get("*")
     if not expected:
         return
-    provided = (x_agent_key or "").strip()
+    raw_key = str(x_agent_key) if x_agent_key is not None else ""
+    provided = raw_key.strip(" \t\r\n")
     if not provided:
         raise service.ServiceError(
             401,
             "agent_key_required",
-            f"X-Agent-Key header is required for customer {cid!r}.",
+            f"X-Agent-Key header is required for customer {safe_cid!r}.",
         )
-    if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+    if (
+        len(provided) > 4096
+        or any(_is_unsafe_char(ch) for ch in provided)
+        or not hmac.compare_digest(_utf8(provided), _utf8(expected))
+    ):
+        hmac.compare_digest(_utf8(provided[:256]), b"invalid-agent-key")
         raise service.ServiceError(
             403,
             "invalid_agent_key",
-            f"Invalid X-Agent-Key for customer {cid!r}.",
+            f"Invalid X-Agent-Key for customer {safe_cid!r}.",
         )
 
 
@@ -159,7 +191,9 @@ def resolve_customer_identity(
 ) -> service.Identity:
     hc = _clean_customer_id(x_customer_id)
     bc = _clean_customer_id(body_customer_id)
-    if require_headers and (not (x_agent_id and x_agent_id.strip()) or not hc):
+    ha = _clean_agent_id(x_agent_id)
+    ba = _clean_agent_id(body_agent_id)
+    if require_headers and (not ha or not hc):
         raise service.ServiceError(
             401,
             "identity_required",
@@ -184,16 +218,26 @@ def resolve_customer_identity(
         raise service.ServiceError(
             403,
             "customer_mismatch",
-            f"request names customer {body_customer_id!r} but the caller is authenticated as {hc!r}",
+            f"request names customer {_safe_customer_preview(bc)!r} but the caller is authenticated as {_safe_customer_preview(hc)!r}",
         )
     if not defer_unknown_customer:
         require_known_customer(cid)
     check_agent_key(cid, x_agent_key)
-    ha = (x_agent_id or "").strip()
-    ba = (body_agent_id or "").strip()
+    if ha and _is_unsafe_agent_id(ha):
+        raise service.ServiceError(
+            403,
+            "invalid_agent_id",
+            f"invalid agent id {_safe_customer_preview(ha)!r}",
+        )
+    if ba and _is_unsafe_agent_id(ba):
+        raise service.ServiceError(
+            403,
+            "invalid_agent_id",
+            f"invalid agent id {_safe_customer_preview(ba)!r}",
+        )
     aid = ha or ba or service.DEFAULT_AGENT
     ident = service.Identity(agent_id=aid, customer_id=cid)
     if ha and ba:
-        service.claim_identity(ident, None, body_agent_id)
+        service.claim_identity(ident, None, ba)
     setattr(ident, "authenticated", {"customer": bool(hc), "agent": bool(ha)})
     return ident

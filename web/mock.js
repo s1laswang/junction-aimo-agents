@@ -93,6 +93,8 @@ function hotelNeed(text) {
   };
 }
 
+const cleanScreen = () => ({ suspicious: false, reasons: [], layers: ["regex"] });
+
 function hotelPlan(need) {
   const P = hotelProducts();
   const O = hotelOffers();
@@ -106,6 +108,7 @@ function hotelPlan(need) {
         "Delivery reliability 100% (reliability data)",
       ],
       flags: ["pack_substitution"],
+      injection_screen: cleanScreen(),
     },
     {
       product: P["469363"], offer: O["469363"], tier: "better", rank_score: 0.71,
@@ -115,6 +118,7 @@ function hotelPlan(need) {
         "€2.48/L is 2.5× the best option",
       ],
       flags: ["brand_substitution", "partial_stock", "reliability_unknown"],
+      injection_screen: cleanScreen(),
     },
     {
       product: P["462775"], offer: O["462775"], tier: "good", rank_score: 0.48,
@@ -123,17 +127,20 @@ function hotelPlan(need) {
         "Only 51 units available",
       ],
       flags: ["spec_substitution", "partial_stock", "reliability_unknown"],
+      injection_screen: cleanScreen(),
     },
     {
       product: P["463038"], offer: O["463038"], tier: "rejected", rank_score: 0,
       reasons: ["Order cut-off passed Thu 12 Nov 15:00: Terminal item cannot arrive by Mon 16 Nov"],
       flags: ["cutoff_passed", "terminal"],
+      injection_screen: cleanScreen(),
     },
   ];
   const lines = [{
     product_id: "464306", product_name: P["464306"].name, tier: "best", qty_sales_units: 1000, sales_unit: "ST",
     covered_amount: 1000, unit_price: 1.01, line_total: 1010.0,
     reasons: candidates[0].reasons.slice(0, 2), flags: ["pack_substitution"],
+    injection_screen: cleanScreen(),
   }];
   return {
     need, lines, candidates, covered_amount: 1000, shortfall: 0, total_net: 1010.0,
@@ -174,14 +181,14 @@ function schoolScenario(text) {
     "472598": { ...base, id: "472598", name: "Fazer Aito Oat Drink Barista 1L UHT", brand: "Fazer Aito" },
   };
   const candidates = [
-    { product: P["468465"], offer: off("468465", 1.65, 900), tier: "best", rank_score: 0.9, reasons: ["Milk and nuts: structured FREE_FROM data", "Plain oat drink suits a school lunch", "Covers all 120 L"], flags: [] },
-    { product: P["472833"], offer: off("472833", 1.79, 600), tier: "better", rank_score: 0.74, reasons: ["Milk and nuts: structured FREE_FROM data", "€0.14/L more than the best option"], flags: [] },
-    { product: P["472598"], offer: off("472598", 1.95, 300), tier: "good", rank_score: 0.4, reasons: ["Barista product: higher price per litre", "Supplier marketing text contained instructions to AI agents; the text was ignored"], flags: ["injection_flagged"] },
-    { product: P["464306"], offer: off("464306", 1.01, 4200), tier: "rejected", rank_score: 0, reasons: ["Contains milk"], flags: ["allergen_contains"] },
-    { product: P["471424"], offer: off("471424", 2.1, 120), tier: "rejected", rank_score: 0, reasons: ["Contains nuts (hazelnut)"], flags: ["allergen_contains"] },
-    { product: P["470863"], offer: off("470863", 1.59, 800), tier: "rejected", rank_score: 0, reasons: ["Allergen data missing for nuts: treated as unknown, never safe"], flags: ["allergen_unknown"] },
+    { product: P["468465"], offer: off("468465", 1.65, 900), tier: "best", rank_score: 0.9, reasons: ["Milk and nuts: structured FREE_FROM data", "Plain oat drink suits a school lunch", "Covers all 120 L"], flags: [], injection_screen: cleanScreen() },
+    { product: P["472833"], offer: off("472833", 1.79, 600), tier: "better", rank_score: 0.74, reasons: ["Milk and nuts: structured FREE_FROM data", "€0.14/L more than the best option"], flags: [], injection_screen: cleanScreen() },
+    { product: P["472598"], offer: off("472598", 1.95, 300), tier: "good", rank_score: 0.4, reasons: ["Barista product: higher price per litre", "Supplier marketing text contained instructions to AI agents; the text was ignored"], flags: ["supplier_text_injection_suspected"], injection_screen: { suspicious: true, reasons: ["ai_agent_addressing", "ignore_instructions"], layers: ["regex"] } },
+    { product: P["464306"], offer: off("464306", 1.01, 4200), tier: "rejected", rank_score: 0, reasons: ["Contains milk"], flags: ["allergen_contains"], injection_screen: cleanScreen() },
+    { product: P["471424"], offer: off("471424", 2.1, 120), tier: "rejected", rank_score: 0, reasons: ["Contains nuts (hazelnut)"], flags: ["allergen_contains"], injection_screen: cleanScreen() },
+    { product: P["470863"], offer: off("470863", 1.59, 800), tier: "rejected", rank_score: 0, reasons: ["Allergen data missing for nuts: treated as unknown, never safe"], flags: ["allergen_unknown"], injection_screen: cleanScreen() },
   ];
-  const lines = [{ product_id: "468465", product_name: P["468465"].name, tier: "best", qty_sales_units: 120, sales_unit: "ST", covered_amount: 120, unit_price: 1.65, line_total: 198, reasons: candidates[0].reasons.slice(0, 1), flags: [] }];
+  const lines = [{ product_id: "468465", product_name: P["468465"].name, tier: "best", qty_sales_units: 120, sales_unit: "ST", covered_amount: 120, unit_price: 1.65, line_total: 198, reasons: candidates[0].reasons.slice(0, 1), flags: [], injection_screen: cleanScreen() }];
   const plan = { need, lines, candidates, covered_amount: 120, shortfall: 0, total_net: 198, explanation: "Three oat drinks are milk- and nut-safe by structured data. The cheapest safe option covers all 120 L. One lactose-free milk was dropped because it contains milk, one barista drink because it contains hazelnut, and one oat drink because its nut data is missing." };
   const decision = {
     outcome: "auto_approve", approver_role: null, policy_id: "school-tampere", policy_version: "2026-11-14.1",
@@ -219,16 +226,16 @@ function hospitalScenario(text) {
     preferences: { extra_item: "2 kg fresh dill", diet: "coeliac wards" },
   };
   const candidates = [
-    { product: P["461765"], offer: off("461765", "KI", 38.4, 25, 8.0), tier: "best", rank_score: 0.88, reasons: ["Gluten: structured FREE_FROM data", "Sliced dark bread like the usual Schär loaf; frozen 8 × 600 g case", "Covers all 40 kg with 9 cases (43.2 kg)"], flags: ["outside_preference"] },
-    { product: P["466567"], offer: off("466567", "KI", 19.6, 30, 11.2), tier: "better", rank_score: 0.7, reasons: ["Gluten: free (from the product's claim)", "Individually sliced 35 g portions, 40% dearer per kg"], flags: ["outside_preference"] },
-    { product: P["472434"], offer: off("472434", "KI", 22.8, 12, 9.5), tier: "good", rank_score: 0.45, reasons: ["Gluten: free (from the product's claim)", "Pita, not sliced bread: only 12 cases (28.8 kg)"], flags: ["outside_preference", "partial_stock"] },
-    { product: P["473328"], offer: off("473328", "ST", 4.9, 0, 14.0, { issues: ["out_of_stock"] }), tier: "rejected", rank_score: 0, reasons: ["Your usual item is out of stock for Wed 18 Nov"], flags: ["out_of_stock"] },
-    { product: P["465773"], offer: off("465773", "BAG", 3.2, 200, 19.39), tier: "rejected", rank_score: 0, reasons: ["Contains gluten: the structured allergen data says CONTAINS, although the name says “Gluten-Free”"], flags: ["allergen_contains"] },
-    { product: P["472147"], offer: off("472147", "BAG", 3.4, 150, 16.19), tier: "rejected", rank_score: 0, reasons: ["May contain gluten (structured allergen data)"], flags: ["allergen_may_contain"] },
+    { product: P["461765"], offer: off("461765", "KI", 38.4, 25, 8.0), tier: "best", rank_score: 0.88, reasons: ["Gluten: structured FREE_FROM data", "Sliced dark bread like the usual Schär loaf; frozen 8 × 600 g case", "Covers all 40 kg with 9 cases (43.2 kg)"], flags: ["outside_preference"], injection_screen: cleanScreen() },
+    { product: P["466567"], offer: off("466567", "KI", 19.6, 30, 11.2), tier: "better", rank_score: 0.7, reasons: ["Gluten: free (from the product's claim)", "Individually sliced 35 g portions, 40% dearer per kg"], flags: ["outside_preference"], injection_screen: cleanScreen() },
+    { product: P["472434"], offer: off("472434", "KI", 22.8, 12, 9.5), tier: "good", rank_score: 0.45, reasons: ["Gluten: free (from the product's claim)", "Pita, not sliced bread: only 12 cases (28.8 kg)"], flags: ["outside_preference", "partial_stock"], injection_screen: cleanScreen() },
+    { product: P["473328"], offer: off("473328", "ST", 4.9, 0, 14.0, { issues: ["out_of_stock"] }), tier: "rejected", rank_score: 0, reasons: ["Your usual item is out of stock for Wed 18 Nov"], flags: ["out_of_stock"], injection_screen: cleanScreen() },
+    { product: P["465773"], offer: off("465773", "BAG", 3.2, 200, 19.39), tier: "rejected", rank_score: 0, reasons: ["Contains gluten: the structured allergen data says CONTAINS, although the name says “Gluten-Free”"], flags: ["allergen_contains"], injection_screen: cleanScreen() },
+    { product: P["472147"], offer: off("472147", "BAG", 3.4, 150, 16.19), tier: "rejected", rank_score: 0, reasons: ["May contain gluten (structured allergen data)"], flags: ["allergen_may_contain"], injection_screen: cleanScreen() },
   ];
   const lines = [
-    { product_id: "461765", product_name: P["461765"].name, tier: "best", qty_sales_units: 9, sales_unit: "KI", covered_amount: 43.2, unit_price: 38.4, line_total: 345.6, reasons: candidates[0].reasons.slice(0, 2), flags: ["outside_preference"] },
-    { product_id: "460395", product_name: P["460395"].name, tier: "best", qty_sales_units: 20, sales_unit: "ST", covered_amount: 0, unit_price: 1.95, line_total: 39.0, reasons: ["Second item in the request: 2 kg fresh dill", "No allergen data: gluten status unknown"], flags: ["allergen_unknown"] },
+    { product_id: "461765", product_name: P["461765"].name, tier: "best", qty_sales_units: 9, sales_unit: "KI", covered_amount: 43.2, unit_price: 38.4, line_total: 345.6, reasons: candidates[0].reasons.slice(0, 2), flags: ["outside_preference"], injection_screen: cleanScreen() },
+    { product_id: "460395", product_name: P["460395"].name, tier: "best", qty_sales_units: 20, sales_unit: "ST", covered_amount: 0, unit_price: 1.95, line_total: 39.0, reasons: ["Second item in the request: 2 kg fresh dill", "No allergen data: gluten status unknown"], flags: ["allergen_unknown"], injection_screen: cleanScreen() },
   ];
   const plan = {
     need, lines, candidates, covered_amount: 43.2, shortfall: 0, total_net: 384.6,
@@ -275,13 +282,15 @@ function salmonPlan(portions, delivery, customer_id, lactose) {
   const ingredients = SALMON.map(([ingredient, q, unit, swap, prod]) => {
     const quantity = Math.round(q * k * 100) / 100;
     const sw = lactose ? swap : null;
-    const lines = prod ? [{ product_id: prod[0], product_name: prod[1], tier: "best", qty_sales_units: Math.ceil(quantity / prod[3]), sales_unit: prod[2], covered_amount: Math.ceil(quantity / prod[3]) * prod[3], unit_price: prod[4], line_total: Math.round(Math.ceil(quantity / prod[3]) * prod[4] * 100) / 100, reasons: [], flags: [] }] : [];
-    return { ingredient, query: sw ? sw.query : ingredient, quantity, unit, swap: sw, plan: { lines, shortfall: prod ? 0 : quantity, total_net: lines.reduce((a, l) => a + l.line_total, 0) } };
+    const lines = prod ? [{ product_id: prod[0], product_name: prod[1], tier: "best", qty_sales_units: Math.ceil(quantity / prod[3]), sales_unit: prod[2], covered_amount: Math.ceil(quantity / prod[3]) * prod[3], unit_price: prod[4], line_total: Math.round(Math.ceil(quantity / prod[3]) * prod[4] * 100) / 100, reasons: [], flags: [], injection_screen: cleanScreen() }] : [];
+    const candidates = prod ? [{ product_id: prod[0], name: prod[1], tier: "best", unit_price: prod[4], reasons: [], flags: [], injection_screen: cleanScreen() }] : [];
+    return { ingredient, query: sw ? sw.query : ingredient, quantity, unit, swap: sw, plan: { lines, candidates, candidates_rejected: 0, shortfall: prod ? 0 : quantity, total_net: lines.reduce((a, l) => a + l.line_total, 0) } };
   });
   const total = Math.round(ingredients.reduce((a, i) => a + i.plan.total_net, 0) * 100) / 100;
   const swaps = ingredients.filter((i) => i.swap).map((i) => ({ ingredient: i.ingredient, to: i.swap.query, ratio: 1, why: i.swap.why, rule: i.swap.rule }));
   return {
     recipe: RECIPES[0], customer_id, delivery_by: delivery, excluded_allergens: lactose ? ["lactose"] : [], swaps, ingredients,
+    injection_flagged_lines: [],
     uncovered: [{ ingredient: "carrot", query: "carrot", shortfall: Math.round(3.6 * k * 100) / 100, unit: "KG", why: "No orderable candidate met the hard constraints for that date. What a human can do: re-plan for a later delivery date (cut-off-blocked products become orderable); broaden the product phrase or relax a non-safety preference." }],
     total_net_estimate: total,
     summary: `salmon soup x${portions} for ${customer_id}, delivery by ${delivery}: 8 ingredient(s), 7 fully covered, 7 product line(s), est. €${total.toFixed(2)} net${swaps.length ? `; swaps: ${swaps.map((x) => `${x.ingredient} -> ${x.to}`).join("; ")}` : ""}; NOT covered: carrot.`,
@@ -621,20 +630,32 @@ export async function createMockApi() {
       runs.set(run_id, { run_id, customer_id, text, model, thinking, image, buffer: [], listeners: new Set(), started: false });
       return { run_id };
     },
-    async answer(runId, body) {
+    async answer(runId, body = {}, customerId) {
       await sleep(250);
       const run = runs.get(runId);
-      if (!run?.answer) throw Object.assign(new Error("409 the run is not waiting for an answer"), { status: 409 });
-      const r = run.answer; run.answer = null; r(body);
-      return { ok: true };
+      const hdrCid = String(customerId || "").trim();
+      const bodyCid = String(body?.customer_id || "").trim();
+      if (hdrCid && bodyCid && hdrCid !== bodyCid) throw Object.assign(new Error("403 X-Customer-Id disagrees with body customer_id"), { status: 403, code: "customer_mismatch" });
+      const cid = hdrCid || bodyCid;
+      if (cid) {
+        if (!CUSTOMERS.some((c) => c.customer_id === cid)) throw Object.assign(new Error(`403 unknown customer ${cid}`), { status: 403, code: "unknown_customer" });
+        if (run && cid !== run.customer_id) throw Object.assign(new Error("403 caller customer_id does not match this run"), { status: 403, code: "customer_mismatch" });
+      }
+      if (!run) throw Object.assign(new Error(`404 unknown run ${runId}`), { status: 404, code: "run_not_found" });
+      if (!run.answer) throw Object.assign(new Error("409 the run is not waiting for an answer"), { status: 409, code: "not_waiting_for_answer" });
+      const { customer_id: _cid, ...ans } = body || {};
+      const r = run.answer; run.answer = null; r(ans);
+      return { ok: true, run_id: runId };
     },
     async learned(customerId) { await sleep(80); return structuredClone(learned[customerId] || []); },
     async recipes() { await sleep(120); return structuredClone(RECIPES); },
-    async planRecipe({ recipe_id, portions, delivery_by, customer_id, lactose_free }) {
+    async planRecipe({ recipe_id, portions, delivery_by, customer_id, lactose_free } = {}, hdrCustomerId) {
       await sleep(900);
       if (!portions) throw Object.assign(new Error("400 portions required"), { status: 400, code: "portions_required" });
+      const cid = String(customer_id || hdrCustomerId || "hotel-aurora").trim();
+      if (!CUSTOMERS.some((c) => c.customer_id === cid)) throw Object.assign(new Error(`403 unknown customer ${cid}`), { status: 403, code: "unknown_customer" });
       if (recipe_id !== "salmon-soup") throw Object.assign(new Error("Mock mode plans salmon soup only. Use the live gateway for the other dishes."), { status: 501 });
-      return salmonPlan(Number(portions), delivery_by || MON, customer_id || "hotel-aurora", !!lactose_free);
+      return salmonPlan(Number(portions), delivery_by || MON, cid, !!lactose_free);
     },
     async drift(customerId) { await sleep(200); if (!DRIFT[customerId]) throw Object.assign(new Error("404 no standing order"), { status: 404 }); return structuredClone(DRIFT[customerId]); },
     async proposals() { await sleep(100); return structuredClone(proposals).reverse(); },
@@ -649,20 +670,27 @@ export async function createMockApi() {
       await audit("agent:valio-aimo/seller-1", "proposal.created", prop.proposal_id, `Seller agent proposed a cheaper equivalent to hotel-aurora: 300 × 464306 replacing 464398 (advisory, cannot order).`, {});
       return structuredClone(prop);
     },
-    async orderQuoteRequest(qr, customerId) {
+    async orderQuoteRequest(qr, customerId, agentId) {
       await sleep(700);
-      const lines = qr.lines.map((l) => { const x = SALMON.find((r) => r[4]?.[0] === l.product_id)[4]; return { product_id: l.product_id, product_name: x[1], qty_sales_units: l.qty_sales_units, sales_unit: x[2], unit_price: x[4], line_total: Math.round(l.qty_sales_units * x[4] * 100) / 100, tier: "best", flags: [] }; });
+      const hdrCid = String(customerId || "").trim();
+      const bodyCid = String(qr?.customer_id || "").trim();
+      if (hdrCid && bodyCid && hdrCid !== bodyCid) throw Object.assign(new Error("403 X-Customer-Id disagrees with body customer_id"), { status: 403, code: "customer_mismatch" });
+      const cid = hdrCid || bodyCid;
+      if (!cid) throw Object.assign(new Error("401 identity_required"), { status: 401, code: "identity_required" });
+      if (!CUSTOMERS.some((c) => c.customer_id === cid)) throw Object.assign(new Error(`403 unknown customer ${cid}`), { status: 403, code: "unknown_customer" });
+      const lines = qr.lines.map((l) => { const x = SALMON.find((r) => r[4]?.[0] === l.product_id)[4]; return { product_id: l.product_id, product_name: x[1], qty_sales_units: l.qty_sales_units, sales_unit: x[2], unit_price: x[4], line_total: Math.round(l.qty_sales_units * x[4] * 100) / 100, tier: "best", flags: l.flags || [] }; });
       const total = Math.round(lines.reduce((a, l) => a + l.line_total, 0) * 100) / 100;
-      const quote = await makeQuote(customerId, { need: { delivery_by: qr.delivery_date }, lines, total_net: total });
+      const quote = await makeQuote(cid, { need: { delivery_by: qr.delivery_date }, lines, total_net: total });
+      if (agentId) quote.agent_id = String(agentId).includes("/") ? String(agentId) : `${cid}/${agentId}`;
       quote.need = null;
       const auto = total <= 500;
-      const decision = { outcome: auto ? "auto_approve" : "needs_approval", approver_role: auto ? null : "procurement_manager", policy_id: customerId, policy_version: "2026-11-14.1",
+      const decision = { outcome: auto ? "auto_approve" : "needs_approval", approver_role: auto ? null : "procurement_manager", policy_id: cid, policy_version: "2026-11-14.1",
         hits: [{ rule_id: "spend", outcome: auto ? "allow" : "needs_approval", message: `The order total €${total.toFixed(2)} is ${auto ? "within" : "above"} the €500 auto-approve limit.` }] };
       const order = newOrder(quote, decision, auto ? "placed" : "pending_approval");
-      if (auto) { order.response_code = "AP"; order.approved_by = `policy:${customerId}`; order.response_lines = lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: "" })); }
+      if (auto) { order.response_code = "AP"; order.approved_by = `policy:${cid}`; order.response_lines = lines.map((l) => ({ product_id: l.product_id, code: "AP", qty_confirmed: l.qty_sales_units, note: "" })); }
       orders.set(order.order_id, { order, quote, decision, run: null });
       await audit("system:gateway", "quote.created", quote.quote_id, `Signed quote ${quote.quote_id} for a recipe plan: ${lines.length} lines, €${total.toFixed(2)} net.`, {});
-      await audit("system:trust", "policy.evaluated", order.order_id, `Policy ${customerId}: ${auto ? "auto-approved" : "needs approval"} (€${total.toFixed(2)}).`, {});
+      await audit("system:trust", "policy.evaluated", order.order_id, `Policy ${cid}: ${auto ? "auto-approved" : "needs approval"} (€${total.toFixed(2)}).`, {});
       if (auto) await audit("system:gateway", "order.placed", order.order_id, `Order ${order.order_id} placed. Order response AP.`, {});
       return structuredClone({ quote, order });
     },
