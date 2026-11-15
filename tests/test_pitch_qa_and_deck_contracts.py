@@ -4,11 +4,20 @@ import asyncio
 import json
 import pathlib
 import re
+import shutil
+import subprocess
 
 from aimo.gateway.mcp_server import build_mcp
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PITCH_DOCS = ("docs/pitch/QA.md", "docs/pitch/deck.md")
+OWNED_DOCS = (
+    "docs/RUN.md",
+    "docs/CONNECT.md",
+    "docs/GEMINI.md",
+    "docs/pitch/QA.md",
+    "docs/pitch/deck.md",
+)
 
 
 def _read_doc(rel_path: str) -> str:
@@ -36,8 +45,10 @@ def test_qa_and_deck_have_zero_em_dashes_zero_todos_and_valid_links() -> None:
         (ROOT / "docs" / "demo-backup.mp4").resolve(),
         (ROOT / "docs" / "pitch" / "requote_beat.py").resolve(),
     }
+    live_run_readme = (ROOT / "docs" / "evidence" / "live-run" / "README.md").resolve()
+    assert live_run_readme.is_file()
 
-    for rel in PITCH_DOCS:
+    for rel in OWNED_DOCS:
         text = _read_doc(rel)
         assert em_dash not in text, f"Em dash found in {rel}"
         assert todo_re.findall(text) == [], f"TODO marker found in {rel}"
@@ -45,6 +56,7 @@ def test_qa_and_deck_have_zero_em_dashes_zero_todos_and_valid_links() -> None:
 
         doc_path = ROOT / rel
         stripped = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+        resolved_targets: set[pathlib.Path] = set()
         for raw_target in link_re.findall(stripped):
             target = raw_target.strip().split()[0]
             if target.startswith(("http://", "https://", "mailto:", anchor_sep)):
@@ -53,9 +65,15 @@ def test_qa_and_deck_have_zero_em_dashes_zero_todos_and_valid_links() -> None:
             if not rel_target:
                 continue
             resolved = (doc_path.parent / rel_target).resolve()
+            resolved_targets.add(resolved)
             if resolved in allowed_pending and not resolved.exists():
                 continue
             assert resolved.exists(), f"Broken link in {rel}: {raw_target}"
+            if resolved.is_file():
+                assert resolved.stat().st_size > 0, f"Empty linked file in {rel}: {raw_target}"
+        assert live_run_readme in resolved_targets, (
+            f"{rel} must link to docs/evidence/live-run/README.md via a valid relative link"
+        )
 
 
 def test_qa_and_deck_cite_13_mcp_tools_and_never_claim_9_total() -> None:
@@ -194,6 +212,16 @@ def test_qa_has_23_numbered_questions_including_q21_q22_q23() -> None:
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(qa)
         sections[qnum] = qa[start:end]
 
+    q10 = sections[10]
+    for tok in (
+        "AIMO_GEMINI_TRACE",
+        "live-run/README.md",
+        "summarize.py",
+        "off by default",
+        "never",
+    ):
+        assert tok in q10, f"QA Q10 missing {tok!r}"
+
     q12 = sections[12]
     for tok in (
         "0 of 34,159",
@@ -206,7 +234,18 @@ def test_qa_has_23_numbered_questions_including_q21_q22_q23() -> None:
     ):
         assert tok in q12, f"QA Q12 missing {tok!r}"
 
+    q15 = sections[15]
+    for tok in (
+        "70%",
+        "69.5%",
+        "99.7%",
+        "live-run/README.md",
+        "windtunnel/README.md",
+    ):
+        assert tok in q15, f"QA Q15 missing {tok!r}"
+
     q21 = sections[21]
+    assert "(69.5% precision)" in q21
     for tok in (
         "68.2%",
         "69.5%",
@@ -240,6 +279,10 @@ def test_qa_has_23_numbered_questions_including_q21_q22_q23() -> None:
         "gemini-4-hydrogen",
         "30 minutes",
         "meta.fallback_from",
+        "AIMO_GEMINI_TRACE",
+        "requested_model",
+        "live-run/README.md",
+        "summarize.py",
         "29 s",
         "05:00",
     ):
@@ -272,13 +315,29 @@ def test_gemini_and_deck_screen_opt_in_fallback_models_and_walkthrough_video() -
         "69.5%",
         "`docs/pitch/demo-walkthrough.mp4`",
         "docs/pitch/build_walkthrough.sh",
-        "111 s",
+        "110 s",
+        "f3c5996",
         "GEMINI_FALLBACK_MODELS",
     ):
         assert tok in deck, f"docs/pitch/deck.md missing {tok!r}"
 
     assert "](docs/pitch/demo-walkthrough.mp4)" not in deck
     assert "](demo-walkthrough.mp4)" not in deck
+
+    mp4 = ROOT / "docs" / "pitch" / "demo-walkthrough.mp4"
+    assert mp4.is_file(), "Missing docs/pitch/demo-walkthrough.mp4"
+    size = mp4.stat().st_size
+    assert 1_000_000 < size < 10_000_000, f"Unexpected walkthrough size: {size}"
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        probe = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(mp4)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        duration = float((json.loads(probe.stdout).get("format") or {}).get("duration") or 0.0)
+        assert round(duration) in {110, 111}, f"Expected ~110s or ~111s walkthrough duration, got {duration}"
 
 
 def test_sign_in_before_hosted_agent_runs_across_run_connect_and_qa() -> None:
@@ -317,4 +376,39 @@ def test_sign_in_before_hosted_agent_runs_across_run_connect_and_qa() -> None:
     json_blocks = re.findall(r"```json\s*\n(.*?)```", connect, flags=re.DOTALL)
     assert len(json_blocks) == 3
     assert "Run agent" in qa and "sign-in panel" in qa
+
+
+def test_live_run_evidence_cited_across_owned_docs() -> None:
+    live_dir = ROOT / "docs" / "evidence" / "live-run"
+    run = json.loads((live_dir / "run.json").read_text(encoding="utf-8"))
+    quote = json.loads((live_dir / "quote.json").read_text(encoding="utf-8"))
+    order = json.loads((live_dir / "order.json").read_text(encoding="utf-8"))
+    trace_rows = [
+        json.loads(line)
+        for line in (live_dir / "gemini-trace.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(trace_rows) == 8
+    assert run["run_id"] == "run-b9690772fe"
+    assert quote["quote_id"] == "Q-20261115-964294b6"
+    assert order["order_id"] == "ORD-20261115-06eda13d"
+
+    for rel in ("docs/GEMINI.md", "docs/RUN.md", "docs/pitch/QA.md", "docs/pitch/deck.md"):
+        text = _read_doc(rel)
+        for tok in (
+            "live-run/README.md",
+            "summarize.py",
+            "AIMO_GEMINI_TRACE",
+            run["run_id"],
+            quote["quote_id"],
+            order["order_id"],
+            str(run["latency_s"]),
+            "8 Gemini calls",
+        ):
+            assert tok in text, f"{rel} missing live-run evidence citation {tok!r}"
+
+    connect = _read_doc("docs/CONNECT.md")
+    for tok in ("live-run/README.md", "summarize.py", "AIMO_GEMINI_TRACE", "verify_quote.py"):
+        assert tok in connect, f"docs/CONNECT.md missing live-run citation {tok!r}"
+
 
