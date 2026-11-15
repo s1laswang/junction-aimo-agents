@@ -958,6 +958,8 @@ function renderPlan() {
     return;
   }
 
+  const reqWarn = planRequestScreenWarnEl(p.explanation);
+  if (reqWarn) parts.push(reqWarn);
   if (p.explanation) parts.push(h("p", { class: "sm", style: { maxWidth: "80ch" } }, p.explanation));
   parts.push(planLines(p));
 
@@ -1003,6 +1005,21 @@ function perL(c) {
   if (o.comparison_price != null) return { v: o.comparison_price, u: o.comparison_unit || c.product.content_unit || "L" };
   if (o.unit_price != null && c.product.content_amount) return { v: o.unit_price / c.product.content_amount, u: c.product.content_unit || "L" };
   return { v: null, u: c.product.content_unit || "L" };
+}
+
+const REQ_SCREEN_WARN_PREFIX = "Warning: the request contains instructions aimed at AI agents";
+
+function planRequestScreenWarnEl(explanation) {
+  const text = String(explanation || "");
+  if (!text.includes(REQ_SCREEN_WARN_PREFIX)) return null;
+  const fullMatch = text.match(/Warning: the request contains instructions aimed at AI agents(?:\s*\(([^)]*)\))?\.\s*They were ignored,\s*and the customer's policy will ask a human to confirm\./);
+  const reasons = fullMatch ? fullMatch[1] : (text.match(/Warning: the request contains instructions aimed at AI agents\s*\(([^)]*)\)/) || [])[1];
+  const detail = fullMatch ? fullMatch[0] : text.slice(text.indexOf(REQ_SCREEN_WARN_PREFIX));
+  return h("div", { class: "exc warn plan-request-screen-warn", role: "alert" },
+    h("b", null, "!"),
+    h("div", null,
+      h("b", null, `Buyer request injection screen: FLAGGED${reasons ? ` (${reasons.trim()})` : ""}. `),
+      h("span", { class: "exc-body" }, detail)));
 }
 
 function planScreenEl(item, showClean = true) {

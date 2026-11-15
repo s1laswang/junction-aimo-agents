@@ -18,6 +18,9 @@ import json
 import os
 from pathlib import Path
 
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+
 HERE = Path(__file__).resolve().parent
 NAME = "Nordic Bakery Supply Trusted Trade Gateway"
 SERVER_NAME = "nordic-bakery-supply-trusted-trade"
@@ -35,7 +38,12 @@ from toywholesaler.backend import CATALOG, StaticBackendClient, product_json  # 
 def _prepare_data() -> None:
     body = json.dumps(product_json(), ensure_ascii=False, indent=1)
     p = config.PRODUCT_JSON
-    if not p.exists() or p.read_text(encoding="utf-8") != body:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        current = p.read_text(encoding="utf-8") if p.is_file() else None
+    except (OSError, UnicodeDecodeError):
+        current = None
+    if current != body:
         p.write_text(body, encoding="utf-8")
     load_catalog()
 
@@ -77,3 +85,17 @@ app.title = NAME
 app.description = (f"**{NAME}** (synthetic demo wholesaler). Same Trusted Trade profile as the Valio Aimo gateway: "
                    "OpenAPI here, MCP at `/mcp`, discovery at `/.well-known/otap.json`, keys at `/.well-known/jwks.json`.")
 app.openapi_schema = None
+
+
+@app.exception_handler(ValueError)
+async def _toy_value_error(_req, exc: ValueError):
+    if isinstance(exc, ValidationError):
+        from aimo.gateway.schemas import validation_error_body
+
+        return JSONResponse(validation_error_body(exc.errors()), status_code=422)
+    return JSONResponse({"error": "invalid_request", "message": str(exc) or "Invalid request."}, status_code=422)
+
+
+@app.exception_handler(OverflowError)
+async def _toy_overflow_error(_req, exc: OverflowError):
+    return JSONResponse({"error": "invalid_request", "message": str(exc) or "Numeric value out of range."}, status_code=422)
