@@ -1287,13 +1287,17 @@ def _requote_reason(quote: Quote, offers: dict[str, Offer] | None) -> str | None
         o = (offers or {}).get(ln.product_id)
         if o is not None and any(i in o.issues for i in _BLOCKING):
             return "cutoff_passed" if "cutoff_passed" in o.issues else "line_unavailable"
+        if o is not None and o.available_amount is not None and o.available_amount < ln.qty_sales_units:
+            return "partial_stock"
     return None
 
 
 def _requote_error(old: Order, new_order: Order | None, new_quote: Quote | None, reason: str, note: str = "") -> ServiceError:
     why = {"quote_expired": "the quote's 15-minute price lock expired while it waited for approval",
            "cutoff_passed": "a line's order cut-off passed while the order waited for approval",
-           "line_unavailable": "a line can no longer be delivered for the date"}.get(reason, reason)
+           "line_unavailable": "a line can no longer be delivered for the date",
+           "partial_stock": "stock fell below the quoted quantity while the order waited for approval; the buyer "
+                            "would get less than approved"}.get(reason, reason)
     detail: dict[str, Any] = {"reason": reason, "old_order_id": old.order_id, "old_quote_id": old.quote_id}
     if new_order is not None and new_quote is not None:
         old_q = store.get_quote(old.quote_id)
