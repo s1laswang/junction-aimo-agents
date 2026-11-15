@@ -21,6 +21,11 @@ Branch `team/harden`. Owner files: `aimo/gateway/schemas.py`, `make_quote` + pla
 Gate (Sat 14 Nov, branch before rebase): `pytest` 306 passed, 7 skipped, 2 xfailed. `scenarios.run_all` 8/8.
 `make accept` PASS (15 pass, 1 skip = live Gemini demo).
 
+## Verification on `fr8/valio` (`6973c2d` on `fr8/valio/main` `627c692`, Sun 15 Nov Helsinki)
+- S2 `/v1` fuzz suite (`tests/test_fuzz.py`, 11 collected checks sending ~2,600 malformed requests across every `/v1` route with 0 server errors) and pre-planning/offer/lot input hardening (`tests/test_plan_input_validation.py`, `tests/test_quantity_validation.py`) merged onto `fr8/valio/main` (`627c692`) and `fr8/valio/docs` (`6973c2d`).
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/pytest -q`: **1,150 passed, 105 skipped, 1 xfailed, 1 xpassed in 117.61s** across `1,257` collected keyless offline tests, including `tests/test_fuzz.py` (0 failures keyless offline; `627c692` on `fr8/valio/main` had `1,146 passed` across `1,253` collected; full 17,546-product catalog JSON on `2468bdd` had `743 passed, 7 skipped, 2 xfailed`; standalone `origin/main` `738c93a`: `344 passed, 7 skipped, 1 xfailed, 1 xpassed` keyed).
+- `AIMO_REPLAY=1 AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m scenarios.run_all`: **8/8 passed** across 88 checks in keyless replay.
+
 ## Edits outside the owned list (small, called out for review)
 - `aimo/gateway/app.py`: **2 lines** in `create_app` mount `install_error_handlers(app)` (the handlers live in schemas.py).
 - `aimo/gateway/service.py`, outside `make_quote`:
