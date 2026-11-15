@@ -501,6 +501,10 @@ def test_live_playwright_e2e_demo_beats(tmp_path: Path, monkeypatch: pytest.Monk
             expect(page.locator("#view-plan")).to_be_visible()
             expect(page.locator("#view-plan")).to_contain_text("Order lines the agent proposes", timeout=10000)
             expect(page.locator("#view-plan table.t")).to_contain_text("464306")
+            expect(page.locator("#view-plan table.t .plan-screen.ok").first).to_contain_text(
+                "Prompt-injection screen: clean",
+                timeout=10000,
+            )
             expect(page.locator("#view-plan article.cand.in-plan")).to_contain_text("Valio Eila")
 
             agent_headers = {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "buyer-1"}
@@ -677,6 +681,10 @@ def test_live_playwright_injection_screen_plan_ui(tmp_path: Path, monkeypatch: p
             page.wait_for_timeout(1100)
             page.locator("#tab-plan").click()
             expect(page.locator("#view-plan table.t")).to_contain_text("Prompt injection flagged", timeout=10000)
+            expect(page.locator("#view-plan table.t .plan-screen.bad")).to_contain_text(
+                "Prompt-injection screen: FLAGGED",
+                timeout=10000,
+            )
 
             agent_headers = {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "buyer-1"}
             pending = httpx.get(f"{base_url}/v1/approvals?status=pending", headers=agent_headers, timeout=10.0).json()
@@ -727,6 +735,7 @@ def test_record_demo_video_script_fast(tmp_path: Path) -> None:
 
     out_mp4 = tmp_path / "test.mp4"
     env = dict(os.environ)
+    env["PYTHONPATH"] = f"{ROOT}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(ROOT)
     if SHARED_PW.is_dir():
         env.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(SHARED_PW))
     if env.get("AIMO_APPROVER_PIN") == "test-pin":
