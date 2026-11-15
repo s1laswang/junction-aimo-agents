@@ -14,6 +14,7 @@ value wins if they disagree by more than 3 %. No LLM is ever involved in quantit
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -69,10 +70,51 @@ _MULT_TOKEN_RE = re.compile(r"(?<![\w.,])(\d+)\s*[x×](?=\s|\d|[a-zåäö])|(?<!
 _PAIR_RE = re.compile(rf"(?<![\w.,]){_NUM}\s*{_UNIT}?\s*/\s*(\d*[.,]?\d+)\s*{_UNIT}(?![a-zåäö])", re.I)
 
 
+def _pos_finite(v: Any) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    try:
+        fv = float(v)
+    except OverflowError:
+        return None
+    if not math.isfinite(fv) or fv <= 0.0:
+        return None
+    return fv
+
+
+def _mul_pos(a: Any, b: Any) -> Optional[float]:
+    fa = _pos_finite(a)
+    fb = _pos_finite(b)
+    if fa is None or fb is None:
+        return None
+    prod = fa * fb
+    if not math.isfinite(prod) or prod <= 0.0:
+        return None
+    return prod
+
+
+def _div_pos(a: Any, b: Any) -> Optional[float]:
+    fa = _pos_finite(a)
+    fb = _pos_finite(b)
+    if fa is None or fb is None:
+        return None
+    quot = fa / fb
+    if not math.isfinite(quot) or quot <= 0.0:
+        return None
+    return quot
+
+
+def _round_pos(x: float, ndigits: int = 6) -> float:
+    r = round(x, ndigits)
+    if math.isfinite(r) and r > 0.0:
+        return r
+    return x
+
+
 def drained_quantity(name: str) -> Optional[Qty]:
     """'Biona Sweetcorn 340g/285g' -> 0.285 KG (drained weight; the price API compares on it).
     Mixed weight/volume pairs ('1000ml/1090g', '280g/425ml') -> the volume."""
-    if not name:
+    if not isinstance(name, str) or not name:
         return None
     name = _ESTIMATE_RE.sub("", name)
     m = _PAIR_RE.search(name)
@@ -81,9 +123,11 @@ def drained_quantity(name: str) -> Optional[Qty]:
     a, ua, b, ub = m.group(1), m.group(2), m.group(3), m.group(4)
     ub_n, fb = _norm_unit(ub)
     ua_n, fa = _norm_unit(ua) if ua else (ub_n, fb)
-    if ua_n != ub_n:  # weight/volume pair: prefer volume
-        return Qty(_to_float(a) * fa, "L") if ua_n == "L" else Qty(_to_float(b) * fb, "L")
-    return Qty(_to_float(b) * fb, ub_n)
+    if ua_n != ub_n:
+        amt = _mul_pos(_to_float(a), fa) if ua_n == "L" else _mul_pos(_to_float(b), fb)
+        return Qty(amt, "L") if amt is not None else None
+    amt = _mul_pos(_to_float(b), fb)
+    return Qty(amt, ub_n) if amt is not None else None
 
 
 def parse_name_quantity(name: str) -> tuple[Optional[Qty], int]:
@@ -94,24 +138,27 @@ def parse_name_quantity(name: str) -> tuple[Optional[Qty], int]:
     "14 x Arla Low fat milkdrink 2 dl"                 -> (0.2 L, 14)
     "Valio Eila 1,75 l lactose free"                   -> (1.75 L, 1)
     """
-    if not name:
+    if not isinstance(name, str) or not name:
         return None, 1
     name = _ESTIMATE_RE.sub("", name)
-    name = re.sub(r"\([^)]*\)", " ", name)   # "4 x 1200g (~20x60g)" -> ignore the parenthetical
+    name = re.sub(r"\([^)]*\)", " ", name)
     mult = 1
-    for a, b in _MULT_TOKEN_RE.findall(name):   # nested: "4 x 6 x 0,33 l", "6x 4-pack 0,5 L"
-        mult *= int(a or b)
+    for a, b in _MULT_TOKEN_RE.findall(name):
+        k = int(a or b)
+        if k > 0:
+            mult *= k
     m = _MULTI_RE.search(name)
     if m:
         unit, f = _norm_unit(m.group(3))
-        return Qty(_to_float(m.group(2)) * f, unit), max(mult, 1)
+        amt = _mul_pos(_to_float(m.group(2)), f)
+        return (Qty(amt, unit) if amt is not None else None), max(mult, 1)
     found = _QTY_RE.findall(name)
     if not found:
         return None, mult
-    # take the last quantity that is not a percentage context (names put size near the end)
     num, u = found[-1] if len(found) == 1 else _pick_qty(found)
     unit, f = _norm_unit(u)
-    return Qty(_to_float(num) * f, unit), mult
+    amt = _mul_pos(_to_float(num), f)
+    return (Qty(amt, unit) if amt is not None else None), mult
 
 
 def _pick_qty(found: list[tuple[str, str]]) -> tuple[str, str]:
@@ -121,58 +168,107 @@ def _pick_qty(found: list[tuple[str, str]]) -> tuple[str, str]:
 
 
 def _conv_level(raw: dict, level: str) -> Optional[dict]:
-    for uc in (raw.get("synkkaData") or {}).get("unitConversions") or []:
-        if uc.get("synkkaPackagingType") == level:
+    if not isinstance(raw, dict):
+        return None
+    sd = raw.get("synkkaData")
+    if not isinstance(sd, dict):
+        return None
+    ucs = sd.get("unitConversions")
+    if not isinstance(ucs, (list, tuple)):
+        return None
+    for uc in ucs:
+        if isinstance(uc, dict) and uc.get("synkkaPackagingType") == level:
             return uc
     return None
 
 
 def _conv_qty(uc: Optional[dict]) -> Optional[Qty]:
     """Volume first (litres), else net weight (kg). Handles the data quirk volume.unit == GRM."""
-    if not uc:
+    if not isinstance(uc, dict):
         return None
-    vol = uc.get("volume") or {}
-    vu, vv = (vol.get("unit") or "").upper(), vol.get("value")
-    if vv:
-        if vu in VOLUME_TO_L:
-            return Qty(float(vv) * VOLUME_TO_L[vu], "L")
-        if vu in WEIGHT_TO_KG:  # quirk: some products give "volume" in GRM
-            return Qty(float(vv) * WEIGHT_TO_KG[vu], "KG")
-    nw = uc.get("netWeight") or {}
-    nu, nv = (nw.get("unit") or "").upper(), nw.get("value")
-    if nv and nu in WEIGHT_TO_KG:
-        return Qty(float(nv) * WEIGHT_TO_KG[nu], "KG")
+    vol = uc.get("volume")
+    if isinstance(vol, dict):
+        vu = vol.get("unit")
+        vu_s = vu.upper() if isinstance(vu, str) else ""
+        vv = _pos_finite(vol.get("value"))
+        if vv is not None:
+            if vu_s in VOLUME_TO_L:
+                amt = _mul_pos(vv, VOLUME_TO_L[vu_s])
+                if amt is not None:
+                    return Qty(amt, "L")
+            if vu_s in WEIGHT_TO_KG:
+                amt = _mul_pos(vv, WEIGHT_TO_KG[vu_s])
+                if amt is not None:
+                    return Qty(amt, "KG")
+    nw = uc.get("netWeight")
+    if isinstance(nw, dict):
+        nu = nw.get("unit")
+        nu_s = nu.upper() if isinstance(nu, str) else ""
+        nv = _pos_finite(nw.get("value"))
+        if nv is not None and nu_s in WEIGHT_TO_KG:
+            amt = _mul_pos(nv, WEIGHT_TO_KG[nu_s])
+            if amt is not None:
+                return Qty(amt, "KG")
     return None
 
 
 def sales_unit_size(raw: dict) -> Optional[float]:
     """How many base units ONE sales unit contains (units[].sizeInBaseUnits)."""
+    if not isinstance(raw, dict):
+        return None
     su, bu = raw.get("salesUnit"), raw.get("baseUnit")
-    for u in raw.get("units") or []:
-        if u.get("unitId") == su and u.get("sizeInBaseUnits"):
-            return float(u["sizeInBaseUnits"])
-    if su == bu:
+    units_raw = raw.get("units")
+    if isinstance(su, str) and su and isinstance(units_raw, (list, tuple)):
+        for u in units_raw:
+            if isinstance(u, dict) and u.get("unitId") == su:
+                sz = _pos_finite(u.get("sizeInBaseUnits"))
+                if sz is not None:
+                    return sz
+    if isinstance(su, str) and su and su == bu:
         return 1.0
     return None
 
 
 def english_or_finnish_name(raw: dict) -> str:
-    names = {n.get("language"): n.get("value") for n in (raw.get("synkkaData") or {}).get("names") or []}
+    if not isinstance(raw, dict):
+        return ""
+    sd = raw.get("synkkaData")
+    if not isinstance(sd, dict):
+        return ""
+    raw_names = sd.get("names")
+    if not isinstance(raw_names, (list, tuple)):
+        return ""
+    names = {
+        n.get("language"): n.get("value")
+        for n in raw_names
+        if isinstance(n, dict) and isinstance(n.get("value"), str)
+    }
     return names.get("en") or names.get("fi") or names.get("sv") or ""
 
 
 def compute_content(raw: dict) -> Content:
     """Content of ONE sales unit, from static data only."""
-    size = sales_unit_size(raw)
+    if not isinstance(raw, dict):
+        return Content(1.0, "PCS", "pieces(no size data);size_assumed", 1.0, 1.0)
+    size = _pos_finite(sales_unit_size(raw))
     size_known = size is not None
-    size = size or 1.0
+    size_val = size if size is not None else 1.0
     name = english_or_finnish_name(raw)
-    names_all = [n.get("value") or "" for n in (raw.get("synkkaData") or {}).get("names") or []]
+    sd = raw.get("synkkaData")
+    raw_names = sd.get("names") if isinstance(sd, dict) else None
+    names_all = [
+        n.get("value")
+        for n in (raw_names if isinstance(raw_names, (list, tuple)) else [])
+        if isinstance(n, dict) and isinstance(n.get("value"), str)
+    ]
 
     base: Optional[Qty] = None
     src = ""
-    if (raw.get("salesUnit") or "").upper() == "KG":
-        # sold by weight: one sales unit IS one kilogram (unitConversions then describe one piece)
+    su_raw = raw.get("salesUnit")
+    su_up = su_raw.upper() if isinstance(su_raw, str) else ""
+    bu_raw = raw.get("baseUnit")
+    bu_up = bu_raw.upper() if isinstance(bu_raw, str) else ""
+    if su_up == "KG":
         return Content(1.0, "KG", "salesUnit=KG", 1.0, 1.0)
     q, mult = parse_name_quantity(name)
     if q is None:
@@ -181,11 +277,16 @@ def compute_content(raw: dict) -> Content:
             if q:
                 break
     if q is not None and mult > 1:
-        # "12 x 1 L", "100x2 cl", "4 x 6 x 0,33 l": in this catalog the multipack in the name
-        # describes the whole sales unit (verified against live comparison prices on a sample).
-        total = q.amount * mult
-        return Content(round(total, 6), q.unit, f"name(multipack {mult} x {q.amount:g} {q.unit} = sales unit)",
-                       round(total / size, 6) if size else None, size)
+        total = _mul_pos(q.amount, mult)
+        if total is not None:
+            base_div = _div_pos(total, size_val)
+            return Content(
+                _round_pos(total, 6),
+                q.unit,
+                f"name(multipack {mult} x {q.amount:g} {q.unit} = sales unit)",
+                _round_pos(base_div, 6) if base_div is not None else None,
+                size_val,
+            )
     conv = _conv_qty(_conv_level(raw, "BASE_UNIT_OR_EACH"))
     drained = drained_quantity(name)
     if drained and (not conv or conv.unit != drained.unit or abs(conv.amount - drained.amount) > 1e-9):
@@ -194,22 +295,32 @@ def compute_content(raw: dict) -> Content:
         base, src = conv, "unitConversions.base"
     elif q is not None:
         base, src = q, "name"
-    elif (raw.get("baseUnit") or "").upper() == "KG":
+    elif bu_up == "KG":
         base, src = Qty(1.0, "KG"), "baseUnit=KG"
 
     if base is None:
-        # last resort: CASE-level conversion describes the sales unit when it is a case
         case = _conv_qty(_conv_level(raw, "CASE"))
-        if case and raw.get("salesUnit") != raw.get("baseUnit"):
-            return Content(round(case.amount, 6), case.unit, "unitConversions.case", None, size)
-        return Content(size, "PCS", "pieces(no size data)" + ("" if size_known else ";size_assumed"), 1.0, size)
+        if case and su_raw != bu_raw:
+            case_amt = _pos_finite(case.amount)
+            if case_amt is not None:
+                return Content(_round_pos(case_amt, 6), case.unit, "unitConversions.case", None, size_val)
+        return Content(size_val, "PCS", "pieces(no size data)" + ("" if size_known else ";size_assumed"), 1.0, size_val)
 
-    amount = base.amount * size
-    if size != 1.0:
-        src += f" x {size:g} base units per sales unit"
+    amount = _mul_pos(base.amount, size_val)
+    if amount is None:
+        return Content(None, None, "invalid_overflow", None, size_val)
+    if size_val != 1.0:
+        src += f" x {size_val:g} base units per sales unit"
     if not size_known:
         src += ";sales_unit_size_assumed_1"
-    return Content(round(amount, 6), base.unit, src, round(base.amount, 6), size)
+    base_amt = _pos_finite(base.amount)
+    return Content(
+        _round_pos(amount, 6),
+        base.unit,
+        src,
+        _round_pos(base_amt, 6) if base_amt is not None else None,
+        size_val,
+    )
 
 
 def reconcile_with_price(content_amount: Optional[float], content_unit: Optional[str],
@@ -220,36 +331,76 @@ def reconcile_with_price(content_amount: Optional[float], content_unit: Optional
     price-derived content = unit_price / comparison_price (per L or KG). The comparison price is
     rounded to cents, so allow `tol` relative error; beyond that the price-derived value wins.
     """
-    if not unit_price or not comparison_price or comparison_unit not in ("L", "KG"):
-        return content_amount, content_unit, None
-    derived = unit_price / comparison_price
-    if content_amount and content_unit == comparison_unit:
-        if abs(derived - content_amount) / content_amount <= tol:
-            return content_amount, content_unit, None
-    # disagree (or static missing / different unit family): trust price, snap to a clean number
+    ca = _pos_finite(content_amount)
+    fallback_amt = ca if content_amount is not None else None
+    up = _pos_finite(unit_price)
+    cp = _pos_finite(comparison_price)
+    if up is None or cp is None or comparison_unit not in ("L", "KG"):
+        return fallback_amt, content_unit, None
+    derived = _div_pos(up, cp)
+    if derived is None:
+        return fallback_amt, content_unit, None
+    tol_f = 0.03
+    if not isinstance(tol, bool) and isinstance(tol, (int, float)):
+        try:
+            tf = float(tol)
+            if math.isfinite(tf) and tf >= 0.0:
+                tol_f = tf
+        except OverflowError:
+            pass
+    if ca is not None and content_unit == comparison_unit:
+        rel_err = abs(derived - ca) / ca
+        if math.isfinite(rel_err) and rel_err <= tol_f:
+            return ca, content_unit, None
     snapped = _snap(derived)
-    note = (f"content per sales unit from price ({unit_price:.2f} / {comparison_price:.2f} per {comparison_unit}"
+    if not math.isfinite(snapped) or snapped <= 0.0:
+        return fallback_amt, content_unit, None
+    note = (f"content per sales unit from price ({up:.2f} / {cp:.2f} per {comparison_unit}"
             f" = {snapped:g} {comparison_unit}); static data said "
-            f"{content_amount if content_amount is not None else 'n/a'} {content_unit or ''}".strip())
+            f"{ca if ca is not None else 'n/a'} {content_unit or ''}".strip())
     return snapped, comparison_unit, note
 
 
 def _snap(x: float) -> float:
     """19.94 -> 20.0, 4.98 -> 5.0, 0.333 -> 0.333 (snap within 1.5 % to a 'nice' value)."""
+    xf = _pos_finite(x)
+    if xf is None:
+        return 0.0
     for step in (1.0, 0.5, 0.25, 0.1, 0.05, 0.01):
-        nice = round(x / step) * step
-        if nice > 0 and abs(nice - x) / x <= 0.015:
-            return round(nice, 4)
-    return round(x, 3)
+        q = _div_pos(xf, step)
+        if q is None:
+            continue
+        try:
+            nice = round(q) * step
+        except OverflowError:
+            continue
+        if math.isfinite(nice) and nice > 0.0:
+            rel_err = abs(nice - xf) / xf
+            if math.isfinite(rel_err) and rel_err <= 0.015:
+                snapped = round(nice, 4)
+                if math.isfinite(snapped) and snapped > 0.0:
+                    return snapped
+    res = round(xf, 3)
+    return res if (math.isfinite(res) and res > 0.0) else xf
 
 
 def fat_pct(raw_nutrition: dict[str, float], name: str) -> Optional[float]:
-    if "FAT" in raw_nutrition:
-        return float(raw_nutrition["FAT"])
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", name or "")
+    if isinstance(raw_nutrition, dict) and "FAT" in raw_nutrition:
+        v = raw_nutrition["FAT"]
+        if not isinstance(v, bool) and isinstance(v, (int, float)):
+            try:
+                fv = float(v)
+                if math.isfinite(fv) and fv >= 0.0:
+                    return fv
+            except OverflowError:
+                pass
+    s_name = name if isinstance(name, str) else ""
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", s_name)
     if m:
-        return _to_float(m.group(1))
-    n = (name or "").lower()
+        fv = _to_float(m.group(1))
+        if math.isfinite(fv) and fv >= 0.0:
+            return fv
+    n = s_name.lower()
     if "semi skimmed" in n or "semi-skimmed" in n or "kevyt" in n:
         return 1.5
     if "skimmed" in n or "fat free" in n or "fatfree" in n or "rasvaton" in n:
@@ -262,15 +413,19 @@ def fat_pct(raw_nutrition: dict[str, float], name: str) -> Optional[float]:
 def describe_pack(amount: Optional[float], unit: Optional[str], size: float, base_amount: Optional[float],
                   sales_unit: str) -> str:
     """'2 x 10 L (20 L per KI)' style label."""
-    if amount is None or unit is None:
-        return sales_unit
+    su = sales_unit if isinstance(sales_unit, str) else ""
+    amt = _pos_finite(amount)
+    if amt is None or not isinstance(unit, str) or not unit:
+        return su
     def f(x: float) -> str:
         return f"{x:g}"
     if unit == "PCS":
-        return f"{f(amount)} pcs per {sales_unit}"
-    if size and size > 1 and base_amount:
-        return f"{f(size)} x {f(base_amount)} {unit} ({f(amount)} {unit} per {sales_unit})"
-    return f"{f(amount)} {unit} per {sales_unit}"
+        return f"{f(amt)} pcs per {su}"
+    sz = _pos_finite(size)
+    ba = _pos_finite(base_amount)
+    if sz is not None and sz > 1.0 and ba is not None:
+        return f"{f(sz)} x {f(ba)} {unit} ({f(amt)} {unit} per {su})"
+    return f"{f(amt)} {unit} per {su}"
 
 
 def as_dict(c: Content) -> dict[str, Any]:
