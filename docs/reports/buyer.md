@@ -135,3 +135,7 @@ A full run is 30–40 s including the simulated approval delay: 6–7 agent step
 ## Gaps / next
 - Ready to merge team/buyer to main. It only touches aimo/buyer, tests/test_buyer.py, docs and two small additive changes to aimo/gemini.py.
 - Next: a thinking-level vs. correctness sweep for the DeepMind write-up (hand to the windtunnel engineer), the event scenario on the real stack, and the "last-minute event" wording.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- On `fr8/valio/main` (`43e841c` / `7990fa3`) and `fr8/valio/docs` (`ed09d11` / `d89db12`, `4,286` collected pytest checks in `tests/`), the keyless scripted buyer (`aimo/buyer/mock_model.py` on the real in-process replay gateway), automatic `GEMINI_FALLBACK_MODELS` quota failover (`7c290cf`), `AIMO_GEMINI_TRACE` (`02575d8`, `$0.0352` per V3 order), and `need.raw_text` / `need.product_query` prompt-injection screening are all integrated.
+- Judges can inspect the buyer's live hero run (`run-b9690772fe`), 403 `agent_cannot_approve` refusal, 409 `requote_needed`, Peppol `AP`, and WebCrypto Ed25519 verification with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).

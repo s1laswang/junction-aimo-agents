@@ -25,3 +25,7 @@ Without the catalog, every one of these hit `FileNotFoundError` (a 500 from the 
 - **Offline live-run cryptographic verification (`02575d8` / `62e8384`):** `tests/test_live_run_evidence.py` verifies the committed live Gemini hero run in [docs/evidence/live-run/](../evidence/live-run/README.md) (`quote.json` and 6-event `audit-events.json` against `jwks.json` via `scripts/verify_quote.py`) on every keyed and keyless test run (`375 passed` keyed / `274 passed, 0 failed` keyless on `main`).
 
 Human-only approvals were not touched.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- On `fr8/valio/main` (`43e841c` / `7990fa3`, `1,272` commits) and `fr8/valio/docs` (`ed09d11` / `d89db12`), keyless offline `pytest --collect-only -q tests/` collects **`4,286`** tests (up from `4,137` on `d89db12`, `2,462` on `6343389`, and `2,448` on `1d0b238`), while `scenarios.run_all` passes **8/8** across **92 checks** and `conformance` passes **44/44**.
+- Playwright and offline contract tests also cover the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`, WebCrypto Ed25519 JWS + 403 `agent_cannot_approve` + 409 `requote_needed` + Peppol `AP`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).
