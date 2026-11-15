@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import pathlib
 import re
 import subprocess
+import sys
 import tokenize
 
 from fastapi.testclient import TestClient
@@ -26,6 +28,14 @@ W6_OWNED_DOCS = (
     "docs/ASSUMPTIONS.md",
     "docs/SCENARIOS.md",
     "docs/interfaces.md",
+)
+
+W6_PARITY_TOKENS = (
+    "AIMO_GEMINI_TRACE",
+    "evidence/live-run",
+    "verify_quote.py",
+    "catalog_missing",
+    "demo-walkthrough.mp4",
 )
 
 EXPECTED_SCENARIO_MODULES = (
@@ -70,6 +80,121 @@ def test_w6_docs_have_zero_em_dashes_todos_and_broken_links():
                 continue
             resolved = (doc_path.parent / clean).resolve()
             assert resolved.exists(), f"Broken relative link in {rel}: {raw_target}"
+            if resolved.is_file():
+                assert resolved.stat().st_size > 0, f"Empty linked asset in {rel}: {raw_target}"
+
+
+def test_w6_owned_docs_cite_wave10_parity_tokens():
+    walkthrough_mp4 = ROOT / "docs" / "pitch" / "demo-walkthrough.mp4"
+    assert walkthrough_mp4.is_file() and walkthrough_mp4.stat().st_size > 0
+
+    for rel in W6_OWNED_DOCS:
+        text = _read(rel)
+        for token in W6_PARITY_TOKENS:
+            assert token in text, f"{rel} missing required parity token {token!r}"
+
+
+def test_repo_wide_markdown_relative_links_exist_on_disk():
+    if (ROOT / ".git").exists():
+        res = subprocess.run(
+            ["git", "ls-files"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        tracked_md = [
+            ln.strip()
+            for ln in res.stdout.splitlines()
+            if ln.strip()
+            and not ln.strip().startswith("ours/")
+            and (ln.strip() == "README.md" or (ln.strip().startswith("docs/") and ln.strip().endswith(".md")))
+        ]
+    else:
+        tracked_md = [
+            "README.md",
+            *[
+                p.relative_to(ROOT).as_posix()
+                for p in sorted((ROOT / "docs").rglob("*.md"))
+            ],
+        ]
+
+    assert "README.md" in tracked_md
+    assert len(tracked_md) >= 40
+
+    allowed_pending = {
+        (ROOT / "docs" / "demo-backup.mp4").resolve(),
+        (ROOT / "docs" / "pitch" / "requote_beat.py").resolve(),
+    }
+    link_re = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+    root_resolved = ROOT.resolve()
+    broken: list[str] = []
+
+    for rel in tracked_md:
+        doc_path = ROOT / rel
+        if not doc_path.is_file():
+            continue
+        raw = doc_path.read_text(encoding="utf-8")
+        stripped = re.sub(r"```.*?```", "", raw, flags=re.DOTALL)
+        stripped = re.sub(r"`[^`\n]+`", "", stripped)
+        for raw_target in link_re.findall(stripped):
+            target = raw_target.strip().split()[0]
+            if target.startswith(("http://", "https://", "mailto:", "data:", ANCHOR_SEP)):
+                continue
+            clean = target.split(ANCHOR_SEP, 1)[0].split("?", 1)[0]
+            if not clean:
+                continue
+            resolved = (doc_path.parent / clean).resolve()
+            if not resolved.is_relative_to(root_resolved):
+                broken.append(f"{rel} -> {raw_target} (escapes repo root)")
+                continue
+            if resolved in allowed_pending and not resolved.exists():
+                continue
+            if not resolved.exists():
+                broken.append(f"{rel} -> {raw_target}")
+            elif resolved.is_file() and resolved.stat().st_size == 0:
+                broken.append(f"{rel} -> {raw_target} (empty file)")
+
+    assert broken == [], f"Broken relative markdown links: {broken}"
+
+
+def test_verify_quote_isolated_python_verifies_live_run_pack(tmp_path):
+    verify_script = ROOT / "scripts" / "verify_quote.py"
+    pack_dir = ROOT / "docs" / "evidence" / "live-run"
+    jwks_path = pack_dir / "jwks.json"
+    assert verify_script.is_file()
+    assert jwks_path.is_file()
+
+    for doc_name, expected_marker in (
+        ("quote.json", "Q-20261115-964294b6"),
+        ("audit-events.json", "order.placed"),
+    ):
+        doc_path = pack_dir / doc_name
+        assert doc_path.is_file()
+        proc = subprocess.run(
+            [sys.executable, "-I", str(verify_script), str(doc_path), str(jwks_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 0, (doc_name, proc.stdout, proc.stderr)
+        assert "VERIFIED" in proc.stdout, (doc_name, proc.stdout)
+        assert expected_marker in proc.stdout, (doc_name, proc.stdout)
+
+    tampered_quote = json.loads((pack_dir / "quote.json").read_text(encoding="utf-8"))
+    tampered_quote["total_net"] = float(tampered_quote["total_net"]) + 1.0
+    tampered_path = tmp_path / "tampered-quote.json"
+    tampered_path.write_text(json.dumps(tampered_quote), encoding="utf-8")
+    bad_proc = subprocess.run(
+        [sys.executable, "-I", str(verify_script), str(tampered_path), str(jwks_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert bad_proc.returncode != 0
+    assert "VERIFIED" not in bad_proc.stdout
 
 
 def test_interfaces_and_architecture_match_13_mcp_tools_and_fastapi_routes():
@@ -169,6 +294,13 @@ def test_architecture_decisions_assumptions_and_interfaces_cover_judge_fixes():
         "69.5%",
         "145",
         "44/44",
+        "AIMO_GEMINI_TRACE",
+        "requested_model",
+        "run-b9690772fe",
+        "Q-20261115-964294b6",
+        "ORD-20261115-06eda13d",
+        "109.72 s",
+        "demo-walkthrough.mp4",
     ):
         assert token in architecture, f"docs/ARCHITECTURE.md missing {token!r}"
 
@@ -194,6 +326,12 @@ def test_architecture_decisions_assumptions_and_interfaces_cover_judge_fixes():
         "$0.0352",
         "partial_stock",
         "requote_needed",
+        "AIMO_GEMINI_TRACE",
+        "judge_accept.sh",
+        "PASS=17 FAIL=0 SKIP=3",
+        "PASS=16 FAIL=0 SKIP=4",
+        "Q-20261115-964294b6",
+        "ORD-20261115-06eda13d",
     ):
         assert token in decisions, f"docs/DECISIONS.md missing {token!r}"
 
@@ -239,6 +377,11 @@ def test_architecture_decisions_assumptions_and_interfaces_cover_judge_fixes():
         "hotel-aurora",
         "school-tampere",
         "hospital-meilahti",
+        "catalog_missing",
+        "AIMO_REPLAY=0",
+        "b57af02",
+        "AIMO_GEMINI_TRACE",
+        "requested_model",
     ):
         assert token in interfaces, f"docs/interfaces.md missing {token!r}"
 
@@ -258,11 +401,15 @@ def test_scenarios_doc_matches_scenario_modules_and_conformance_groups():
         row_checks[mod] = int(match.group(1))
 
     total_checks = sum(row_checks.values())
-    assert total_checks >= 88
+    assert total_checks >= 92
     assert f"({total_checks} checks)" in scenarios_doc
     assert "8/8" in scenarios_doc
     assert "44/44" in scenarios_doc
     assert "Nordic Bakery Supply" in scenarios_doc
+    assert (
+        "python -I scripts/verify_quote.py docs/evidence/live-run/quote.json docs/evidence/live-run/jwks.json"
+        in scenarios_doc
+    )
 
 
 def test_six_judge_gaps_verified_in_code_and_docs(tmp_path, monkeypatch):
@@ -321,6 +468,7 @@ def test_this_hygiene_test_has_zero_code_comments_and_em_dashes():
     self_path = pathlib.Path(__file__).resolve()
     raw = self_path.read_text(encoding="utf-8")
     assert EM_DASH not in raw
+    assert ANCHOR_SEP not in raw
     comments = [
         tok.string
         for tok in tokenize.generate_tokens(io.StringIO(raw).readline)
