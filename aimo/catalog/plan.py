@@ -118,13 +118,19 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
                     hints[pid] = h
         except Exception:  # noqa: BLE001
             pass
-    full = rank_substitutes(need, offers, limit=200, rows=shortlist, relevance=rel, inferred_allergens=hints)
+    from aimo.catalog.need_types import need_types
+    allowed, tsrc = need_types(need.product_query, need.preferred_product_ids, need.required_claims)
+    full = rank_substitutes(need, offers, limit=200, rows=shortlist, relevance=rel, inferred_allergens=hints,
+                            allowed_types=allowed)
     cands = _trim(full, limit)
     plan = fill(need, cands)
     late_notes: list[str] = []
     if plan.shortfall > 1e-9:
-        plan, late_notes = _late_split(need, plan, full, shortlist, rel, hints)
+        plan, late_notes = _late_split(need, plan, full, shortlist, rel, hints, allowed)
     notes = []
+    if allowed:
+        from aimo.catalog.need_types import describe
+        notes.append(f"Product type: {describe(allowed)} (from {tsrc}).")
     if need.product_query != original.product_query:
         notes.append(f"Searched the catalog for '{need.product_query}'"
                      + (" (taken from the request text because the parsed product phrase found nothing)"
@@ -150,7 +156,7 @@ def _only_orderability(c: Candidate) -> bool:
 
 
 def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, rel: dict,
-                hints: dict) -> tuple[Plan, list[str]]:
+                hints: dict, allowed: set[str] | None = None) -> tuple[Plan, list[str]]:
     """Cover a shortfall with products that are only blocked by date (cut-off / late availability).
     Lines after delivery_by always carry `late_option` + `delivery_date:<iso>`; they are added to the
     plan only when need.preferences['allow_split_delivery'] is true, otherwise reported as the
@@ -175,7 +181,7 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     late_need = need.model_copy(update={"delivery_by": last})
     late_offers = {pid: late_offer(c.offer, d) for pid, (c, d, _e) in late.items()}
     ranked = rank_substitutes(late_need, late_offers, limit=50, rows={p: shortlist[p] for p in late if p in shortlist},
-                              relevance=rel, inferred_allergens=hints)
+                              relevance=rel, inferred_allergens=hints, allowed_types=allowed)
     ranked = [c for c in ranked if c.tier != "rejected"]
     ranked.sort(key=lambda c: (late[c.product.id][1], TIER_ORDER[c.tier], -c.rank_score))
     remaining = plan.shortfall

@@ -221,8 +221,12 @@ def price_per_unit(offer: Optional[Offer], content: Optional[float], unit: Optio
 
 def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: int = 12, *,
                      rows: dict[str, dict[str, Any]] | None = None, relevance: dict[str, float] | None = None,
-                     inferred_allergens: dict[str, dict[str, str]] | None = None) -> list[Candidate]:
-    """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates()."""
+                     inferred_allergens: dict[str, dict[str, str]] | None = None,
+                     allowed_types: set[str] | None = None) -> list[Candidate]:
+    """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates().
+    allowed_types: taxonomy product types that satisfy the need (hard filter; empty = no filter)."""
+    from aimo.catalog.need_types import describe as _desc_types
+    from aimo.catalog.taxonomy import label as _tax_label
     if rows is None:
         from aimo.catalog.plan import find_candidates
         rows, relevance = find_candidates(need)
@@ -296,7 +300,12 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             reject.append(f"sold by {cunit or 'unknown unit'}, need is in {need.unit}")
         ctypes = product_types(d)
         type_note = None
-        if not prefs:
+        lab = _tax_label(pid)
+        ptype = lab.get("product_type") if lab else None
+        type_ok = bool(allowed_types and ptype in allowed_types)
+        if allowed_types and ptype and not type_ok and pid not in prefs:
+            reject.append(f"different product type: {ptype.replace('_', ' ')} (need {_desc_types(allowed_types)})")
+        elif not prefs and not type_ok:
             # no usual product: the product itself must be what was asked for (no soft drink for "oat drink")
             miss = missing_query_concepts(need.product_query, d)
             if miss:

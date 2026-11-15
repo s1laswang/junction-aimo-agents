@@ -270,6 +270,12 @@ def fts_search(query: str, *, claims: list[str] | None = None, category: Optiona
     rows = get_rows(list(bm))
     ql = " ".join(f.lower() for _c, forms in concepts for f in forms)
     wants_nonfood = query_wants_nonfood(query)
+    try:
+        from aimo.catalog.need_types import types_from_synonyms
+        from aimo.catalog.taxonomy import product_type as _ptype
+        qtypes = types_from_synonyms(clean_query(query))
+    except Exception:  # noqa: BLE001
+        qtypes = set()
     results: dict[str, float] = {}
     for pid, d in rows.items():
         names = " ".join(x or "" for x in (d.get("name_en"), d.get("name_fi"), d.get("name_sv"))).lower()
@@ -287,6 +293,10 @@ def fts_search(query: str, *, claims: list[str] | None = None, category: Optiona
         if not wants_nonfood:                              # food words should find food, not milk jugs
             fc = food_class(d)
             score += 1.0 if fc == "food" else (-8.0 if fc == "nonfood" else 0.0)
+        if qtypes:                                         # taxonomy: "bread" should not rank a flour mix first
+            pt = _ptype(pid)
+            if pt:
+                score += 3.0 if pt in qtypes else -6.0
         results[pid] = round(score, 4)
     return sorted(results.items(), key=lambda x: -x[1])[:limit]
 

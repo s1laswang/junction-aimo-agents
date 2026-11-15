@@ -218,9 +218,14 @@ def poll(store_when_done: bool = True) -> str:
         resps = (job.dest.inlined_responses if job.dest else None) or []
         got: dict[str, dict] = {}
         n_in = n_out = 0
+        errors: dict[str, int] = {}
         for i, r in enumerate(resps):
             ids = set(info["chunks"][i]) if i < len(info["chunks"]) else set()
-            if r.response is None:
+            # NOTE: on our shared key the job reports SUCCEEDED while every request carries
+            # error code 8 (resource exhausted). Always check per-request results.
+            if getattr(r, "error", None) is not None or r.response is None:
+                code = str(getattr(getattr(r, "error", None), "code", "no_response"))
+                errors[code] = errors.get(code, 0) + 1
                 continue
             um = r.response.usage_metadata
             n_in += getattr(um, "prompt_token_count", 0) or 0
@@ -230,14 +235,14 @@ def poll(store_when_done: bool = True) -> str:
                       meta={"responses": len(resps), "labelled": len(got), "in_tokens": n_in, "out_tokens": n_out,
                             "job": info["job"]})
         _merge_labels(got)
-        print(f"labelled {len(got)} products from batch")
+        print(f"labelled {len(got)} products from batch; per-request errors: {errors or 'none'}")
         if store_when_done:
             store()
     return state
 
 
 # ------------------------------------------------------------------ interactive fallback
-def interactive(only_missing: bool = True, concurrency: int = 16, limit: Optional[int] = None) -> None:
+def interactive(only_missing: bool = True, concurrency: int = 48, limit: Optional[int] = None) -> None:
     from aimo import gemini
     rows = _rows()
     have = load_labels() if only_missing else {}
@@ -262,7 +267,7 @@ def interactive(only_missing: bool = True, concurrency: int = 16, limit: Optiona
                 print("  chunk failed:", type(e).__name__, str(e)[:100], flush=True)
         return 0
 
-    with ThreadPoolExecutor(max_workers=min(16, concurrency)) as ex:
+    with ThreadPoolExecutor(max_workers=min(64, concurrency)) as ex:
         for n, k in enumerate(ex.map(work, chunks), 1):
             done[0] += k
             if n % 25 == 0:
