@@ -20,7 +20,7 @@ UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes
 5. **Cut-off clock.** The story depends on real mock-API data: 463038's cut-off passed Thu 12 Nov 15:00, and 464306 can be ordered for Monday until **Sun 15 Nov 17:00** (`closing_time` from `/v1/offers`). **Presenting after Sun 16:30:** start the gateway on a simulated clock: `AIMO_NOW=2026-11-15T10:00:00+02:00 AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve` (the clock runs forward from Sun 10:00; add `AIMO_NOW_FROZEN=1` to hold it). Verified Sat 23:15: with now = Sun 10:00, 464306 has no issues for Monday; with now = Sun 18:00 it shows `cutoff_passed`. Say once: "the gateway runs on a demo clock set to Sunday morning."
 6. Open three tabs: (a) a **fresh** browser tab at `http://localhost:8000/ui/?customer=hotel-aurora` (the approver session lives in that tab's sessionStorage, so a fresh tab guarantees the sign-in moment on stage), (b) `http://localhost:8000/ui/?mock=1` (backup), (c) a terminal with large font in the repo directory, with this line typed but not yet run:
    `uv run python docs/pitch/permissions_attack.py --base http://localhost:8000`
-7. Phone on silent, laptop on power, Wi-Fi checked (the live mock API and Gemini are online services; see "Wi-Fi drops" in the fallback plan).
+7. Phone on silent, laptop on power, Wi-Fi checked (the live mock API and Gemini are online services; see "Wi-Fi drops" in the fallback plan). **Gemini quota:** if gemini-3.8-flash is out of daily quota (it was at Sun 05:00; it resets 10:00 Helsinki), runs fall back to gemini-3.5-flash automatically and the agent steps show the answering model. The montage numbers we quote were measured on gemini-3.8-flash, so say so if the live run shows another model.
 8. **T-4 min:** start the robustness montage in a second terminal against the second gateway on port 8031 (see "Robustness montage" below). Run it under `caffeinate -i` so the laptop cannot sleep mid-run (the buyer report lost a run that way).
 
 ## The script
@@ -58,7 +58,7 @@ It exits 0 only if the attempt was refused and audited. Verified Sat 14 Nov 23:1
 - **"What if the agent lies about the tier?"** It can't help itself: the gateway recomputes tier and substitution flags server-side and the policy re-verifies them. A substitute sent as "preferred" still comes back as "better, outside preference" and needs approval (verified Sat 18:26).
 - **"Can the agent approve its own order through REST?"** No. Decisions need a signed-in human (an approver session or the PIN, which no route or tool returns); any request carrying agent identity gets 403 `agent_cannot_approve` and is audited as `approval.refused`. That is the permissions-attack beat. More answers: [pitch/QA.md](pitch/QA.md).
 - **"Why not just give the agent an API key?"** An API key says *who*, not *what they may do*. The mandate plus policy says what, and the signed quote plus approval binding proves what was agreed.
-- **"What about prompt injection in supplier data?"** Two layers: regex (0 false positives on 34,159 real supplier texts) and a Gemini classifier, and the buyer harness redacts flagged text before the model sees it. Flagged orders need a human.
+- **"What about prompt injection in supplier data?"** The shipped regex screen has no false alarms on 34,159 real supplier texts but only 44% recall on our evaluation set; the opt-in Gemini layer reaches 94% but over-flags buyer requests. The buyer harness redacts flagged text, flagged orders need a human, and nothing an injection says can approve an order.
 - **"Is the order real?"** Valio Aimo has no order API in the mock, so we built a mock order backend behind the same interface a SAP adapter would implement.
 - **"Why Gemini?"** Finnish/Swedish product data, embeddings in the same API, thinking levels so reasoning is only spent on the substitution decision, structured output everywhere.
 
@@ -73,7 +73,7 @@ Measured result to quote ([demo-montage.md](demo-montage.md), Sun 15 Nov 02:54, 
 | happy | placed, EUR 1,010.00, approved by anna@hotel-aurora.example |
 | stockout | placed, split into 4 lines, EUR 2,544.80, shortfall 0 |
 | school-allergen | placed, Oatly Oat Drink Whole 1L, 2 candidates rejected, approved by policy:school-tampere (EUR 280, under the school's €300 limit) |
-| injection | placed, 6 supplier texts flagged and redacted, policy cites injection, largest line 300 units |
+| injection | placed, 6 supplier texts flagged (regex screen) and redacted, policy cites injection, largest line 300 units |
 | drift | needs_confirmation, EUR 4,040.00 quote prepared, place_order held by the agent |
 | event | placed, 2 lines (Valio whipping cream 1.75 l and Valio Eila butter 500 g), EUR 266.49 |
 

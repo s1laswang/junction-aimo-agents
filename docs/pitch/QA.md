@@ -1,4 +1,4 @@
-# Judge Q&A: 22 hard questions
+# Judge Q&A: 23 hard questions
 
 Short answers for the presenter, each with the file that backs it. Facts re-checked against main (fac34f0) on Sat 14 Nov 23:00–23:30 unless marked otherwise. If a judge pushes past an answer, say what is demo-only and point at the production path; never round a number up.
 
@@ -42,7 +42,7 @@ The buyer agent sends the request text and compacted tool results (product names
 An agent's approval inbox is scoped to its own customer (asking for another returns 403 `customer_mismatch`), and `/v1/customers` shows agents approver names and roles but never their ids or emails. Given the header-only identity in Q4, this isolation becomes real once OAuth tokens replace the headers. `aimo/gateway/app.py` (`approvals`), docs/TRUST.md.
 
 **12. What about prompt injection hidden in supplier product text?**
-Two layers: a regex screen (0 false positives on 34,159 real supplier texts) and a Gemini classifier (94.4% recall on our payload set). The buyer harness redacts flagged text before the model sees it, and a flagged order needs a human. In the live montage, 6 planted texts were flagged and redacted and the order quantity stayed at 300; in the final-code wind tunnel, 80 of 80 injection payloads (supplier text and requests, including the product query) were blocked with 1 false positive in 560 clean requests. Gemini's false-positive rate on buyer requests is high (42 of 60), which only costs an extra approval, never a wrong order. `aimo/trust/screening.py`, docs/windtunnel-results.md.
+Two layers, and we report both honestly. The regex screen, which the shipped gateway runs, raises no false alarms on 34,159 real supplier texts but catches only 44% of a separate 36-payload evaluation set. The Gemini classifier reaches 94% on that set but also flags 42 of 60 normal buyer requests, so it is opt-in (`AIMO_SCREEN_GEMINI=1`). The buyer harness redacts flagged text before the model sees it, and a flagged order needs a human; the real protection is that the policy, the signed quote and the human approval do not depend on the screen catching everything. In the live montage, 6 planted texts were flagged and redacted and the order quantity stayed at 300; in the final-code wind tunnel, the regex screen flagged 80 of 80 of the scenarios' injection payloads (supplier text and requests, including the product query) with 1 false positive in 560 clean requests; those payloads are easier than the evaluation set. `aimo/trust/screening.py`, docs/windtunnel-results.md.
 
 ## Robustness and failure modes
 
@@ -74,6 +74,9 @@ Because it is built to stop when unsure. In the final-code wind tunnel (640 Gemi
 
 **22. Can an agent move the clock or fake stock?**
 No. The demo clock (`X-Aimo-Now`) and fault injection (`X-Aimo-Faults`: stock-outs, price shocks, injected text) are operator tools: on any request carrying agent identity, over REST or MCP, the gateway ignores them unless the operator started it with `AIMO_DEMO_FAULTS=1`, and never with `AIMO_ENV=production`. So an agent cannot backdate "now" past a cut-off or invent stock. Prices and stock come from the backend; the quote is signed; and if stock drops while the order waits for approval, the approval returns 409 `requote_needed` instead of a partial order. `tests/test_overrides.py`, `tests/test_gateway.py::test_partial_stock_at_approval_requotes_instead_of_silently_less`, docs/TRUST.md (tail).
+
+**23. What happens if Gemini runs out of quota during the demo?**
+It happened for real at 05:00 on Sunday: the shared key hit gemini-3.8-flash's daily limit and every agent run failed with 429. Now `aimo.gemini.generate` falls back at once to the next model in `GEMINI_FALLBACK_MODELS` (default gemini-3.5-flash, then gemini-4-hydrogen), skips the exhausted model for 30 minutes, and the agent's steps and the ledger name the model that actually answered; the hero run then placed its order in 29 s on gemini-3.5-flash. If no model answers, the run stops with an error and nothing is ordered; the keyless scripted model and `qa_milk_flow.py` still show the whole flow. Our committed montage numbers were measured on gemini-3.8-flash. `aimo/gemini.py`, `tests/test_gemini_fallback.py`.
 
 ## Gemini
 

@@ -14,7 +14,7 @@ Files:
 - `snapshot.tar.gz`: the recorded Valio mock-API responses (public price and availability data) that the pipeline replays offline.
 - `wt640_gem__pipeline__team__a99692f.jsonl.gz` and `wt640_gem__pipeline__baseline.jsonl.gz`: the run files behind the table.
 
-Reproduce (offline, about 3 min, no keys needed):
+Reproduce (offline, about 3 min). No Gemini key is needed, but the pipeline reads the challenge product data `data/valio_aimo_junction26_product_data.json`, which a keyless clone does not have: run `uv run aimo fetch-data` once with `AIMO_API_KEY` in `.env`. The committed run was made on `a99692f`; no later commit up to `7c290cf` changes the code the pipeline runs (`git diff --stat a99692f 7c290cf -- aimo/catalog aimo/trust aimo/backend windtunnel` is empty). The injection column is the regex screen only (Gemini is off in pipeline mode); on the separate 36-payload evaluation set that screen has 44% recall (`docs/windtunnel-results.md`).
 ```bash
 mkdir -p /tmp/wt/scenarios /tmp/wt/runs
 gunzip -c docs/evidence/windtunnel/wt640_gem.jsonl.gz > /tmp/wt/scenarios/wt640_gem.jsonl
