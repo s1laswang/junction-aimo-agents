@@ -299,7 +299,12 @@ def build_router() -> APIRouter:
             raise service.ServiceError(422, "empty_need", "product_query or preferred_product_ids is required")
         if len(need.raw_text or "") > 4000:
             raise service.ServiceError(422, "invalid_need", "raw_text exceeds 4,000 characters")
-        _require_catalog()
+        try:
+            _require_catalog()
+        except service.ServiceError:
+            if hasattr(service, "_check_need_input"):
+                service._check_need_input(need)
+            raise
         return service.plan_need(need.model_copy(update={"customer_id": who.customer_id}), identity=who)
 
     @r.post("/v1/quotes", tags=["quotes"], summary="Create a signed quote", response_model=Quote, responses=ERR)
