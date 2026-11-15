@@ -30,14 +30,16 @@ class _FixtureClient:
     def __init__(self) -> None:
         self.price_raw = json.loads((FIX / "price_20261116.json").read_text(encoding="utf-8"))
         self.avail_raw = json.loads((FIX / "availability_20261116.json").read_text(encoding="utf-8"))
-        for item in self.price_raw["products"]:
-            if item["productId"] == "464306":
-                self.price_raw["products"].append(dict(item, productId="472833"))
-                break
-        for item in self.avail_raw["products"]:
-            if item["productId"] == "464306":
-                self.avail_raw["products"].append(dict(item, productId="472833"))
-                break
+        if not any(p["productId"] == "470889" for p in self.price_raw["products"]):
+            for item in self.price_raw["products"]:
+                if item["productId"] == "464306":
+                    self.price_raw["products"].append(dict(item, productId="470889"))
+                    break
+        if not any(p["productId"] == "470889" for p in self.avail_raw["products"]):
+            for item in self.avail_raw["products"]:
+                if item["productId"] == "464306":
+                    self.avail_raw["products"].append(dict(item, productId="470889"))
+                    break
 
     def _sel(self, raw: dict, ids: list[str]) -> dict:
         now = time.time()
@@ -65,10 +67,10 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             content_unit="L",
             claims=["FREE_FROM_LACTOSE"],
         ),
-        "472833": Product(
-            id="472833",
-            name="Fazer Aito oat drink 1 L UHT",
-            brand="Fazer Aito",
+        "470889": Product(
+            id="470889",
+            name="Oatly Oat Drink Whole 1 L",
+            brand="Oatly",
             category="10400",
             sales_unit="ST",
             content_amount=1.0,
@@ -129,7 +131,7 @@ def _pending_school(c: TestClient) -> tuple[dict, dict]:
     q = c.post(
         "/v1/quotes",
         headers=H_SCHOOL,
-        json={"delivery_date": D.isoformat(), "lines": [{"product_id": "472833", "qty_sales_units": 500, "tier": "preferred"}]},
+        json={"delivery_date": D.isoformat(), "lines": [{"product_id": "470889", "qty_sales_units": 500, "tier": "preferred"}]},
     ).json()
     o = c.post("/v1/orders", headers=H_SCHOOL, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
     assert o["status"] == "pending_approval"
