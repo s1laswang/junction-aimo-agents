@@ -10,7 +10,7 @@ Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" chall
 <!-- Live run on main, Sat 14 Nov 23:17 (S5 ui session). More screenshots: docs/reports/frontend/. -->
 <sub>Screens in this repo captured before Sun 15 Nov 05:50 show a third reason (the pack swap), which the final policy allows because the 1 L pack is the hotel's listed alternative.</sub>
 
-▶ **Video (110 s):** [narrated walkthrough built from screens of the running system](docs/pitch/demo-walkthrough.mp4) (rebuild: `bash docs/pitch/build_walkthrough.sh`).
+▶ **Video (110 s):** [narrated walkthrough built from screens of the running system](docs/pitch/demo-walkthrough.mp4) (rebuild: `bash docs/pitch/build_walkthrough.sh`). A real Gemini run, raw and verifiable offline: [docs/evidence/live-run/](docs/evidence/live-run/README.md) (transcript, Gemini trace, signed quote, order, audit chain and JWKS).
 
 ## Try it (no keys needed)
 

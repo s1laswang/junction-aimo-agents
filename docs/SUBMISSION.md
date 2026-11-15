@@ -7,6 +7,7 @@ Deadline: Sun 15 Nov 2026 10:00 Helsinki (code freeze and tag `aimo-v1` at 06:00
 |---|---|
 | Repository (public) | https://github.com/s1laswang/junction-aimo-agents (judged version: tag `aimo-v1`) |
 | Demo video | https://github.com/s1laswang/junction-aimo-agents/raw/aimo-v1/docs/pitch/demo-walkthrough.mp4 : a narrated walkthrough built from screens of the running system. If a live screen recording is made from [DEMO.md](DEMO.md) "Recording the video", it replaces this link here and in the form's "Video" field. |
+| Live-run evidence | [docs/evidence/live-run/](evidence/live-run/README.md): a real Gemini run with its raw trace, signed quote, order, audit chain and JWKS, verifiable offline. |
 | Public URL | No hosted instance. Runs locally in 3 commands with no keys (see the README: clone at `aimo-v1`, `make accept`, `uv run aimo serve` and open http://localhost:8000/ui). |
 
 ## Short version (under 500 characters)
