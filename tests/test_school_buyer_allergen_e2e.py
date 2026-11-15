@@ -799,10 +799,11 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
 
     app = create_app(with_mcp=False)
     school_headers = {"X-Customer-Id": SCHOOL, "X-Agent-Id": "buyer-1"}
+    run_headers = {**school_headers, "X-Approver-Pin": APPROVER_PIN}
     with TestClient(app) as tc:
         created = tc.post(
             "/v1/agent/runs",
-            headers=school_headers,
+            headers=run_headers,
             json={
                 "text": "We need 60 litres of oat drink for Wednesday's lunch.",
                 "customer_id": SCHOOL,
@@ -810,7 +811,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
         )
         assert created.status_code == 200, created.text
         body = created.json()
-        with tc.stream("GET", body["events_url"], headers=school_headers) as stream_resp:
+        with tc.stream("GET", body["events_url"], headers=run_headers) as stream_resp:
             assert stream_resp.status_code == 200
             events = _read_sse_events(stream_resp)
 
@@ -819,7 +820,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
             assert expected in kinds, (expected, kinds)
         assert events[-1]["data"]["data"]["status"] == "placed"
 
-        view = tc.get(f"/v1/agent/runs/{body['run_id']}", headers=school_headers).json()
+        view = tc.get(f"/v1/agent/runs/{body['run_id']}", headers=run_headers).json()
         assert view["status"] == "finished"
         assert view["order_status"] == "placed"
         quote_steps = [s for s in view["steps"] if s["kind"] == "quote"]
@@ -831,7 +832,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
         try:
             conflict_created = tc.post(
                 "/v1/agent/runs",
-                headers=school_headers,
+                headers=run_headers,
                 json={
                     "text": "We need 40 litres of milk for Wednesday's lunch.",
                     "customer_id": SCHOOL,
@@ -844,7 +845,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
 
             pending_q = None
             for _ in range(100):
-                cur_view = tc.get(f"/v1/agent/runs/{c_run_id}", headers=school_headers).json()
+                cur_view = tc.get(f"/v1/agent/runs/{c_run_id}", headers=run_headers).json()
                 if cur_view.get("pending_question"):
                     pending_q = cur_view["pending_question"]
                     break
@@ -855,7 +856,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
 
             ans_resp = tc.post(
                 c_body["answer_url"],
-                headers=school_headers,
+                headers=run_headers,
                 json={
                     "customer_id": SCHOOL,
                     "question_id": pending_q["question_id"],
@@ -864,7 +865,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
             )
             assert ans_resp.status_code == 200, ans_resp.text
 
-            with tc.stream("GET", c_body["events_url"], headers=school_headers) as c_stream:
+            with tc.stream("GET", c_body["events_url"], headers=run_headers) as c_stream:
                 assert c_stream.status_code == 200
                 c_events = _read_sse_events(c_stream)
             worker.join(timeout=3.0)
@@ -874,7 +875,7 @@ def test_school_http_agent_runs_sse_clarify_answer_and_forced_unsafe_order_rejec
         assert errors == []
         assert "needs_clarification" in [e["event"] for e in c_events]
         assert c_events[-1]["data"]["data"]["status"] == "placed"
-        c_view = tc.get(f"/v1/agent/runs/{c_run_id}", headers=school_headers).json()
+        c_view = tc.get(f"/v1/agent/runs/{c_run_id}", headers=run_headers).json()
         c_quote_steps = [s for s in c_view["steps"] if s["kind"] == "quote"]
         assert c_quote_steps
         for ln in c_quote_steps[0]["data"]["quote"]["lines"]:
