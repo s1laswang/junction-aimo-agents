@@ -20,6 +20,7 @@ FIXTURE_SNAPSHOT = ROOT / "tests" / "fixtures" / "snapshot"
 # must happen before windtunnel.config is imported anywhere
 os.environ.setdefault("AIMO_OFFLINE", "1")
 os.environ.setdefault("AIMO_APPROVER_PIN", "test-pin")  # human approver credential for tests
+os.environ.setdefault("AIMO_DEMO_FAULTS", "1")
 if os.environ.get("WT_FULL") != "1":
     os.environ.setdefault("WT_SNAPSHOT_DIR", str(FIXTURE_SNAPSHOT))
 os.environ.setdefault("WT_DIR", tempfile.mkdtemp(prefix="wt-test-"))

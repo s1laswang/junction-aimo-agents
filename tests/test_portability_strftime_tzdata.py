@@ -39,6 +39,8 @@ def test_audit_render_formats_helsinki_date_portably(tmp_path, monkeypatch):
 
     assert _local_date(datetime(2026, 11, 7, 10, 5, 0, tzinfo=timezone.utc)) == "Sat 7 Nov 2026"
     monkeypatch.setattr(config, "KEY_DIR", tmp_path / "keys")
+    for k in ("AIMO_NOW", "AIMO_NOW_FROZEN", "AIMO_REPLAY", "AIMO_REPLAY_CLOCK"):
+        monkeypatch.delenv(k, raising=False)
     log = AuditLog(tmp_path / "audit.sqlite")
     ev = log.append("agent:hotel-aurora/buyer-1", "quote.created", "Q-test-7", "Created quote", {"total_net": 10.0})
     conn = log._conn()
@@ -48,7 +50,7 @@ def test_audit_render_formats_helsinki_date_portably(tmp_path, monkeypatch):
     finally:
         conn.close()
     md = log.render("Q-test-7")
-    assert "_Sat 7 Nov 2026, times in Helsinki (EET)._" in md
+    assert "_Sat 7 Nov 2026, times in Helsinki (EET), real clock._" in md
 
 
 def test_pyproject_declares_tzdata_dependency():

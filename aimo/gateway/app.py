@@ -147,11 +147,16 @@ class FaultsMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         spec = now_hdr = None
+        agent = False
         for k, v in scope.get("headers", []):
             if k == b"x-aimo-faults":
                 spec = v.decode("latin-1")
             elif k == b"x-aimo-now":
                 now_hdr = v.decode("latin-1")
+            elif k == b"x-agent-id" and v.strip():
+                agent = True
+        if not clock.request_overrides_allowed(agent):
+            spec = now_hdr = None
         token = set_request_faults(spec)
         ntoken = clock.set_request_now(now_hdr)
         try:
@@ -396,8 +401,8 @@ def build_router() -> APIRouter:
         and the approver must be a human in the order customer's directory with an allowed role.
         `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409 "re-quote needed".
         Approve places the order and returns the order response."""
-        if x_agent_id:
-            service.audit_refusal(order_id, f"agent:{x_agent_id}", "agent identity on the approval endpoint")
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal(order_id, f"agent:{x_agent_id.strip()}", "agent identity on the approval endpoint")
             raise service.ServiceError(403, "agent_cannot_approve",
                                        "Agents can never approve orders; a human approver must decide in the inbox.")
         approver = body.approver
@@ -465,7 +470,9 @@ def build_router() -> APIRouter:
         an 8-hour signed session token bound to that person, to send as `X-Approver-Session`. Decisions made with
         it are recorded under that approver only. Agents are refused. A session keeps working even if someone else
         triggers a brute-force lock."""
-        if x_agent_id:
+        if x_agent_id and x_agent_id.strip():
+            service.audit_refusal("auth:approver-session", f"agent:{x_agent_id.strip()}",
+                                  "agent identity on approver sign-in endpoint")
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
         who = str((body or {}).get("approver") or "").strip()[:200]
         canonical = service.directory_approver_id(who) if who else None

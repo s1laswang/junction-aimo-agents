@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from aimo.models import Need, Offer, Plan
 
@@ -107,12 +107,41 @@ def default_portions(text: str) -> Optional[int]:
 
 
 # ------------------------------------------------------------------ swaps
+_FALLBACK_ALIASES: dict[str, tuple[str, ...]] = {
+    "dairy": ("milk",), "cow's milk": ("milk",), "cows milk": ("milk",), "cow milk": ("milk",),
+    "maito": ("milk",), "mjölk": ("milk",), "am": ("milk",), "ml": ("milk",),
+    "nut": ("nuts",), "tree nut": ("nuts",), "tree nuts": ("nuts",), "tree_nuts": ("nuts",),
+    "pähkinä": ("nuts",), "pähkinät": ("nuts",), "nöt": ("nuts",), "nötter": ("nuts",), "an": ("nuts",),
+    "wheat": ("gluten",), "rye": ("gluten",), "barley": ("gluten",), "spelt": ("gluten",),
+    "vehnä": ("gluten",), "vete": ("gluten",), "ruis": ("gluten",), "råg": ("gluten",),
+    "gluteeni": ("gluten",), "aw": ("gluten",), "uw": ("gluten",), "nr": ("gluten",),
+}
+
+
+def _normalize_excluded(excluded: Any) -> list[str]:
+    items = [excluded] if isinstance(excluded, str) else list(excluded or [])
+    try:
+        from aimo.catalog.allergens import normalize_allergens
+        return normalize_allergens(items)
+    except Exception:
+        out: list[str] = []
+        for x in items:
+            s = re.sub(r"\s+", " ", str(x or "").replace("\u2019", "'")).strip().lower()
+            if not s:
+                continue
+            for g in _FALLBACK_ALIASES.get(s, (s,)):
+                if g not in out:
+                    out.append(g)
+        return out
+
+
 def _dietary(excluded: list[str], text: str, lactose_free: bool, gluten_free: bool) -> dict[str, bool]:
+    norm = set(_normalize_excluded(excluded))
     t = (text or "").lower()
     return {
-        "milk": "milk" in excluded,                       # milk ALLERGY: lactose-free still contains milk
-        "lactose": lactose_free or "milk" in excluded or bool(re.search(r"lactose[- ]?free|laktoositon", t)),
-        "gluten": gluten_free or "gluten" in excluded or bool(re.search(r"gluten[- ]?free|gluteeniton", t)),
+        "milk": "milk" in norm,
+        "lactose": lactose_free or "milk" in norm or bool(re.search(r"lactose[- ]?free|laktoositon", t)),
+        "gluten": gluten_free or "gluten" in norm or bool(re.search(r"gluten[- ]?free|gluteeniton", t)),
     }
 
 
@@ -253,13 +282,13 @@ def recipe_needs(recipe: Optional[str] = None, portions: Optional[int] = None, d
         if not dishes:
             raise RecipeError("recipe_not_found", "no known dish in the text; see GET /v1/recipes", 404)
     default = portions or default_portions(text) or (default_portions(recipe or "") if recipe else None)
-    excl = list(excluded_allergens or [])
+    excl = [excluded_allergens] if isinstance(excluded_allergens, str) else list(excluded_allergens or [])
     try:
         from aimo.buyer.need import detect_allergens
         excl += detect_allergens(text)
     except Exception:  # noqa: BLE001
         pass
-    excl = list(dict.fromkeys([*policy_exclusions(customer_id), *excl]))
+    excl = _normalize_excluded([*policy_exclusions(customer_id), *excl])
     diet = _dietary(excl, text, lactose_free or house_lactose_free(customer_id), gluten_free)
     when = resolve_delivery(delivery_by, text)
 
@@ -343,6 +372,78 @@ def _plan_summary(plan: Plan, include_candidates: bool) -> dict[str, Any]:
     return d
 
 
+def _line_blocks_allergens(
+    ln: Any,
+    row: Optional[dict[str, Any]],
+    excl: list[str],
+    cand_flags: Iterable[str] = (),
+) -> bool:
+    excl_norm = _normalize_excluded(excl)
+    if not excl_norm:
+        return False
+    excl_set = set(excl_norm)
+    flags = [*(getattr(ln, "flags", None) or []), *cand_flags]
+    if "allergen_unknown" in flags:
+        return True
+    for f in flags:
+        if isinstance(f, str) and f.startswith(("contains:", "may_contain:")):
+            if set(_normalize_excluded([f.split(":", 1)[1]])) & excl_set:
+                return True
+    if row is not None:
+        try:
+            from aimo.catalog.allergens import blocking
+            if blocking(row.get("allergens") or {}, excl_norm, allergen_source=row.get("allergen_source")):
+                return True
+        except Exception:
+            amap = row.get("allergens") or {}
+            smap = row.get("allergen_source") or {}
+            for g in excl_norm:
+                st = amap.get(g, "unknown")
+                st_val = st.value if hasattr(st, "value") else st
+                if st_val != "free" or str(smap.get(g) or "").startswith("inferred"):
+                    return True
+    return False
+
+
+def _guard_plan_allergens(plan: Plan, need: Need, excluded: list[str]) -> Plan:
+    excl = _normalize_excluded([*excluded, *(need.excluded_allergens or [])])
+    if not excl or not plan.lines:
+        return plan
+    rows: dict[str, dict[str, Any]] = {}
+    try:
+        from aimo.catalog.textsearch import get_rows
+        rows = get_rows([ln.product_id for ln in plan.lines])
+    except Exception:
+        rows = {}
+    cand_flags_by_id = {c.product.id: list(c.flags or []) for c in (plan.candidates or [])}
+    safe_lines = []
+    removed_ids = []
+    for ln in plan.lines:
+        if _line_blocks_allergens(ln, rows.get(ln.product_id), excl, cand_flags_by_id.get(ln.product_id, ())):
+            removed_ids.append(ln.product_id)
+        else:
+            safe_lines.append(ln)
+    if not removed_ids:
+        return plan
+    covered = round(sum(float(ln.covered_amount) for ln in safe_lines), 4)
+    total_net = round(sum(float(ln.line_total) for ln in safe_lines), 2)
+    shortfall = round(max(float(plan.shortfall), max(0.0, float(need.quantity) - covered)), 4)
+    note = (
+        f"Filtered unsafe allergen line(s) {', '.join(removed_ids)} "
+        f"for excluded allergens {', '.join(excl)}."
+    )
+    explanation = f"{plan.explanation} {note}".strip() if plan.explanation else note
+    return plan.model_copy(
+        update={
+            "lines": safe_lines,
+            "covered_amount": covered,
+            "total_net": total_net,
+            "shortfall": shortfall,
+            "explanation": explanation,
+        }
+    )
+
+
 def plan_recipe(recipe: Optional[str] = None, portions: Optional[int] = None, delivery_by: Any = None,
                 customer_id: str = "hotel-aurora", *, text: str = "", excluded_allergens: Optional[list[str]] = None,
                 lactose_free: bool = False, gluten_free: bool = False, on_hand: Optional[dict[str, float]] = None,
@@ -385,6 +486,8 @@ def plan_recipe(recipe: Optional[str] = None, portions: Optional[int] = None, de
     total = 0.0
     for it in rn.items:
         plan = plan_fn(it.need, offers_fn=from_batch_for(it.query))
+        if rn.excluded_allergens:
+            plan = _guard_plan_allergens(plan, it.need, rn.excluded_allergens)
         for ln in plan.lines:
             qty_by[ln.product_id] = qty_by.get(ln.product_id, 0.0) + ln.qty_sales_units
         total += plan.total_net
