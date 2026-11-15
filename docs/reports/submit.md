@@ -24,6 +24,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 | Sat 14 Nov 23:26–23:29 | 74b5e79 (rebased on 4ae14c6, S5 ui merged) | 285 passed, 7 skipped, 2 xfailed (58 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov 00:28–00:31 | rebased on 89bc3db (S2 harden, S3 need v1+v2, S5 ui round 2 merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (34 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov 02:29–02:31 | rebased on 2a68792 (S1 replay merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | keyed RESULT: PASS (19 PASS, 1 SKIP); keyless fresh clone RESULT: PASS (16 PASS, 4 SKIP) → pushed to main |
+| Sun 15 Nov 02:41–02:44 | d13a07b on 738c93a (one-page README, RUN.md, CONNECT.md, re-score) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | RESULT: PASS (19 PASS, 1 SKIP) → pushed to main |
 
 ## Done (hourly re-check 1, Sun 15 Nov 00:28)
 - S3 need: wind-tunnel headline now 0 policy / 0 allergen violations for the gateway, recall 99.7%, precision 68.2% (from 54.0%; 90% target not met). Naive column stays Sat 18:24 and is labelled as against the earlier policy. Updated SUBMISSION, GEMINI row 8, DEMO 2:45 line, deck slide 5, QA 15–16, DECISIONS D5, ASSUMPTIONS, NUMBERS, README pillar 3.
