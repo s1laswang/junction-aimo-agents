@@ -27,6 +27,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 | Sun 15 Nov 02:41–02:44 | d13a07b on 738c93a (one-page README, RUN.md, CONNECT.md, re-score) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | RESULT: PASS (19 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov 03:08–03:15 | rebased on b301d5a (tests + live merged) | 349 passed, 7 skipped, 1 xfailed, 1 xpassed (37 s) | 8/8 PASS (live) | keyed RESULT: PASS (19/0/1); keyless `git archive` of b301d5a RESULT: PASS (17/0/3, keyless pytest 250/0) → pushed to main |
 | Sun 15 Nov 04:30–04:33 | rebased on ddbeeba (fleet ports: per-approver credentials, unknown_customer 403, request-text injection screen) | 357 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | RESULT: PASS (19/0/1) → pushed to main |
+| Sun 15 Nov 05:00–05:08 | rebased on d4b0b41 (judge panel fixes A–D) | 362 passed, 7 skipped, 1 xfailed, 1 xpassed (39 s) | 8/8 PASS (live) | keyed RESULT: PASS (19/0/1); keyless `git archive` of d4b0b41 RESULT: PASS (17/0/3, keyless pytest 261/0) → S4-1 + S4-2 pushed |
 
 ## Done (hourly re-check 1, Sun 15 Nov 00:28)
 - S3 need: wind-tunnel headline now 0 policy / 0 allergen violations for the gateway, recall 99.7%, precision 68.2% (from 54.0%; 90% target not met). Naive column stays Sat 18:24 and is labelled as against the earlier policy. Updated SUBMISSION, GEMINI row 8, DEMO 2:45 line, deck slide 5, QA 15–16, DECISIONS D5, ASSUMPTIONS, NUMBERS, README pillar 3.

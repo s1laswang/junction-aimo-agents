@@ -88,5 +88,5 @@ curl -s http://localhost:8000/v1/audit/verify
 Steps 4–8 were re-run on Sat 14 Nov 23:10 against a replay gateway (the earlier 92-product snapshot; keyless `make accept` now runs the same flow on the current one): quote €1,010, `pending_approval`, agent 403, session approval → `placed`, report shows `#11 approval.refused`, verify `ok: true`.
 The same flow as one script with checks: `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000`.
 
-Demo fault injection (header `X-Aimo-Faults` on HTTP and MCP, or env `AIMO_FAULTS`): `stockout:<id|*>`, `partial:<id|*>:<n>`, `price_shock:<id|*>:<factor>`, `cutoff:<id|*>`, `error_rate:<p>`, `rate_limit:<p>`, `latency_ms:<n>`. See [docs/interfaces.md](interfaces.md).
+Demo fault injection is operator-only: the header `X-Aimo-Faults` (and the clock header `X-Aimo-Now`) is ignored on any request carrying agent identity unless the gateway was started with `AIMO_DEMO_FAULTS=1`, and never honoured with `AIMO_ENV=production`; the env `AIMO_FAULTS` applies server-wide. Faults: `stockout:<id|*>`, `partial:<id|*>:<n>`, `price_shock:<id|*>:<factor>`, `cutoff:<id|*>`, `error_rate:<p>`, `rate_limit:<p>`, `latency_ms:<n>`. See [docs/interfaces.md](interfaces.md).
 
