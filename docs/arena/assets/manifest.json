@@ -1,0 +1,14 @@
+{
+ "license": "CC0 1.0, Kenney (kenney.nl), via opengameart.org",
+ "files": [
+  {"path":"dungeon_packed.png","pack":"Tiny Dungeon","frame":[16,16],"margin":0,"cols":12,"rows":11,"frames":132,"purpose":"characters, props, indoor tiles",
+   "frame_index":{"wizard_agent":84,"buyer":85,"supplier":86,"viking_guard":87,"barbarian":88,"knight":96,"visor_knight_approver":97,"clerk":98,"woman_approver":99,"elder_woman":100,"slime":108,"rogue_demon_attacker":110,"hooded_impersonator":111,"crate_shelf":48,"barrel_crate":58,"chest_closed":60,"floor_sand":24,"stone_wall":12,"door":36,"scroll_potion_red":105,"potion_green":103,"coin_like_shield":101},
+   "animation":"no walk frames in pack; 2-frame bob by y offset and flipX in code"},
+  {"path":"town_packed.png","frame":[16,16],"margin":0,"cols":12,"rows":11,"frames":132,"purpose":"outdoor ground, roofs, trees, fences, signs for the street and loading dock","frame_index":{"grass":0,"dirt":12,"sign":71,"fence":58}},
+  {"path":"ui/ui_sheet.png","frame":[16,16],"margin":2,"frames":"see sheet","purpose":"icons, arrows, check and cross marks, bars"},
+  {"path":"ui/colored/blue.png","purpose":"9-slice panel and button, also green, red, grey, yellow and *_pressed variants"},
+  {"path":"ui/list.png","purpose":"9-slice list background"},
+  {"path":"ui/space.png","purpose":"9-slice frame"},
+  {"path":"ui/space_inlay.png","purpose":"9-slice inner frame"}
+ ]
+}
