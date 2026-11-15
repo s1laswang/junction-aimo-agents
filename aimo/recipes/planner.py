@@ -452,6 +452,11 @@ def resolve_delivery(delivery_by: Any, text: str = "") -> date:
                 422,
             )
     if clean_text:
+        for m in re.finditer(r"\b(\d{4})-(\d{2})-(\d{2})\b", clean_text):
+            try:
+                date(int(m[1]), int(m[2]), int(m[3]))
+            except ValueError as e:
+                raise RecipeError("bad_delivery_date", "invalid delivery date in text", 422) from e
         try:
             from aimo.buyer.need import resolve_date
             r = resolve_date(clean_text)
