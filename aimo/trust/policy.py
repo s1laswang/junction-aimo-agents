@@ -22,7 +22,8 @@ from aimo.models import AllergenStatus, Mandate, PolicyDecision, Product, Quote,
 
 POLICY_DIR = Path(__file__).parent / "policies"
 SEVERITY = {"allow": 0, "needs_approval": 1, "reject": 2}
-RULE_TYPES = {"scope", "quote_freshness", "spend_threshold", "period_spend", "category_scope", "substitution",
+RULE_TYPES = {"scope", "quote_freshness", "spend_threshold", "period_spend", "rolling_aggregate", "price_drift",
+              "category_scope", "substitution",
               "allergen_block", "delivery", "quantity_drift", "injection"}
 TIER_TEXT = {
     "preferred": "the customer's usual product",
@@ -149,6 +150,7 @@ class Ctx:
     now: datetime
     audit_log: Any = None
     hits: list[tuple[RuleHit, Optional[str]]] = field(default_factory=list)
+    cache: dict = field(default_factory=dict)
 
     def hit(self, rule_id: str, outcome: str, message: str, role: Optional[str] = None) -> None:
         self.hits.append((RuleHit(rule_id=rule_id, outcome=outcome, message=message),
@@ -272,6 +274,222 @@ def r_period_spend(c: Ctx, r: dict) -> None:
         c.hit(r["id"], "allow", f"Spending in the last {days} days would be {eur(new)} of the {eur(limit)} {label} budget.")
 
 
+def eur_short(x: float) -> str:
+    return f"€{x:,.0f}" if abs(x - round(x)) < 0.005 else eur(x)
+
+
+_ORDER_ACTIONS = ("order.placed", "order.pending_approval", "order.approved", "order.rejected",
+                  "order.rejected_by_human", "order.expired", "order.failed")
+
+
+def _order_history(c: Ctx) -> list[dict]:
+    """This customer's earlier orders from the audit log, latest state per order:
+    [{key, status, ts, total_net, lines (list|None), sanctioned (a human approved it)}].
+    Lines come from data.lines (log_order), data.quote.lines, or the quote.created event of the quote."""
+    if "orders" in c.cache:
+        return c.cache["orders"]
+    log = c.audit_log
+    if log is None:
+        from aimo.trust.audit import audit as log
+    orders: dict[str, dict] = {}
+    quotes: dict[str, list] = {}
+    try:
+        evs = []
+        for a in _ORDER_ACTIONS:
+            evs += [(a, e) for e in log.events_by_action(a)]
+        evs.sort(key=lambda t: (_aware(t[1].ts), getattr(t[1], "seq", 0)))
+        try:
+            for e in log.events_by_action("quote.created"):
+                q = (e.data or {}).get("quote") or {}
+                if q.get("quote_id"):
+                    quotes[q["quote_id"]] = q.get("lines") or []
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        c.cache["orders"] = []
+        return []
+    for action, e in evs:
+        d = e.data or {}
+        o = d.get("order") or {}
+        cust = d.get("customer_id") or o.get("customer_id") or (d.get("quote") or {}).get("customer_id")
+        qid = d.get("quote_id") or o.get("quote_id")
+        if cust != c.quote.customer_id or qid == c.quote.quote_id:
+            continue
+        key = o.get("order_id") or d.get("order_id") or qid or getattr(e, "subject_id", None) or str(id(e))
+        st = orders.setdefault(key, {"key": key, "quote_id": qid, "lines": None, "total_net": None, "sanctioned": False})
+        st["status"] = action.split(".", 1)[1]
+        st["ts"] = _aware(e.ts)
+        if d.get("total_net") is not None:
+            st["total_net"] = float(d["total_net"])
+        lines = d.get("lines") or (d.get("quote") or {}).get("lines") or (quotes.get(qid) if qid else None)
+        if lines:
+            st["lines"] = lines
+        if d.get("approver") or o.get("approved_by") or action == "order.approved":
+            st["sanctioned"] = True
+    out = list(orders.values())
+    c.cache["orders"] = out
+    return out
+
+
+def _group(c: Ctx, product_id: str, name: str) -> tuple[str, str]:
+    """Aggregation group of a line: a standing-order baseline it matches (e.g. all milk), else the
+    catalog product_type when present, else the product itself. Returns (group key, label)."""
+    p = c.product(product_id)
+    for b in c.policy.get("standing_orders", []):
+        if _matches(name or "", b.get("keywords", [])) or (p is not None and _matches(p.name_fi or "", b.get("keywords", []))):
+            return f"baseline:{b['id']}", b.get("label", b["id"])
+    pt = getattr(p, "product_type", None) if p is not None else None
+    if pt:
+        return f"type:{pt}", str(pt)
+    return f"product:{product_id}", f"'{name}'"
+
+
+def _line_volume(c: Ctx, ln: dict | Any) -> tuple[Optional[float], Optional[str]]:
+    get = (lambda k: ln.get(k)) if isinstance(ln, dict) else (lambda k: getattr(ln, k, None))
+
+    class _L:  # adapter for content_per_unit
+        product_name = get("product_name") or ""
+    amt, unit = content_per_unit(_L, c.product(get("product_id")) if get("product_id") else None)
+    if amt is None and get("content_amount"):
+        amt, unit = float(get("content_amount")), get("content_unit")
+    return (amt * float(get("qty_sales_units") or 0), unit) if amt else (None, None)
+
+
+def r_rolling_aggregate(c: Ctx, r: dict) -> None:
+    """Split-order evasion: earlier unsanctioned orders in the window (auto-placed or still pending) plus
+    this one are summed per product group and checked against the per-order auto-approve limit and the
+    weekly volume baselines. Orders a human approved are not re-counted (that volume was sanctioned).
+    If an earlier order carries no line detail, its total counts against every group (fail closed)."""
+    days = int(r.get("window_days", 7))
+    since = c.now - timedelta(days=days)
+    role = c.role(r)
+    spend_rule = next((x for x in c.policy["rules"] if x["type"] == "spend_threshold"), None)
+    auto_max = float(spend_rule["auto_max"]) if spend_rule else None
+    drift_rule = next((x for x in c.policy["rules"] if x["type"] == "quantity_drift"), None)
+    max_factor = float(drift_rule.get("max_factor", 3)) if drift_rule else None
+    prior = [o for o in _order_history(c) if o.get("status") in ("placed", "pending_approval")
+             and not o["sanctioned"] and o.get("ts") and since <= o["ts"] <= c.now + timedelta(minutes=5)]
+    if not prior:
+        return c.hit(r["id"], "allow", f"No other unapproved orders in the last {days} days to add up.")
+    cur: dict[str, dict] = {}
+    for ln in c.quote.lines:
+        g, label = _group(c, ln.product_id, ln.product_name)
+        x = cur.setdefault(g, {"label": label, "spend": 0.0, "vol": 0.0, "unit": None})
+        x["spend"] += ln.line_total
+        v, u = _line_volume(c, ln)
+        if v:
+            x["vol"] += v
+            x["unit"] = x["unit"] or u
+    flagged = False
+    blind = [o for o in prior if not o["lines"]]
+    for g, x in cur.items():
+        orders_n, p_spend, p_vol = set(), 0.0, 0.0
+        for o in prior:
+            if not o["lines"]:
+                continue
+            for pl in o["lines"]:
+                pg, _ = _group(c, str(pl.get("product_id")), pl.get("product_name") or "")
+                if pg == g:
+                    orders_n.add(o["key"])
+                    p_spend += float(pl.get("line_total") or 0)
+                    v, u = _line_volume(c, pl)
+                    if v and (x["unit"] is None or u == x["unit"]):
+                        p_vol += v
+        for o in blind:
+            orders_n.add(o["key"])
+            p_spend += float(o.get("total_net") or 0)
+        if not orders_n:
+            continue
+        n = len(orders_n)
+        together = f"Together with {n} order{'s' if n != 1 else ''} in the last {days} days"
+        tot = p_spend + x["spend"]
+        if auto_max is not None and c.quote.total_net <= auto_max and tot > auto_max:
+            flagged = True
+            c.hit(f"{r['id']}:{g.split(':', 1)[1]}", "needs_approval",
+                  f"{together} this is {eur(tot)} of {x['label']}, above the {eur_short(auto_max)} limit"
+                  + (" (earlier orders without line detail are counted in full)" if blind else "")
+                  + f". Splitting an order does not avoid approval: a {role_text(role)} must approve it.", role)
+            continue
+        if max_factor and g.startswith("baseline:") and x["vol"]:
+            b = next(b for b in c.policy.get("standing_orders", []) if f"baseline:{b['id']}" == g)
+            base = float(b["weekly_qty"]) * days / 7
+            vol = p_vol + x["vol"]
+            if x["unit"] == b.get("unit") and vol > max_factor * base and x["vol"] <= max_factor * base:
+                flagged = True
+                c.hit(f"{r['id']}:{g.split(':', 1)[1]}", "needs_approval",
+                      f"{together} this is {vol / base:.1f}× your usual weekly volume of {x['label']} "
+                      f"({qty_text(vol)} {x['unit']} vs about {qty_text(base)} {x['unit']}). A {role_text(role)} must "
+                      f"confirm the quantity.", role)
+    if not flagged:
+        c.hit(r["id"], "allow", f"Together with {len(prior)} earlier unapproved order(s) in the last {days} days, "
+                                f"no product group goes over the auto-approve limit or the weekly volume baseline.")
+
+
+def _last_paid(c: Ctx, pid: str, lookback_days: int) -> Optional[tuple[float, datetime]]:
+    since = c.now - timedelta(days=lookback_days)
+    best = None
+    for o in _order_history(c):
+        if o.get("status") not in ("placed", "approved") or not o["lines"] or not o.get("ts") or o["ts"] < since:
+            continue
+        for pl in o["lines"]:
+            if str(pl.get("product_id")) == pid and pl.get("unit_price"):
+                if best is None or o["ts"] > best[1]:
+                    best = (float(pl["unit_price"]), o["ts"])
+    return best
+
+
+def r_price_drift(c: Ctx, r: dict) -> None:
+    """Each line's unit price vs the last price this customer paid (audit order.placed), else the policy's
+    reference_prices. The buyer agent's own reference (need.preferences.reference_unit_price) is untrusted
+    and can only make the check stricter. > max_increase up -> needs approval; > reject_factor -> only an
+    override role (e.g. general manager) may approve."""
+    max_inc = float(r.get("max_increase", 0.15))
+    factor = float(r.get("reject_factor", 2.0))
+    tol = 0.005
+    role = c.role(r)
+    senior = r.get("over_factor_role") or (c.policy.get("override_roles") or [role])[0]
+    refs = {str(k): float(v) for k, v in (c.policy.get("reference_prices") or {}).items()}
+    agent_refs = {}
+    if c.quote.need and isinstance((c.quote.need.preferences or {}).get("reference_unit_price"), dict):
+        for k, v in c.quote.need.preferences["reference_unit_price"].items():
+            try:
+                agent_refs[str(k)] = float(v)
+            except (TypeError, ValueError):
+                pass
+    flagged, checked = False, 0
+    for ln in c.quote.lines:
+        pid = ln.product_id
+        cands = []
+        lp = _last_paid(c, pid, int(r.get("lookback_days", 90)))
+        if lp:
+            cands.append((lp[0], f"since your last order on {lp[1]:%-d %b}"))
+        elif pid in refs:
+            cands.append((refs[pid], f"vs your agreed reference price {eur(refs[pid])}"))
+        if pid in agent_refs and agent_refs[pid] > 0:
+            if not cands or agent_refs[pid] < cands[0][0]:   # untrusted: only used when it is stricter
+                cands.append((agent_refs[pid], f"vs the reference price {eur(agent_refs[pid])} the buyer reported"))
+        if not cands or ln.unit_price <= 0:
+            continue
+        checked += 1
+        ref, src = min(cands, key=lambda t: t[0])
+        ratio = ln.unit_price / ref if ref > 0 else float("inf")
+        rid = f"{r['id']}:{pid}"
+        if ratio > factor + tol:
+            flagged = True
+            c.hit(rid, "needs_approval", f"Price of {_line_name(ln)} rose {ratio:.1f}× {src} ({eur(ref)} → "
+                  f"{eur(ln.unit_price)}). That is more than {factor:g}×, so this would be refused unless a "
+                  f"{role_text(senior)} approves it.", senior)
+        elif ratio > 1 + max_inc + tol:
+            flagged = True
+            c.hit(rid, "needs_approval", f"Price of {_line_name(ln)} rose {100 * (ratio - 1):.0f}% {src} ({eur(ref)} → "
+                  f"{eur(ln.unit_price)}), more than the {100 * max_inc:.0f}% this policy accepts. A {role_text(role)} "
+                  f"must confirm the price.", role)
+    if not flagged:
+        c.hit(r["id"], "allow", f"No price rose more than {100 * max_inc:.0f}% against the last price paid or the "
+                                f"reference ({checked} line(s) had a reference)." if checked else
+              "No earlier price or reference price to compare with.")
+
+
 def _cat_ok(cat: str, allowed: list) -> bool:
     for a in allowed:
         if isinstance(a, dict):
@@ -314,38 +532,123 @@ def _approved_alternatives(pol: dict) -> dict[str, str]:
     return {str(a["product_id"]): a.get("tier", "best") for a in pol.get("approved_alternatives", [])}
 
 
-def verified_tier(c: Ctx, line) -> tuple[Optional[str], str]:
-    """Decide server-side what a line really is; never trust the caller's tier.
-    Returns (tier or None if it cannot be verified, how it was verified).
-      preferred: product_id is in the policy's preferred_products (the customer's usual products)
-      best/better/good: product_id is in the policy's approved_alternatives (customer-approved swaps)
-      best: catalog shows same brand, category and unit as a preferred product and keeps all its claims
-      None: anything else (missing tier defaults to "preferred" in the model, so it lands here too)"""
+def product_kind(p: Optional[Product]) -> Optional[str]:
+    """Kind of product used to decide what a line could replace: the catalog's product_type when it has
+    one, else the Valio Aimo category code (e.g. 10400 milk drinks, 10402 plant drinks)."""
+    if p is None:
+        return None
+    pt = getattr(p, "product_type", None)
+    return str(pt) if pt else (str(p.category) if p.category else None)
+
+
+def _name_types(p: Product) -> Optional[frozenset]:
+    """Catalog's name-based type markers (sour milk, flavoured, organic...), if the catalog is available."""
+    try:
+        from aimo.catalog.substitution import product_types
+        return frozenset(product_types({"name_en": p.name or "", "name_fi": p.name_fi or ""}))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _excluded_allergens(c: Ctx) -> list[str]:
+    ex = [a for r in c.policy["rules"] if r["type"] == "allergen_block" for a in r.get("excluded", [])]
+    return list(dict.fromkeys(ex + list(c.quote.need.excluded_allergens if c.quote.need else [])))
+
+
+def _refs(c: Ctx, ids: list[str]) -> dict[str, Optional[Product]]:
+    """Products for reference ids (usual products), from the supplied products or the catalog (cached)."""
+    cache = c.cache.setdefault("refs", {})
+    missing = [i for i in ids if i not in cache and i not in c.products]
+    if missing:
+        cache.update(_catalog_lookup(missing))
+    return {i: c.products.get(i) if c.products.get(i) is not None else cache.get(i) for i in ids}
+
+
+def _same_kind(a: Optional[Product], b: Optional[Product]) -> bool:
+    """Unknown kind on either side counts as the same kind (fail closed: it may be a substitution)."""
+    ka, kb = product_kind(a), product_kind(b)
+    return ka is None or kb is None or ka == kb
+
+
+def _verify_best(c: Ctx, p: Optional[Product], refs: dict[str, Optional[Product]]) -> Optional[str]:
+    """Catalog evidence that p is a best-tier substitute for one of refs: same brand, same kind, same
+    name-type markers, every required claim kept, and confirmed free of every excluded allergen.
+    Returns the reference id it was verified against, or None."""
+    if p is None or not p.brand:
+        return None
+    need_claims = set(c.quote.need.required_claims) if c.quote.need else set()
+    if not need_claims <= set(p.claims or []):
+        return None
+    for a in _excluded_allergens(c):
+        st = _st(p.allergens.get(a, "unknown"))
+        if st != "free" or str((p.allergen_source or {}).get(a, "")).startswith("inferred"):
+            return None
+    tp = _name_types(p)
+    for rid, ref in refs.items():
+        if ref is None or not ref.brand or ref.id == p.id:
+            continue
+        if ref.brand.strip().lower() != p.brand.strip().lower() or product_kind(ref) != product_kind(p):
+            continue
+        if ref.content_unit and p.content_unit and ref.content_unit != p.content_unit:
+            continue
+        tr = _name_types(ref)
+        if tp is not None and tr is not None and tp != tr:
+            continue
+        return rid
+    return None
+
+
+def classify_line(c: Ctx, line) -> dict:
+    """Decide server-side what a line is; the caller's tier is never trusted to loosen anything.
+    Returns {"kind", "tier", "how", "replaces", "learned"} where kind is one of
+      preferred      in the policy's preferred_products (the customer's usual products)
+      alternative    in the policy's approved_alternatives (tier from the profile)
+      learned        a swap a human approved earlier with "remember" (aimo.trust.learned)
+      new_item       no usual product of this kind exists (nothing is being replaced)
+      requested      the request names this product and the profile has no usual product of this kind
+      substitution   replaces a usual (or requested) product; tier verified (best) or unverified (None)"""
     pid = line.product_id
-    if pid in _preferred_ids(c.policy):
-        return "preferred", "listed as a usual product in the customer profile"
-    alt = _approved_alternatives(c.policy)
-    if pid in alt:
-        return alt[pid], "a customer-approved alternative in the profile"
-    if line.tier == "best":
-        p = c.product(pid)
-        if p is not None and p.brand:
-            prefs = _catalog_lookup(sorted(_preferred_ids(c.policy) - set(c.products)))
-            prefs.update({k: v for k, v in c.products.items() if k in _preferred_ids(c.policy)})
-            for ref in prefs.values():
-                if ref is None or not ref.brand:
-                    continue
-                if (ref.brand.lower() == p.brand.lower() and ref.category == p.category
-                        and ref.content_unit == p.content_unit and set(ref.claims) <= set(p.claims)):
-                    return "best", f"same brand, category and claims as the usual {ref.id} (catalog data)"
-    return None, "not in the customer profile"
+    pol = c.policy
+    prefs = sorted(_preferred_ids(pol))
+    if pid in prefs:
+        return {"kind": "preferred", "tier": "preferred", "how": "listed as a usual product in the customer profile"}
+    alts = _approved_alternatives(pol)
+    if pid in alts:
+        return {"kind": "alternative", "tier": alts[pid], "how": "a customer-approved alternative in the profile"}
+    p = c.product(pid)
+    usual = _refs(c, prefs)
+    replaces = [u for u in prefs if p is None or _same_kind(usual.get(u), p)]
+    need_prefs = [x for x in (c.quote.need.preferred_product_ids if c.quote.need else []) if x and x != pid]
+    if not replaces and c.quote.need and pid in (c.quote.need.preferred_product_ids or []):
+        return {"kind": "requested", "tier": None, "how": "the product the request names"}
+    if not replaces:
+        replaces = need_prefs
+    if not replaces:
+        return {"kind": "new_item", "tier": None, "how": "no usual product of this kind in the customer profile"}
+    refs = _refs(c, replaces)
+    try:
+        from aimo.trust.learned import is_learned
+        keys = list(replaces) + [k for k in (product_kind(x) for x in refs.values()) if k] + \
+            ([product_kind(p)] if product_kind(p) else [])
+        lr = is_learned(c.quote.customer_id, pid, keys, now=c.now)
+    except Exception:  # noqa: BLE001
+        lr = None
+    if lr:
+        return {"kind": "learned", "tier": None, "how": "a swap approved earlier", "learned": lr, "replaces": replaces}
+    if line.tier in ("better", "good", "rejected"):
+        return {"kind": "substitution", "tier": line.tier, "how": "as reported by the agent", "replaces": replaces}
+    ref = _verify_best(c, p, refs)
+    if ref:
+        return {"kind": "substitution", "tier": "best", "replaces": replaces,
+                "how": f"same brand, kind, claims and allergen-safe as {ref} (catalog data)"}
+    return {"kind": "substitution", "tier": None, "how": "not verified", "replaces": replaces}
 
 
 def r_substitution(c: Ctx, r: dict) -> None:
-    """One hit per line, with the final (strictest) outcome. The tier is verified server-side: a line
-    whose tier cannot be verified (missing, or a "preferred"/"best" claim that the profile and catalog do
-    not back) is treated as a substitution (`unverified`, default needs_approval). A claimed tier worse
-    than the verified one is honoured (it can only make the outcome stricter)."""
+    """One hit per line, with the final (strictest) outcome. See classify_line(): a usual product or a
+    new item (nothing replaced) is fine; a substitute is judged by its VERIFIED tier; an unverifiable
+    tier counts as `unverified` (default needs_approval); a claimed tier worse than the verified one is
+    honoured; a learned swap is allowed."""
     tiers = r.get("tiers", {})
     role = c.role(r)
     unverified_out = r.get("unverified", "needs_approval")
@@ -355,28 +658,41 @@ def r_substitution(c: Ctx, r: dict) -> None:
     rank = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
     for ln in c.quote.lines:
         parts: list[tuple[str, str]] = []   # (outcome, sentence)
-        vt, how = verified_tier(c, ln)
-        claimed = ln.tier
-        if vt is not None and rank.get(claimed, 0) > rank[vt]:
-            vt = claimed  # the caller says it is worse than we could verify: believe the stricter one
-        if vt is None:
-            if claimed in ("better", "good", "rejected"):
-                eff = claimed
-                out = tiers.get(eff, "needs_approval")
-                parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]} (as reported by the agent)."))
+        cl = classify_line(c, ln)
+        kind, eff = cl["kind"], cl["tier"]
+        if eff is not None and rank.get(ln.tier, 0) > rank.get(eff, 0) and kind in ("alternative", "substitution"):
+            eff = ln.tier  # the caller says it is worse than we could verify: believe the stricter one
+        quiet = False
+        if kind == "preferred":
+            parts.append(("allow", f"{_line_name(ln)} is the customer's usual product."))
+            quiet = True
+        elif kind in ("new_item", "requested"):
+            if ln.tier == "rejected":
+                parts.append(("reject", f"{_line_name(ln)} was ranked not acceptable by the substitution engine."))
             else:
-                eff, out = None, unverified_out
-                parts.append((out, f"Agent-supplied tier could not be verified; treating as substitution. "
-                                   f"{_line_name(ln)} is not one of the customer's usual products or approved "
-                                   f"alternatives (agent-supplied tier: "
-                                   + ("preferred or none" if claimed == "preferred" else claimed) + ")."))
+                what = ("a new item: the customer profile has no usual product of this kind, so nothing is being "
+                        "replaced" if kind == "new_item" else "the product named in the request, and the customer "
+                        "profile has no usual product of this kind")
+                parts.append(("allow", f"{_line_name(ln)} is {what}."))
+                quiet = True
+        elif kind == "learned":
+            lr = cl["learned"]
+            when = str(lr.get("created_at", ""))[:10]
+            try:
+                when = datetime.fromisoformat(lr["created_at"]).strftime("%-d %b %Y")
+            except Exception:  # noqa: BLE001
+                pass
+            parts.append(("allow", f"{_line_name(ln)} replaces {', '.join(cl['replaces'])}. Allowed: you approved this "
+                                   f"swap on {when} ({lr.get('approver')})."))
+        elif eff is None:
+            parts.append((unverified_out, f"Agent-supplied tier could not be verified; treating as substitution. "
+                                          f"{_line_name(ln)} replaces {', '.join(cl.get('replaces') or [])} but is not "
+                                          f"a usual product, an approved alternative or a catalog-verified best-tier "
+                                          f"substitute (agent-supplied tier: "
+                          + ("preferred or none" if ln.tier == "preferred" else ln.tier) + ")."))
         else:
-            eff = vt
-            out = tiers.get(eff, "allow" if eff == "preferred" else "needs_approval")
-            if eff == "preferred":
-                parts.append((out, f"{_line_name(ln)} is the customer's usual product."))
-            else:
-                parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]}, verified as {how}."))
+            out = tiers.get(eff, "needs_approval")
+            parts.append((out, f"{_line_name(ln)} is a substitute: {TIER_TEXT[eff]}, verified as {cl['how']}."))
         if "outside_preference" in ln.flags:
             parts.append((r.get("outside_preference", "needs_approval"),
                           "It is flagged as outside your standing preferences (brand, pack or spec)."))
@@ -390,13 +706,12 @@ def r_substitution(c: Ctx, r: dict) -> None:
                     parts.append(("reject", f"It is not {', '.join(CLAIM_TEXT.get(x, x) for x in missing)}, "
                                             f"so it does not meet the request."))
         final = max((o for o, _ in parts), key=lambda o: SEVERITY[o])
-        if eff == "preferred" and final == "allow" and len(parts) == 1:
+        if quiet and final == "allow" and len(parts) == 1 and kind == "preferred":
             continue  # usual product, nothing to say per line
         noted = True
-        tail = {"allow": " Allowed automatically by this policy.",
+        tail = {"allow": "" if kind in ("new_item", "requested", "learned") else " Allowed automatically by this policy.",
                 "needs_approval": f" A {role_text(role)} must confirm the swap.",
                 "reject": " This policy does not allow it."}[final]
-        # keep the descriptive first sentence, then only the sentences that drive the final outcome
         text = [parts[0][1]] + [s for o, s in parts[1:] if o == final or final == "allow"]
         c.hit(f"{r['id']}:{ln.product_id}", final, " ".join(text) + tail, role)
     if not noted:
@@ -564,7 +879,8 @@ def r_injection(c: Ctx, r: dict) -> None:
 
 RULES: dict[str, Callable[[Ctx, dict], None]] = {
     "scope": r_scope, "quote_freshness": r_quote_freshness, "spend_threshold": r_spend_threshold,
-    "period_spend": r_period_spend, "category_scope": r_category_scope, "substitution": r_substitution,
+    "period_spend": r_period_spend, "rolling_aggregate": r_rolling_aggregate, "price_drift": r_price_drift,
+    "category_scope": r_category_scope, "substitution": r_substitution,
     "allergen_block": r_allergen_block, "delivery": r_delivery, "quantity_drift": r_quantity_drift,
     "injection": r_injection,
 }

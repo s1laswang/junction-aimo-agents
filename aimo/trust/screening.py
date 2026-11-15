@@ -164,7 +164,8 @@ def _gemini_screen(text_hash: str, text: str) -> tuple[bool, float, tuple[str, .
 
         cfg = types.GenerateContentConfig(response_mime_type="application/json", response_schema=_SCHEMA,
                                           temperature=0)
-        r = gemini.generate("injection_screen", GEMINI_FAST_MODEL, _PROMPT % text[:6000], config=cfg, retries=2)
+        prompt = _PROMPT.replace("<untrusted>\n%s\n</untrusted>", "<untrusted>\n" + text[:6000] + "\n</untrusted>")
+        r = gemini.generate("injection_screen", GEMINI_FAST_MODEL, prompt, config=cfg, retries=2)
         out = json.loads(r.text)
         reasons = tuple(str(x) for x in out.get("reasons", []))[:5]
         if out.get("category") and out.get("category") != "none":
