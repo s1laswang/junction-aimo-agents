@@ -400,8 +400,20 @@ class BuyerAgent:
                     continue
                 raise
             dt = round(time.time() - t, 2)
+            escalated_step = model != self.model
+            if self._generate is None:  # label the step with the model that actually answered (quota fallback)
+                from aimo import gemini
+                answered = gemini.last_model(model)
+                if answered != model:
+                    noted = getattr(self, "_fallback_noted", set())
+                    if (model, answered) not in noted:  # say it once per model pair, not on every step
+                        noted.add((model, answered))
+                        self._fallback_noted = noted
+                        self.emit("thought", f"{model} was unavailable (quota); {answered} answers instead",
+                                  fallback_from=model, model=answered)
+                    model = answered
             self.models_used.append({"step": step, "model": model, "thinking": level, "latency_s": dt})
-            if model != self.model:
+            if escalated_step:
                 self.escalate_next = False
                 self.escalated = True
             content = r.candidates[0].content if getattr(r, "candidates", None) else None

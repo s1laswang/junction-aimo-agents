@@ -11,6 +11,7 @@ import json
 import os
 import random
 import socket
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -45,27 +46,69 @@ def record(feature: str, model: str, kind: str = "generate", usage: Any = None, 
         f.write(json.dumps(row) + "\n")
 
 
+_tl = threading.local()
+_exhausted: dict[str, float] = {}      # model -> epoch seconds until which it is skipped (quota exhausted)
+EXHAUSTED_S = 1800.0
+
+
+def fallback_chain(model: str) -> list[str]:
+    """Models tried in order: the requested one, then GEMINI_FALLBACK_MODELS (comma separated)."""
+    chain = [m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash,gemini-4-hydrogen").split(",")
+             if m.strip()]
+    return [model] + [m for m in chain if m != model]
+
+
+def last_model(default: str | None = None) -> str | None:
+    """The model that actually answered the last generate() call on this thread (after any fallback)."""
+    return getattr(_tl, "model", None) or default
+
+
+def _is_quota(msg: str) -> bool:
+    return "429" in msg or "RESOURCE_EXHAUSTED" in msg
+
+
+def _is_daily_quota(msg: str) -> bool:
+    low = msg.lower()
+    return _is_quota(msg) and ("per_day" in low or "perday" in low or "per day" in low)
+
+
 def generate(feature: str, model: str, contents: Any, config: Any = None, run_id: str = "",
              retries: int = 5, meta: dict | None = None) -> Any:
-    """generate_content with exponential backoff on 429/5xx and ledger logging.
-    `meta` (e.g. {"thinking_level": "LOW", "step": 3}) is copied into the ledger row."""
+    """generate_content with exponential backoff on 429/5xx, model fallback and ledger logging.
+    `meta` (e.g. {"thinking_level": "LOW", "step": 3}) is copied into the ledger row.
+
+    Fallback: when a model's DAILY quota is exhausted (waiting cannot help), or it is rate-limited twice in a
+    row, or its retries run out, the next model in fallback_chain() answers instead. An exhausted model is
+    skipped for 30 minutes. The ledger row names the model that answered, with meta.fallback_from."""
+    _tl.model = None
+    now = time.time()
+    candidates = [m for m in fallback_chain(model) if _exhausted.get(m, 0.0) < now] or [model]
     last: Exception | None = None
-    for attempt in range(retries):
-        t0 = time.time()
-        try:
-            r = client().models.generate_content(model=model, contents=contents, config=config)
-            record(feature, model, usage=r.usage_metadata, latency_s=time.time() - t0, run_id=run_id, meta=meta)
-            return r
-        except Exception as e:  # noqa: BLE001
-            last = e
-            record(feature, model, latency_s=time.time() - t0, ok=False, error=type(e).__name__, run_id=run_id,
-                   meta=meta)
-            msg = str(e)
-            retryable_type = any(s in type(e).__name__ for s in ("Timeout", "ConnectError", "RemoteProtocolError"))
-            if not retryable_type and not any(s in msg for s in ("429", "RESOURCE_EXHAUSTED", "500", "503", "UNAVAILABLE",
-                                                                 "DEADLINE", "timed out")):
-                raise
-            time.sleep(min(60, (2 ** attempt) + random.random()))
+    for idx, m in enumerate(candidates):
+        more = idx < len(candidates) - 1
+        row_meta = dict(meta or {}, fallback_from=model) if m != model else meta
+        for attempt in range(retries):
+            t0 = time.time()
+            try:
+                r = client().models.generate_content(model=m, contents=contents, config=config)
+                record(feature, m, usage=r.usage_metadata, latency_s=time.time() - t0, run_id=run_id, meta=row_meta)
+                _tl.model = m
+                return r
+            except Exception as e:  # noqa: BLE001
+                last = e
+                record(feature, m, latency_s=time.time() - t0, ok=False, error=type(e).__name__, run_id=run_id,
+                       meta=row_meta)
+                msg = str(e)
+                if _is_daily_quota(msg):
+                    _exhausted[m] = time.time() + EXHAUSTED_S
+                    break  # the day's quota for this model is gone: use the next model now
+                retryable_type = any(s in type(e).__name__ for s in ("Timeout", "ConnectError", "RemoteProtocolError"))
+                if not retryable_type and not any(s in msg for s in ("429", "RESOURCE_EXHAUSTED", "500", "503",
+                                                                     "UNAVAILABLE", "DEADLINE", "timed out")):
+                    raise
+                if _is_quota(msg) and attempt >= 1 and more:
+                    break  # rate-limited twice on this model: let the next one answer
+                time.sleep(min(60, (2 ** attempt) + random.random()))
     raise last  # type: ignore[misc]
 
 
