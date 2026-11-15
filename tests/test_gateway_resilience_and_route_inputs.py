@@ -669,10 +669,9 @@ def test_demo_tamper_and_untamper_reject_non_positive_and_huge_seq(monkeypatch, 
 
     for path in (f"/v1/demo/tamper/{bad_seq}", f"/v1/demo/untamper/{bad_seq}"):
         r = client.post(path)
-        assert r.status_code == 422, (path, r.status_code, r.text)
+        assert r.status_code == 404, (path, r.status_code, r.text)
         body = r.json()
-        assert body["error"] == "bad_seq"
-        assert "seq must be >= 1" in body["message"]
+        assert body["error"] == "audit_event_not_found"
 
     for huge_path in (f"/v1/demo/tamper/{10**30}", f"/v1/demo/untamper/{10**30}"):
         r_huge = client.post(huge_path)

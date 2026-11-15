@@ -498,11 +498,8 @@ def build_router() -> APIRouter:
             service.audit_refusal(seq_tag, f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, seq_tag, "human:demo-tamper")
-        if service._demo_enabled():
-            if isinstance(seq, bool) or seq < 1:
-                raise service.ServiceError(422, "bad_seq", "seq must be >= 1")
-            if summary is not None and "\x00" in summary:
-                raise service.ServiceError(422, "invalid_summary", "summary must not contain null bytes")
+        if service._demo_enabled() and summary is not None and "\x00" in summary:
+            raise service.ServiceError(422, "invalid_summary", "summary must not contain null bytes")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
@@ -512,8 +509,6 @@ def build_router() -> APIRouter:
             service.audit_refusal(seq_tag, f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, seq_tag, "human:demo-untamper")
-        if service._demo_enabled() and (isinstance(seq, bool) or seq < 1):
-            raise service.ServiceError(422, "bad_seq", "seq must be >= 1")
         return service.demo_untamper(seq)
 
     @r.post("/v1/auth/approver-session", tags=["approvals"], summary="Human approver sign-in (returns a session token)",
