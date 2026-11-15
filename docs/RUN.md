@@ -66,6 +66,8 @@ Then open:
 | http://localhost:8000/.well-known/otap.json | Discovery manifest: endpoints, MCP URL, JWKS URL, policies, standards |
 | http://localhost:8000/.well-known/jwks.json | Public key to verify quote and audit signatures |
 | http://localhost:8000/healthz | Which components are live vs fallback |
+| [docs/arena/](arena/) (`docs/arena/index.html`) | **Interactive Judge Red-Team Game ("Try to Scam the Agent")**: static keyless pixel-art wholesale warehouse game (5 live guardrail scam attempts + 30 s happy-path order + scoreboard, backed by recorded gateway JWS/audit responses; `CC0-1.0` Kenney asset ledger in [docs/demo/ASSETS.md](demo/ASSETS.md)) |
+| [docs/demo/](demo/) (`docs/demo/index.html`) | **One-Page Judge Walkthrough**: self-contained keyless interactive step-by-step walkthrough (Ed25519 JWS verify, 403 attack, 409 price-change requote, Peppol `AP`, and audit tamper check) |
 
 Terminal demo of the buyer agent, with the gateway running in another terminal:
 ```bash
@@ -128,8 +130,10 @@ Approvals are human-only. Distinct 12-char passphrases are generated per directo
 | `tests/` | 1,257+ collected pytest cases across gateway, catalog, trust, buyer, voice, replay, `judge_accept` gate checks, per-approver and known-customer auth, input/quantity validation, `/v1` route fuzzing, docs hygiene, openness and scenarios; `tests/fixtures/snapshot/replay/` holds the 669-id recorded mock-API replay plus 669-product catalog subset (`scripts/record_replay.py` re-records it, needs `AIMO_API_KEY`) |
 | `Dockerfile` | Slim Python 3.12 container image (port 8000, non-root `aimo` user, `/app/data` volume, `/healthz` check, copies `tests/fixtures/snapshot` so keyless containers boot straight into replay mode) |
 | `scenarios/`, `conformance/`, `toywholesaler/` | Acceptance scenarios s0..s7 (`python -m scenarios.run_all`), the `otap/0.1` conformance suite (`python -m conformance`, 44/44), and second synthetic wholesaler (*Nordic Bakery Supply*) |
+| `docs/arena/` | Interactive Judge Red-Team Game ("Try to Scam the Agent", [docs/arena/](arena/), `docs/arena/index.html`): static keyless pixel-art wholesale warehouse game backed by recorded gateway JWS/audit responses |
+| `docs/demo/` | One-Page Judge Walkthrough ([docs/demo/](demo/), `docs/demo/index.html`) and `CC0-1.0` Kenney pixel-art asset ledger ([docs/demo/ASSETS.md](demo/ASSETS.md)) |
 | `docs/evidence/` | Offline-verifiable evidence packs: sanitized Gemini montage ledgers (`montage_stats.py`, [evidence/README.md](evidence/README.md)), raw live Gemini hero run + signed quote/audit/JWKS (`summarize.py`, [evidence/live-run/README.md](evidence/live-run/README.md)), and committed 640-scenario wind-tunnel inputs + runs ([evidence/windtunnel/README.md](evidence/windtunnel/README.md)) |
-| `docs/` | [CONNECT](CONNECT.md), [OPENNESS](OPENNESS.md), [COMBINE](COMBINE.md), [ASSUMPTIONS](ASSUMPTIONS.md), [DECISIONS](DECISIONS.md), [NUMBERS](NUMBERS.md), [TRUST](TRUST.md), [ARCHITECTURE](ARCHITECTURE.md), [GEMINI](GEMINI.md), [DEMO](DEMO.md), [SUBMISSION](SUBMISSION.md), [QA](pitch/QA.md), [interfaces](interfaces.md), [PLAN](PLAN.md) |
+| `docs/` | [CONNECT](CONNECT.md), [OPENNESS](OPENNESS.md), [COMBINE](COMBINE.md), [ASSUMPTIONS](ASSUMPTIONS.md), [DECISIONS](DECISIONS.md), [NUMBERS](NUMBERS.md), [TRUST](TRUST.md), [ARCHITECTURE](ARCHITECTURE.md), [GEMINI](GEMINI.md), [DEMO](DEMO.md), [SUBMISSION](SUBMISSION.md), [QA](pitch/QA.md), [interfaces](interfaces.md), [PLAN](PLAN.md), [ASSETS](demo/ASSETS.md) |
 
 Data: the challenge files (product JSON, delivery reliability CSV, CO2 CSV) download into `data/`, which is gitignored together with `.env`, signing keys and the SQLite state.
 
