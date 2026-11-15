@@ -20,9 +20,30 @@ Also: `tests/test_catalog.py::test_semantic_switch_off_is_immediate` failed on a
 import 0.7 s > 0.5 s budget), which made keyless `make accept` FAIL on main. The test now warms the import before
 timing; the assertion is unchanged.
 
-## Evidence
+## Evidence (Sun 15 Nov ~02:00, rebased on 81e730d)
 
-Filled in below after the gate runs.
+- **Fresh clone, EMPTY `.env`, no keys** (`git clone -b team/replay ... && : > .env && uv sync --extra dev && make accept`):
+  `RESULT: PASS` (PASS=16 FAIL=0 SKIP=4). scenarios.run_all **8/8 (replay)**; conformance **44/44**; qa_milk_flow
+  MILK FLOW OK (replay); order `ORD-20261114-762250e2` placed; Peppol `OrderResponseCode AP`; audit verify ok (20 events).
+  Before (main, same setup): `RESULT: FAIL` (10 PASS, 1 FAIL, 5 SKIP: conformance and qa_milk_flow skipped).
+- **Keyed gate** (worktree with key + full data): pytest 344 passed, 7 skipped; `scenarios.run_all` 8/8 live;
+  `make accept` PASS=19 FAIL=0 (order placed live, Peppol AP).
+- **Recording**: `uv run python scripts/record_replay.py`: 10 upstream calls total (669 ids x 16-20 Nov, <=1,000 ids
+  per call), time_now `2026-11-14T23:50:28+0200`; snapshot 0.15 MB + catalog subset 0.6 MB (gz).
+- **No data, replay off** (`AIMO_REPLAY=0`, empty data dir): `GET /v1/products/search` and `POST /v1/plan` -> 503
+  `catalog_missing` with the `uv run aimo fetch-data` hint (absurd quantities still 422 first).
+- **`aimo serve` keyless**: `/healthz` replay.mode `auto`, clock mode `replay`; the UI hero request ("1,000 litres of
+  lactose-free milk ... by Monday") runs the mock buyer to quote -> policy decision -> human approval wait.
+- **Keyless pytest** (no key, no data on standalone `team/replay` `2a68792`): 8 failed / 245 passed. All 8 also fail on main (main: 10): S2/S3 tests that
+  need the catalog but are not marked `needs_data` (`tests/test_harden.py` x7,
+  `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit`). The two fuzz 500s main has keyless
+  are gone (503 catalog_missing). `make accept` reports keyless pytest as SKIP (catalog missing), as before.
+
+### Verification on `fr8/valio/docs` (`2e6ae66`, Sun 15 Nov 01:56 Helsinki)
+
+- `PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m scenarios.run_all` (keyless, fresh gateway on bundled replay snapshot): **8/8 passed** across 88 checks (`s0_guardrails` 12, `s1_milk` 11, `s2_recipe_order` 11, `s3_event_substitution` 9, `s4_stockout` 8, `s5_allergen_safe` 10, `s6_proactive_seller` 14, `s7_drift` 13).
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m pytest -q tests/test_docs_submission_hygiene.py tests/test_replay_port.py`: **14 passed in 1.24s** (replay modes, gzipped snapshot, `next_delivery_day`, fixture catalog subset, and 503 `catalog_missing` after known-customer auth).
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m pytest -q`: **707 passed, 105 skipped, 1 xfailed, 1 xpassed in 79.06s** (0 failures keyless offline).
 
 ## Files touched outside the S1 ownership list (small, needed for items 2 and 4)
 
@@ -39,6 +60,7 @@ Filled in below after the gate runs.
 
 ## Open items / requests
 
+- S2 / S3: mark the 8 tests above `@pytest.mark.needs_data` (or give them the replay catalog) so keyless pytest is clean on standalone `main` (clean on `fr8/valio` `2e6ae66`: 707 passed, 105 skipped, 1 xfailed, 1 xpassed).
 - S5 (`ui`): the replay badge lives in `web/app.js` right after the mode pill; keep it when you restyle the header.
 - S4 (`submit`): README/DEMO can say "no key needed: `make accept` and `uv run aimo serve` run the recorded
   snapshot (served_from: replay)". Re-record with `uv run python scripts/record_replay.py` (needs the key).
