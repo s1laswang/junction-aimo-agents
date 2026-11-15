@@ -117,7 +117,7 @@ def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: thr
     import httpx
     from aimo.gateway.human_auth import local_pin
     http = client or httpx
-    human = {"X-Approver-Pin": local_pin()}  # the operator's approver credential (env AIMO_APPROVER_PIN or data/keys)
+    human = {"X-Approver-Pin": local_pin(approver)}  # the operator's (env) or this approver's credential (data/keys)
     seen: set[str] = set()
     via = "HTTP" if client is None else "HTTP (in-process gateway app)"
     baseline = False

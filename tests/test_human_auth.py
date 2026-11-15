@@ -1,4 +1,5 @@
 """Human-only approvals (bake-off review, Sat 22:30): an agent must never approve, even naming a real approver."""
+import pytest
 from fastapi.testclient import TestClient
 
 from test_gateway import APPROVER, D, H, _quote, api, isolated  # noqa: F401  (fixtures reused)
@@ -108,3 +109,68 @@ def test_quotes_and_orders_need_identity_and_inbox_is_scoped(api):
     assert anon.get("/v1/approvals", params={"status": "all"}, headers={"X-Customer-Id": "school-tampere"}).json() == []
     assert anon.get("/v1/approvals", params={"customer_id": "hotel-aurora"},
                     headers={"X-Customer-Id": "school-tampere"}).status_code == 403
+
+
+# ------------------------------------------------------------------ per-approver credentials (fleet 0d96f61 + 599a991)
+@pytest.fixture
+def per_approver(tmp_path, monkeypatch):
+    """No operator env credential: the gateway uses data/keys/approver_pin (Anna) + approver_pins.json (others)."""
+    from aimo.gateway import human_auth
+    monkeypatch.delenv("AIMO_APPROVER_PIN", raising=False)
+    monkeypatch.setattr(human_auth, "PIN_FILE", tmp_path / "approver_pin")
+    monkeypatch.setattr(human_auth, "PINS_FILE", tmp_path / "approver_pins.json")
+    monkeypatch.setattr(human_auth, "SECRET_FILE", tmp_path / "approver_session_secret")
+    (tmp_path / "approver_pin").write_text("anna-existing-pin\n")
+    human_auth.reset_for_tests()
+    yield human_auth
+    human_auth.reset_for_tests()
+
+
+def test_each_approver_has_own_credential(per_approver):
+    pins = per_approver.approver_pins()
+    assert pins["anna@hotel-aurora.example"] == "anna-existing-pin"   # the README credential is unchanged
+    others = {k: v for k, v in pins.items() if k != "anna@hotel-aurora.example"}
+    assert "mikko@hotel-aurora.example" in others and len(others) >= 2
+    assert len(set(pins.values())) == len(pins)                      # all distinct
+    assert all(len(v) >= 12 for v in others.values())
+    assert per_approver.approver_pins() == pins                      # stable across calls (persisted 0600)
+    assert oct(per_approver.PINS_FILE.stat().st_mode & 0o777) == "0o600"
+
+
+def test_shared_pin_no_longer_approves_as_anyone(per_approver):
+    from fastapi.testclient import TestClient
+
+    from aimo.gateway.app import create_app
+    api = TestClient(create_app(with_mcp=False))
+    pins = per_approver.approver_pins()
+    anna = pins["anna@hotel-aurora.example"]
+    mikko = pins["mikko@hotel-aurora.example"]
+    # Anna's existing credential still signs her in (README flow)
+    r = api.post("/v1/auth/approver-session", json={"approver": "anna@hotel-aurora.example"},
+                 headers={"X-Approver-Pin": anna})
+    assert r.status_code == 200 and r.json()["approver"] == "anna@hotel-aurora.example"
+    # ... but it cannot sign in as Mikko; Mikko's own credential can
+    r = api.post("/v1/auth/approver-session", json={"approver": "mikko@hotel-aurora.example"},
+                 headers={"X-Approver-Pin": anna})
+    assert r.status_code == 401
+    r = api.post("/v1/auth/approver-session", json={"approver": "Mikko Laine"}, headers={"X-Approver-Pin": mikko})
+    assert r.status_code == 200 and r.json()["approver"] == "mikko@hotel-aurora.example"
+    # a decision with Anna's PIN naming another approver is refused before any order lookup
+    r = api.post("/v1/approvals/ORD-x/decision", headers={"X-Approver-Pin": anna},
+                 json={"decision": "approve", "approver": "mikko@hotel-aurora.example", "quote_hash": "h"})
+    assert r.status_code == 401
+    # any valid approver credential still opens the inbox
+    assert api.get("/v1/approvals", headers={"X-Approver-Pin": mikko}).status_code == 200
+
+
+def test_decision_needs_the_named_approvers_own_credential(per_approver, api):
+    pins = per_approver.approver_pins()
+    q, o = _pending(api)
+    anon = _anon()
+    url = f"/v1/approvals/{o['order_id']}/decision"
+    body = {"decision": "approve", "approver": "anna@hotel-aurora.example", "approver_role": "procurement_manager",
+            "quote_hash": q["quote_hash"]}
+    r = anon.post(url, headers={"X-Approver-Pin": pins["mikko@hotel-aurora.example"]}, json=body)
+    assert r.status_code == 401                                   # Mikko's credential cannot decide as Anna
+    r = anon.post(url, headers={"X-Approver-Pin": pins["anna@hotel-aurora.example"]}, json=body)
+    assert r.status_code == 200 and r.json()["status"] == "placed"

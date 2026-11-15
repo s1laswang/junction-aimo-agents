@@ -141,7 +141,8 @@ class Approver(threading.Thread):
                     if not oid or oid in seen or cust not in APPROVERS:
                         continue
                     seen.add(oid)
-                    httpx.post(f"{self.base}/v1/approvals/{oid}/decision", timeout=10, headers=human,
+                    httpx.post(f"{self.base}/v1/approvals/{oid}/decision", timeout=10,
+                               headers={"X-Approver-Pin": local_pin(APPROVERS[cust])},
                                json={"decision": "approve", "approver": APPROVERS[cust], "note": "gold eval",
                                      "quote_hash": o.get("quote_hash") or (it.get("quote") or {}).get("quote_hash")})
             except Exception:  # noqa: BLE001

@@ -17,7 +17,7 @@ make accept          # tests, scenarios, conformance and a real order end to end
 uv run aimo serve    # then open http://localhost:8000/ui
 ```
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). With no keys, the gateway replays recorded Valio Aimo mock-API responses and a committed catalog subset (`served_from: replay`); a fresh clone with an empty `.env` gives `RESULT: PASS` (17 pass, 0 fail, 3 skip: the two key checks and the live Gemini demo; keyless pytest 250 passed, 0 failed). Add `AIMO_API_KEY` and `GEMINI_API_KEY` to `.env` for the live API and the Gemini agent. The approver PIN is in `data/keys/approver_pin` on the machine running the gateway. `aimo-v1` is the judged tag, created at the code freeze (Sun 15 Nov 06:00 Helsinki); before then, clone without `--branch`.
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/). With no keys, the gateway replays recorded Valio Aimo mock-API responses and a committed catalog subset (`served_from: replay`); a fresh clone with an empty `.env` gives `RESULT: PASS` (17 pass, 0 fail, 3 skip: the two key checks and the live Gemini demo; keyless pytest 250 passed, 0 failed). Add `AIMO_API_KEY` and `GEMINI_API_KEY` to `.env` for the live API and the Gemini agent. The approver PIN (Anna's) is in `data/keys/approver_pin` on the machine running the gateway; other approvers have their own in `data/keys/approver_pins.json`. `aimo-v1` is the judged tag, created at the code freeze (Sun 15 Nov 06:00 Helsinki); before then, clone without `--branch`.
 
 Details: [docs/RUN.md](docs/RUN.md) (keys, keyless vs keyed, approving as a human, tests, repo map) · [docs/CONNECT.md](docs/CONNECT.md) (Claude Desktop, Cursor, Gemini CLI, curl walkthrough) · [docs/DEMO.md](docs/DEMO.md) (3-minute demo).
 

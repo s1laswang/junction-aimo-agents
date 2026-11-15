@@ -95,7 +95,7 @@ def _locked_error(cred: HumanCred) -> service.ServiceError:
                                 {"retry_after": int(human_auth.locked_for(cred.source)) + 1})
 
 
-def _require_human(cred: HumanCred, subject_id: str, actor: str) -> None:
+def _require_human(cred: HumanCred, subject_id: str, actor: str, approver: Optional[str] = None) -> None:
     """Session token, or approver credential with a per-source brute-force lockout. Audits at most MAX_FAILURES
     refusals per source and window plus the lock itself, so guessing cannot flood the audit log or lock out the
     real (signed-in) approver."""
@@ -103,7 +103,7 @@ def _require_human(cred: HumanCred, subject_id: str, actor: str) -> None:
         return
     if human_auth.locked_for(cred.source) > 0:
         raise _locked_error(cred)
-    if human_auth.check_pin(cred.pin, cred.source):
+    if human_auth.check_pin(cred.pin, cred.source, approver):  # approver named: must be THEIR credential
         return
     if human_auth.locked_for(cred.source) > 0:  # this attempt triggered the lock
         service.audit_refusal(subject_id, actor, f"{human_auth.MAX_FAILURES} wrong approver credentials from one "
@@ -345,8 +345,8 @@ def build_router() -> APIRouter:
                                            f"This session belongs to {bound}; it cannot decide as {approver}.")
             approver = bound
         else:
-            # demo path: shared PIN + self-declared name (production: per-person SSO; see docs/TRUST.md)
-            _require_human(cred, order_id, f"human:{body.approver}")
+            # demo path: the named approver's own credential (production: per-person SSO; see docs/TRUST.md)
+            _require_human(cred, order_id, f"human:{body.approver}", body.approver)
             if not approver:
                 raise service.ServiceError(422, "approver_required", "Name the approver, or sign in with "
                                            "POST /v1/auth/approver-session to bind decisions to you.")
@@ -395,7 +395,8 @@ def build_router() -> APIRouter:
         if x_agent_id:
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
         who = str((body or {}).get("approver") or "").strip()
-        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{who or '?'}")
+        _require_human(HumanCred(cred.pin, None, cred.source), "auth:approver-session", f"human:{who or '?'}",
+                       who or None)
         canonical = service.directory_approver_id(who) if who else None
         if not canonical:
             raise service.ServiceError(404, "unknown_approver",
