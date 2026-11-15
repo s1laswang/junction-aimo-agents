@@ -244,10 +244,14 @@ def connect(kind: str, *, agent_id: str, customer_id: str, mcp_url: str = "http:
             if k == "inproc":
                 if kind == "auto":
                     from aimo import config
-                    if not (config.AIMO_API_KEY or config.OFFLINE):
-                        # no mock-API key: in-process tools would fail on every price call, so the
-                        # keyless demo goes to the clearly labelled FAKE gateway instead
-                        raise ToolError("AIMO_API_KEY not set (in-process gateway needs the Valio mock API)")
+                    from aimo.backend import replay
+                    if not (config.AIMO_API_KEY or config.OFFLINE or replay.replay_dir() is not None):
+                        # no mock-API key and no recorded snapshot: in-process tools would fail on every
+                        # price call, so the demo goes to the clearly labelled FAKE gateway instead.
+                        # A keyless clone has the bundled replay snapshot, so it gets the real gateway
+                        # (policies, signing, audit) on recorded mock-API prices and stock.
+                        raise ToolError("AIMO_API_KEY not set and no replay snapshot "
+                                        "(in-process gateway needs the Valio mock API)")
                 return InProcessTransport(agent_id, customer_id, mandate, faults=faults)
             if k == "fake":
                 from aimo.buyer.fakes import FakeGateway
