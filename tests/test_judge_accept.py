@@ -114,6 +114,13 @@ def _setup_stub_repo(tmp_path: Path) -> tuple[Path, Path]:
         "        print(os.environ['STUB_MILK_ORDER_LINE'])\n"
         "    print('MILK FLOW OK')\n"
         "    sys.exit(int(os.environ.get('STUB_MILK_EXIT', '0')))\n"
+        "if 'docs/pitch/requote_beat.py' in args:\n"
+        "    (out_dir / 'requote.json').write_text(json.dumps({\n"
+        "        'args': args,\n"
+        "        'aimo_replay': os.environ.get('AIMO_REPLAY', ''),\n"
+        "        'aimo_approver_pin': os.environ.get('AIMO_APPROVER_PIN', ''),\n"
+        "    }))\n"
+        "    os.execv(sys.executable, [sys.executable, *args[2:]])\n"
         "if args[:2] == ['run', 'aimo'] and len(args) >= 3 and args[2] == 'demo':\n"
         "    (out_dir / 'demo.json').write_text(json.dumps({\n"
         "        'args': args[3:],\n"
@@ -154,6 +161,10 @@ def test_judge_accept_no_em_dashes_no_comments_and_updated_demo_checks() -> None
     assert "scenarios.run_all" in text
     assert 'PASS "Peppol Order Response"' in text
     assert 'PASS "audit verify"' in text
+    assert 'PASS "requote_beat.py"' in text
+    assert 'FAIL "requote_beat.py"' in text
+    assert 'SKIP "requote_beat.py"' in text
+    assert "[ -f docs/pitch/requote_beat.py ]" in text
     assert 'PASS "aimo demo (scripted buyer)"' in text
     assert 'FAIL "aimo demo (scripted buyer)"' in text
     assert "--transport fake --auto-approve-as anna@hotel-aurora.example" in text
@@ -427,3 +438,115 @@ def test_main_records_fail_when_scripted_demo_fails(tmp_path: Path) -> None:
     assert res.returncode == 1
     assert "[FAIL] aimo demo (scripted buyer)" in res.stdout
     assert "RESULT: FAIL" in res.stdout
+
+
+def _write_requote_stub(fake_root: Path) -> Path:
+    stub_path = fake_root / "docs" / "pitch" / "requote_beat.py"
+    stub_path.parent.mkdir(parents=True, exist_ok=True)
+    stub_path.write_text(
+        "import argparse, os, sys\n"
+        "ap = argparse.ArgumentParser()\n"
+        "ap.add_argument('--base', required=True)\n"
+        "ns = ap.parse_args()\n"
+        "if not ns.base.startswith('http://127.0.0.1:'):\n"
+        "    sys.exit(4)\n"
+        "summary = os.environ.get('STUB_REQUOTE_SUMMARY', '')\n"
+        "if summary:\n"
+        "    print(summary)\n"
+        "marker = os.environ.get('STUB_REQUOTE_MARKER', 'REQUOTE BEAT OK')\n"
+        "if marker:\n"
+        "    print(marker)\n"
+        "sys.exit(int(os.environ.get('STUB_REQUOTE_EXIT', '0')))\n",
+        encoding="utf-8",
+    )
+    return stub_path
+
+
+def test_main_replay_invokes_requote_beat_and_records_pass(tmp_path: Path) -> None:
+    target_script, fake_bin = _setup_stub_repo(tmp_path)
+    fake_root = target_script.parents[1]
+    replay_dir = fake_root / "tests" / "fixtures" / "snapshot" / "replay"
+    replay_dir.mkdir(parents=True)
+    (replay_dir / "meta.json").write_text('{"time_now": "2026-11-15T10:00:00+02:00"}', encoding="utf-8")
+    _write_requote_stub(fake_root)
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    summary = "REQUOTE ord-stale -> ord-fresh; 409 requote_needed; Peppol OrderResponseCode AP; audit verify ok=True"
+    env = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_dir),
+        "STUB_REQUOTE_SUMMARY": summary,
+    })
+    res = subprocess.run(["bash", str(target_script)], env=env, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "[PASS] requote_beat.py - 409 requote_needed -> fresh quote -> AP + audit verify (replay)" in res.stdout
+    assert f"  {summary}" in res.stdout
+    assert "RESULT: PASS" in res.stdout
+
+    serve_info = json.loads((out_dir / "serve.json").read_text(encoding="utf-8"))
+    requote_info = json.loads((out_dir / "requote.json").read_text(encoding="utf-8"))
+    base_url = f"http://127.0.0.1:{serve_info['port']}"
+    assert requote_info["args"] == ["run", "python", "docs/pitch/requote_beat.py", "--base", base_url]
+    assert requote_info["aimo_replay"] == str(replay_dir)
+    assert requote_info["aimo_approver_pin"] != ""
+
+
+def test_main_replay_records_fail_when_requote_beat_exits_nonzero_or_omits_marker(tmp_path: Path) -> None:
+    target_script, fake_bin = _setup_stub_repo(tmp_path)
+    fake_root = target_script.parents[1]
+    replay_dir = fake_root / "tests" / "fixtures" / "snapshot" / "replay"
+    replay_dir.mkdir(parents=True)
+    (replay_dir / "meta.json").write_text('{"time_now": "2026-11-15T10:00:00+02:00"}', encoding="utf-8")
+    _write_requote_stub(fake_root)
+
+    out_nonzero = tmp_path / "out-nonzero"
+    out_nonzero.mkdir()
+    env_nonzero = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_nonzero),
+        "STUB_REQUOTE_EXIT": "2",
+    })
+    res_nonzero = subprocess.run(
+        ["bash", str(target_script)], env=env_nonzero, capture_output=True, text=True, check=False
+    )
+    assert res_nonzero.returncode == 1, res_nonzero.stdout + res_nonzero.stderr
+    assert "[FAIL] requote_beat.py - exit 2" in res_nonzero.stdout
+    assert "RESULT: FAIL" in res_nonzero.stdout
+
+    out_no_marker = tmp_path / "out-no-marker"
+    out_no_marker.mkdir()
+    env_no_marker = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_no_marker),
+        "STUB_REQUOTE_EXIT": "0",
+        "STUB_REQUOTE_MARKER": "",
+        "STUB_REQUOTE_SUMMARY": "REQUOTE partial output without final ok line",
+    })
+    res_no_marker = subprocess.run(
+        ["bash", str(target_script)], env=env_no_marker, capture_output=True, text=True, check=False
+    )
+    assert res_no_marker.returncode == 1, res_no_marker.stdout + res_no_marker.stderr
+    assert "[FAIL] requote_beat.py - exit 0" in res_no_marker.stdout
+    assert "RESULT: FAIL" in res_no_marker.stdout
+
+
+def test_main_keyless_without_replay_records_skip_for_requote_beat(tmp_path: Path) -> None:
+    target_script, fake_bin = _setup_stub_repo(tmp_path)
+    fake_root = target_script.parents[1]
+    _write_requote_stub(fake_root)
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    env = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_dir),
+    })
+    res = subprocess.run(["bash", str(target_script)], env=env, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert (
+        "[SKIP] requote_beat.py - needs the catalog data (AIMO_API_KEY + uv run aimo fetch-data) or replay"
+        in res.stdout
+    )
+    assert not (out_dir / "requote.json").exists()
+    assert "RESULT: PASS" in res.stdout
