@@ -667,14 +667,63 @@ def _plan_deterministic(need: Need) -> Plan:
     logic as aimo.catalog.plan_need, minus semantic recall and the recipe check."""
     _check_need_input(need)
     from aimo.catalog import plan as P
-    from aimo.catalog.substitution import rank_substitutes
+    from aimo.catalog.allergens import (
+        blocking,
+        effective_excluded_allergens,
+        normalize_allergens,
+        policy_allergen_block,
+    )
+    from aimo.catalog.substitution import missing_query_concepts, rank_substitutes, validate_need
     from aimo.catalog.textsearch import fts_search, get_rows
+    from aimo.gateway import verify as V
+    from aimo.gateway.verify import (
+        need_names_excluded_allergen,
+        usual_matches_allergen_query,
+        usual_products,
+    )
 
-    n2 = need
+    validate_need(need)
+    pb = policy_allergen_block(need.customer_id)
+    caller_excl = normalize_allergens(need.excluded_allergens)
+    if V._policy is V._default_policy:
+        merged_excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    else:
+        merged_excl = normalize_allergens([*caller_excl, *V.policy_excluded_allergens(need.customer_id)])
+    policy_added = [a for a in merged_excl if a not in caller_excl]
+    policy_need = (need.model_copy(update={"excluded_allergens": merged_excl})
+                   if merged_excl != list(need.excluded_allergens) else need)
+    out_need = policy_need
+    n2 = policy_need
+    qsrc = "product_query"
     try:
-        n2, _src = P.with_effective_query(need)
+        n2, qsrc = P.with_effective_query(policy_need)
     except Exception:  # noqa: BLE001
         pass
+    if not n2.preferred_product_ids and not any(
+        (n2.preferences or {}).get(k) for k in ("brand", "fat_pct", "organic", "pack")
+    ):
+        u_prof = usual_products(n2.customer_id)
+        if u_prof:
+            u_prof_rows = get_rows(u_prof)
+            u_match = [
+                u for u in u_prof
+                if u in u_prof_rows
+                and u_prof_rows[u].get("content_unit") == n2.unit
+                and set(n2.required_claims) <= set(u_prof_rows[u].get("claims") or [])
+                and not blocking(
+                    u_prof_rows[u].get("allergens") or {},
+                    merged_excl,
+                    allergen_source=u_prof_rows[u].get("allergen_source"),
+                )
+                and not missing_query_concepts(n2.product_query, u_prof_rows[u])
+            ]
+            if u_match:
+                n2 = n2.model_copy(
+                    update={
+                        "preferred_product_ids": u_match,
+                        "preferences": {**(n2.preferences or {}), "usual_from_profile": u_match},
+                    }
+                )
     rel: dict[str, float] = {}
     for pid, sc in fts_search(n2.product_query, claims=n2.required_claims, content_unit=None, limit=80):
         rel[pid] = sc
@@ -688,14 +737,111 @@ def _plan_deterministic(need: Need) -> Plan:
     for pid in n2.preferred_product_ids:
         rel.setdefault(pid, 100.0)
     rows = get_rows(list(rel))
-    order = sorted(rows.values(), key=lambda d: P._static_priority(n2, d, rel.get(d["id"], 0)))
+    order = sorted(rows.values(), key=lambda d: P._static_priority(n2, d, rel.get(d["id"], 0), excl=merged_excl))
     top = [d["id"] for d in order[:getattr(P, "MAX_OFFER_IDS", 30)]]
     top += [pid for pid in n2.preferred_product_ids if pid in rows and pid not in top]
     offers = get_offers_with_meta(top, n2.delivery_by, n2.customer_id)[0] if top else {}
-    full = rank_substitutes(n2, offers, limit=200, rows={pid: rows[pid] for pid in top}, relevance=rel)
+    shortlist = {pid: rows[pid] for pid in top}
+    full = rank_substitutes(n2, offers, limit=200, rows=shortlist, relevance=rel) if top else []
+    if hasattr(P, "mark_supplier_text") and full:
+        P.mark_supplier_text(full, shortlist)
     plan = P.fill(n2, P._trim(full, 12))
+    literal: list[str] = []
+    implied: list[str] = []
+    if hasattr(P, "_excluded_groups_named"):
+        literal, implied = P._excluded_groups_named(n2.product_query, merged_excl)
+    names_excl = bool(literal or implied or need_names_excluded_allergen(need, merged_excl))
+    if literal or (names_excl and not plan.lines):
+        u_ids = usual_products(n2.customer_id)
+        u_rows = get_rows(u_ids) if u_ids else {}
+        safe_u = [
+            u for u in u_ids
+            if u in u_rows
+            and u_rows[u].get("content_unit") == n2.unit
+            and set(n2.required_claims) <= set(u_rows[u].get("claims") or [])
+            and not blocking(u_rows[u].get("allergens") or {}, merged_excl, allergen_source=u_rows[u].get("allergen_source"))
+            and usual_matches_allergen_query(need.product_query, u_rows[u])
+        ]
+        alt_planned = False
+        if safe_u:
+            u_offers = get_offers_with_meta(safe_u, n2.delivery_by, n2.customer_id)[0]
+            rows.update({u: u_rows[u] for u in safe_u})
+            alt_prefs = {k: v for k, v in (n2.preferences or {}).items() if k != "usual_from_profile"}
+            alt_need = n2.model_copy(update={
+                "product_query": u_rows[safe_u[0]].get("name_en") or u_rows[safe_u[0]].get("name") or n2.product_query,
+                "preferred_product_ids": safe_u,
+                "preferences": alt_prefs,
+            })
+            alt_rows = {u: u_rows[u] for u in safe_u}
+            raw_alt = rank_substitutes(
+                alt_need,
+                u_offers,
+                limit=20,
+                rows=alt_rows,
+                relevance={u: 100.0 for u in safe_u},
+            )
+            if hasattr(P, "mark_supplier_text") and raw_alt:
+                P.mark_supplier_text(raw_alt, alt_rows)
+            alt_cands = [
+                c.model_copy(update={"flags": sorted(set([*c.flags, "allergen_safe_alternative"]))})
+                if c.tier != "rejected" else c
+                for c in raw_alt
+            ]
+            alt_plan = P.fill(alt_need, alt_cands)
+            if alt_plan.lines:
+                seen_ids = {c.product.id for c in alt_cands}
+                merged_cands = P._trim([*alt_cands, *[c for c in full if c.product.id not in seen_ids]], 12)
+                plan = alt_plan.model_copy(update={"candidates": merged_cands})
+                alt_planned = True
+        if literal and not alt_planned and plan.lines:
+            sf = round(float(n2.quantity), 4)
+            plan = plan.model_copy(
+                update={
+                    "lines": [],
+                    "covered_amount": 0.0,
+                    "total_net": 0.0,
+                    "shortfall": sf,
+                    "explanation": P.explain(n2, [], plan.candidates, 0.0, sf, 0.0),
+                }
+            )
+    if merged_excl and plan.lines:
+        line_rows = {pid: rows[pid] for pid in {ln.product_id for ln in plan.lines} if pid in rows}
+        missing_ids = [ln.product_id for ln in plan.lines if ln.product_id not in line_rows]
+        if missing_ids:
+            line_rows.update(get_rows(missing_ids))
+        safe_lines = [
+            ln for ln in plan.lines
+            if "allergen_unknown" not in ln.flags
+            and ln.product_id in line_rows
+            and not blocking(
+                line_rows[ln.product_id].get("allergens") or {},
+                merged_excl,
+                allergen_source=line_rows[ln.product_id].get("allergen_source"),
+            )
+        ]
+        if len(safe_lines) != len(plan.lines):
+            cov = round(sum(ln.covered_amount for ln in safe_lines), 4)
+            tot = round(sum(ln.line_total for ln in safe_lines), 2)
+            sf = round(max(0.0, n2.quantity - cov), 4)
+            plan = plan.model_copy(update={"lines": safe_lines, "covered_amount": cov, "total_net": tot, "shortfall": sf})
+    if names_excl and plan.lines:
+        flagged = [
+            ln.model_copy(update={"flags": sorted(set([*ln.flags, "allergen_safe_alternative"]))})
+            for ln in plan.lines
+        ]
+        plan = plan.model_copy(update={"lines": flagged})
+    notes: list[str] = []
+    if policy_added:
+        notes.append(f"Customer policy ({pb.policy_id or need.customer_id}) excludes {', '.join(policy_added)}"
+                     + (f" ({pb.reason})" if pb.reason else "") + ".")
+    if n2.product_query != need.product_query:
+        notes.append(f"Searched the catalog for '{n2.product_query}'"
+                     + (" (taken from the request text because the parsed product phrase found nothing)"
+                        if qsrc == "raw_text" else " (allergen mentions removed from the product phrase; they are"
+                        " enforced as exclusions, not searched for)") + ".")
     note = "Planned with the deterministic planner (Gemini semantic recall and recipe check skipped: slow or unavailable)."
-    return plan.model_copy(update={"need": need, "explanation": f"{plan.explanation} {note}".strip()})
+    explanation = " ".join(x for x in [*notes, plan.explanation, note] if x).strip()
+    return plan.model_copy(update={"need": out_need, "explanation": explanation})
 
 
 # ------------------------------------------------------------------ quotes

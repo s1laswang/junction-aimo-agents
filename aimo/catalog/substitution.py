@@ -26,7 +26,13 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from aimo.catalog import units as U
-from aimo.catalog.allergens import blocking, effective_excluded_allergens, normalize_allergens
+from aimo.catalog.allergens import (
+    blocking,
+    effective_excluded_allergens,
+    normalize_allergens,
+    policy_allergens,
+    with_policy_allergens,
+)
 from aimo.catalog.screening_bridge import screen_product_row, screen_reason
 from aimo.catalog.textsearch import summary_from_row
 from aimo.models import Candidate, Need, Offer
@@ -214,7 +220,8 @@ def missing_query_concepts(query: str, d: dict[str, Any]) -> list[str]:
                 continue
             out.append(c)
             continue
-        if not any(f.lower() in cleaned_names for f in forms):
+        target = re.sub(r"\bsemi[\s-]+skimmed\b", " ", cleaned_names) if c == "skimmed" else cleaned_names
+        if not any(f.lower() in target for f in forms):
             out.append(c)
     return out
 
@@ -230,6 +237,8 @@ def _query_coverage(query: str, d: dict[str, Any]) -> float:
     hits = 0
     for c, forms in concepts:
         target = raw_names if IMPLIED_CLAIMS.get(c) else cleaned_names
+        if c == "skimmed":
+            target = re.sub(r"\bsemi[\s-]+skimmed\b", " ", target)
         if any(f.lower() in target for f in forms):
             hits += 1
     return hits / len(concepts)
@@ -397,7 +406,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
             reject.append(f"sold by {cunit or 'unknown unit'}, need is in {need.unit}")
         ctypes = product_types(d)
         type_note = None
-        if not prefs:
+        if (not prefs or (need.preferences or {}).get("usual_from_profile")) and pid not in prefs:
             # no usual product: the product itself must be what was asked for (no soft drink for "oat drink")
             miss = missing_query_concepts(need.product_query, d)
             if miss:
