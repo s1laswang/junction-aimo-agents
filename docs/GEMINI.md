@@ -117,3 +117,5 @@ uv run python scripts/verify_quote.py docs/evidence/live-run/quote.json docs/evi
 uv run python scripts/verify_quote.py docs/evidence/live-run/audit-events.json docs/evidence/live-run/jwks.json  # verify 6-event audit chain offline
 uv run python docs/pitch/ledger_stats.py       # usage tables over the local ledger
 ```
+
+For instant zero-key browser inspection without starting a server, open **"Try to Scam the Agent"** in [docs/arena/](arena/) (`docs/arena/index.html`, static pixel-art wholesale warehouse red-team game across 5 guardrail scam attempts + 30 s happy-path order + scoreboard backed by recorded gateway JWS/audit responses; `CC0-1.0` Kenney asset ledger in [docs/demo/ASSETS.md](demo/ASSETS.md)) or the **One-Page Judge Walkthrough** in [docs/demo/](demo/) (`docs/demo/index.html`, self-contained step-by-step Ed25519 JWS verify, 403 attack, 409 price-change requote, Peppol `AP`, and audit tamper check).

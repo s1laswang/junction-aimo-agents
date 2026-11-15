@@ -125,7 +125,13 @@ def test_repo_wide_markdown_relative_links_exist_on_disk():
     allowed_pending = {
         (ROOT / "docs" / "demo-backup.mp4").resolve(),
         (ROOT / "docs" / "pitch" / "requote_beat.py").resolve(),
+        (ROOT / "docs" / "arena" / "index.html").resolve(),
+        (ROOT / "docs" / "demo" / "index.html").resolve(),
+        (ROOT / "docs" / "demo" / "ASSETS.md").resolve(),
     }
+    for pending_target in allowed_pending:
+        if pending_target.exists():
+            assert pending_target.is_file() and pending_target.stat().st_size > 0
     link_re = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
     root_resolved = ROOT.resolve()
     broken: list[str] = []
@@ -462,6 +468,53 @@ def test_six_judge_gaps_verified_in_code_and_docs(tmp_path, monkeypatch):
             },
         )
         assert 400 <= bad_plan.status_code < 500, f"quantity={bad_qty} returned {bad_plan.status_code}"
+
+
+def test_dockerignore_and_readme_submission_wave11_contracts():
+    dockerignore_raw = _read(".dockerignore")
+    assert EM_DASH not in dockerignore_raw
+    dockerignore_entries = {
+        ln.strip()
+        for ln in dockerignore_raw.splitlines()
+        if ln.strip() and not ln.strip().startswith(ANCHOR_SEP)
+    }
+    assert "conformance-*.json" in dockerignore_entries
+    assert "/conformance-*.json" not in dockerignore_entries
+    assert "*.webm" in dockerignore_entries
+
+    readme = _read("README.md")
+    submission = _read("docs/SUBMISSION.md")
+    assert EM_DASH not in readme
+    assert EM_DASH not in submission
+
+    for doc_name, doc_text in (("README.md", readme), ("docs/SUBMISSION.md", submission)):
+        for required_tok in (
+            "2,462",
+            "6343389",
+            "1,168 passed",
+            "c98e72e",
+            "1150 passed",
+            "1,150 passed",
+            "6973c2d",
+            "743 passed",
+            "2468bdd",
+            "62e8384",
+            "375 passed, 7 skipped, 1 xfailed, 1 xpassed",
+            "274 passed, 0 failed",
+            "Try to Scam the Agent",
+            "One-Page Judge Walkthrough",
+            "docs/arena/index.html",
+            "docs/demo/index.html",
+            "docs/demo/ASSETS.md",
+        ):
+            assert required_tok in doc_text, f"{doc_name} missing {required_tok!r}"
+
+    assert "[docs/arena/index.html](docs/arena/index.html)" in readme
+    assert "[docs/demo/index.html](docs/demo/index.html)" in readme
+    assert "[docs/demo/ASSETS.md](docs/demo/ASSETS.md)" in readme
+    assert "[docs/arena/index.html](arena/index.html)" in submission
+    assert "[docs/demo/index.html](demo/index.html)" in submission
+    assert "[docs/demo/ASSETS.md](demo/ASSETS.md)" in submission
 
 
 def test_this_hygiene_test_has_zero_code_comments_and_em_dashes():
