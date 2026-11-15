@@ -26,6 +26,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 | Sun 15 Nov 02:29–02:31 | rebased on 2a68792 (S1 replay merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | keyed RESULT: PASS (19 PASS, 1 SKIP); keyless fresh clone RESULT: PASS (16 PASS, 4 SKIP) → pushed to main |
 | Sun 15 Nov 02:41–02:44 | d13a07b on 738c93a (one-page README, RUN.md, CONNECT.md, re-score) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | RESULT: PASS (19 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov 03:08–03:15 | rebased on b301d5a (tests + live merged) | 349 passed, 7 skipped, 1 xfailed, 1 xpassed (37 s) | 8/8 PASS (live) | keyed RESULT: PASS (19/0/1); keyless `git archive` of b301d5a RESULT: PASS (17/0/3, keyless pytest 250/0) → pushed to main |
+| Sun 15 Nov 04:30–04:33 | rebased on ddbeeba (fleet ports: per-approver credentials, unknown_customer 403, request-text injection screen) | 357 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | RESULT: PASS (19/0/1) → pushed to main |
 
 ## Done (hourly re-check 1, Sun 15 Nov 00:28)
 - S3 need: wind-tunnel headline now 0 policy / 0 allergen violations for the gateway, recall 99.7%, precision 68.2% (from 54.0%; 90% target not met). Naive column stays Sat 18:24 and is labelled as against the earlier policy. Updated SUBMISSION, GEMINI row 8, DEMO 2:45 line, deck slide 5, QA 15–16, DECISIONS D5, ASSUMPTIONS, NUMBERS, README pillar 3.
@@ -37,6 +38,9 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 ## Done (hourly re-check 3, Sun 15 Nov 02:28)
 - S1 replay merged: README env table, keyless vs keyed table, quickstart and `make accept` description rewritten (automatic replay, 669-product snapshot and catalog subset, 503 `catalog_missing`, bundled live fallback); DEMO step 1 and the Wi-Fi row drop `AIMO_REPLAY_FALLBACK`; NUMBERS, ASSUMPTIONS, OPENNESS, QA 13 and SUBMISSION updated.
 - Own keyless check (fresh clone, empty `.env`, key variables unset): RESULT: PASS, 16 PASS / 4 SKIP. Keyless pytest has 8 failures from S2/S3 tests that need the full catalog but are not marked `needs_data`; documented in README and NUMBERS (request below).
+
+## Done (hourly re-check, Sun 15 Nov 04:28)
+- Fleet port `ccab8f5` (per-approver credentials) verified on a replay gateway: Anna's passphrase signs in as Anna (200) and not as Mikko (401); Mikko's own works (200); 6 other approvers each get a 12-character passphrase. README assumption 3, QA Q3 and DEMO step 2 updated (stage: use Anna's own `keys/approver_pin`, leave the operator `AIMO_APPROVER_PIN` empty); deck test count 357.
 
 ## Done (Sun 15 Nov 03:15): V3 live montage and V2 tests reflected
 - New montage (Sun 02:54, final code; verified by `montage_stats.py`): 6/6, $0.0352 per order (−57% vs $0.0822 before trim), 38% cached, 5/34 escalated steps, school-allergen auto-approved by policy at €280, injection 6 texts, event €266.49. Updated SUBMISSION, GEMINI, DEMO, NUMBERS, deck, QA 9/20, DECISIONS D6.
