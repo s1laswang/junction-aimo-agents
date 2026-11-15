@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import types
 from datetime import date, datetime, timezone
@@ -12,15 +13,19 @@ import pytest
 from fastapi.testclient import TestClient
 from google.genai import types as genai_types
 
+import aimo.catalog as catalog_mod
+import aimo.trust as trust_pkg
 from aimo import config, gemini
 from aimo.backend import client as bc
+from aimo.backend import clock
 from aimo.backend import orders as store
 from aimo.buyer import eval_gold
-from aimo.buyer.eval_gold import APPROVERS, Approver, _now
+from aimo.buyer.eval_gold import APPROVERS, Approver, InprocApprover, _now
 from aimo.buyer.mock_model import MOCK_MODEL_NAME, mock_wanted
 from aimo.buyer.need import HELSINKI, resolve_date
 from aimo.gateway import human_auth, service
 from aimo.models import AllergenStatus, Product, ProductSummary
+from aimo.trust import approvals as trust_approvals
 
 FIX = Path(__file__).parent / "fixtures"
 DELIVERY = date(2026, 11, 16)
@@ -43,7 +48,7 @@ class _FixtureUpstream:
         self.avail_raw = json.loads((FIX / "availability_20261116.json").read_text(encoding="utf-8"))
         base_price = next(p for p in self.price_raw["products"] if p["productId"] == "464306")
         base_avail = next(p for p in self.avail_raw["products"] if p["productId"] == "464306")
-        for extra_id in ("472833", "473328"):
+        for extra_id in ("470889", "472833", "473328"):
             self.price_raw["products"].append(dict(base_price, productId=extra_id))
             self.avail_raw["products"].append(dict(base_avail, productId=extra_id))
 
@@ -175,9 +180,7 @@ def test_approver_sends_distinct_per_approver_pins_and_retries_transient_errors(
     assert by_oid["O-hospital"][-1]["headers"]["X-Approver-Pin"] == pins["hospital-meilahti"]
 
 
-def test_approver_authenticates_against_live_gateway_for_all_three_customers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _isolate_live_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     products = {
         "464306": Product(
             id="464306",
@@ -188,6 +191,18 @@ def test_approver_authenticates_against_live_gateway_for_all_three_customers(
             content_amount=1.0,
             content_unit="L",
             claims=["FREE_FROM_LACTOSE"],
+        ),
+        "470889": Product(
+            id="470889",
+            name="Oatly Oat Drink Whole 1L",
+            brand="Oatly",
+            category="10402",
+            sales_unit="ST",
+            content_unit="L",
+            content_amount=1.0,
+            claims=["FREE_FROM_SOY", "VEGAN"],
+            allergens={"milk": AllergenStatus.free, "nuts": AllergenStatus.free},
+            allergen_source={"milk": "structured", "nuts": "structured"},
         ),
         "472833": Product(
             id="472833",
@@ -205,13 +220,13 @@ def test_approver_authenticates_against_live_gateway_for_all_three_customers(
             id="473328",
             name="Schar Vital dark sliced bread 350 g gluten free",
             brand="Schar",
-            category="11100",
+            category="10900",
             sales_unit="ST",
             content_amount=0.35,
             content_unit="KG",
             claims=["FREE_FROM_GLUTEN"],
             allergens={"gluten": AllergenStatus.free},
-            allergen_source={"gluten": "structured"},
+            allergen_source={"gluten": "structured:claim"},
         ),
     }
     stub_cat = types.SimpleNamespace(
@@ -220,23 +235,37 @@ def test_approver_authenticates_against_live_gateway_for_all_three_customers(
         ],
         get_product=lambda pid: products.get(str(pid)),
     )
+    isolated_audit = trust_pkg.AuditLog(tmp_path / "audit.sqlite")
     monkeypatch.setattr(service, "_catalog", lambda: stub_cat)
+    monkeypatch.setattr(catalog_mod, "get_product", stub_cat.get_product)
+    monkeypatch.setattr(sys.modules["aimo.trust.audit"], "audit", isolated_audit)
+    monkeypatch.setattr(trust_pkg, "audit", isolated_audit)
+    monkeypatch.setattr(trust_approvals, "audit", isolated_audit)
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "state.sqlite")
     monkeypatch.setattr(config, "STATE_DB", tmp_path / "state.sqlite")
     monkeypatch.setattr(config, "KEY_DIR", tmp_path / "keys")
+    monkeypatch.setenv("AIMO_NOW", "2026-11-14T12:00:00+02:00")
+    monkeypatch.setenv("AIMO_NOW_FROZEN", "1")
     monkeypatch.delenv("AIMO_FAULTS", raising=False)
+    monkeypatch.delenv("AIMO_AGENT_KEYS", raising=False)
     monkeypatch.delenv("AIMO_APPROVER_PIN", raising=False)
     monkeypatch.delenv("AIMO_APPROVER_PINS", raising=False)
     human_auth.reset_for_tests()
     bc.set_client(_FixtureUpstream())
+
+
+def test_approver_authenticates_against_live_gateway_for_all_three_customers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_live_gateway(tmp_path, monkeypatch)
     try:
         from aimo.gateway.app import create_app
 
         client = TestClient(create_app(with_mcp=False))
         specs = [
             ("hotel-aurora", "464306", 1000, "best"),
-            ("school-tampere", "472833", 500, "preferred"),
-            ("hospital-meilahti", "464306", 100, "best"),
+            ("school-tampere", "470889", 500, "preferred"),
+            ("hospital-meilahti", "473328", 1200, "preferred"),
         ]
         order_ids: dict[str, str] = {}
         for cust, pid, qty, tier in specs:
@@ -278,6 +307,152 @@ def test_approver_authenticates_against_live_gateway_for_all_three_customers(
             assert final["status"] == "placed"
             assert final["approved_by"] == APPROVERS[cust]
             assert human_auth.locked_for("testclient", APPROVERS[cust]) == 0.0
+    finally:
+        human_auth.reset_for_tests()
+        bc.set_client(None)
+
+
+def test_approver_skips_expired_and_approves_replacement_after_409_requote_needed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_live_gateway(tmp_path, monkeypatch)
+    try:
+        from aimo.gateway.app import create_app
+
+        client = TestClient(create_app(with_mcp=False))
+        monkeypatch.setenv("AIMO_NOW", "2026-11-14T11:30:00+02:00")
+        hdr_school = {"X-Customer-Id": "school-tampere", "X-Agent-Id": "buyer-1"}
+        q_stale = client.post(
+            "/v1/quotes",
+            headers=hdr_school,
+            json={"delivery_date": DELIVERY.isoformat(), "lines": [{"product_id": "470889", "qty_sales_units": 500, "tier": "preferred"}]},
+        ).json()
+        o_stale = client.post(
+            "/v1/orders",
+            headers=hdr_school,
+            json={"quote_id": q_stale["quote_id"], "quote_hash": q_stale["quote_hash"]},
+        ).json()
+        assert o_stale["status"] == "pending_approval"
+        stale_oid = o_stale["order_id"]
+
+        monkeypatch.setenv("AIMO_NOW", "2026-11-14T12:00:00+02:00")
+        hdr_aurora = {"X-Customer-Id": "hotel-aurora", "X-Agent-Id": "buyer-1"}
+        q_orig = client.post(
+            "/v1/quotes",
+            headers=hdr_aurora,
+            json={"delivery_date": DELIVERY.isoformat(), "lines": [{"product_id": "464306", "qty_sales_units": 1000, "tier": "best"}]},
+        ).json()
+        o_orig = client.post(
+            "/v1/orders",
+            headers=hdr_aurora,
+            json={"quote_id": q_orig["quote_id"], "quote_hash": q_orig["quote_hash"]},
+        ).json()
+        assert o_orig["status"] == "pending_approval"
+        orig_oid = o_orig["order_id"]
+
+        ap = Approver("http://testserver", poll_s=0.01)
+        decision_posts: list[tuple[str, int, dict]] = []
+
+        def bridge_get(url: str, *, params=None, headers=None, timeout=None):
+            path = urlparse(url).path
+            return client.get(path, params=params, headers=headers)
+
+        def bridge_post(url: str, *, json=None, headers=None, timeout=None):
+            path = urlparse(url).path
+            oid = path.rsplit("/", 2)[-2]
+            if oid == orig_oid and not any(prev_oid == orig_oid for prev_oid, _, _ in decision_posts):
+                monkeypatch.setenv("AIMO_NOW", "2026-11-14T12:20:00+02:00")
+            resp = client.post(path, json=json, headers=headers)
+            body = resp.json()
+            decision_posts.append((oid, resp.status_code, body))
+            if resp.status_code == 200 and body.get("status") == "placed":
+                ap.stop.set()
+            return resp
+
+        monkeypatch.setattr(httpx, "get", bridge_get)
+        monkeypatch.setattr(httpx, "post", bridge_post)
+
+        ap.start()
+        try:
+            ap.join(timeout=3.0)
+            assert not ap.is_alive()
+        finally:
+            ap.stop.set()
+
+        assert all(oid != stale_oid for oid, _, _ in decision_posts)
+        assert len(decision_posts) == 2
+
+        first_oid, first_status, first_body = decision_posts[0]
+        assert first_oid == orig_oid
+        assert first_status == 409
+        assert first_body["error"] == "requote_needed"
+        replacement_oid = first_body["detail"]["new_order"]["order_id"]
+
+        second_oid, second_status, second_body = decision_posts[1]
+        assert second_oid == replacement_oid
+        assert second_status == 200
+        assert second_body["status"] == "placed"
+        assert second_body["approved_by"] == APPROVERS["hotel-aurora"]
+
+        orig_after = client.get(f"/v1/orders/{orig_oid}").json()
+        assert orig_after["status"] == "expired"
+        assert orig_after["provenance"]["requoted_as"] == replacement_oid
+    finally:
+        human_auth.reset_for_tests()
+        bc.set_client(None)
+
+
+def test_inproc_approver_skips_expired_and_approves_replacement_after_409_requote_needed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate_live_gateway(tmp_path, monkeypatch)
+    try:
+        monkeypatch.setenv("AIMO_NOW", "2026-11-14T11:30:00+02:00")
+        ident_school = service.Identity(agent_id="buyer-1", customer_id="school-tampere")
+        q_stale = service.make_quote(ident_school, DELIVERY, [{"product_id": "470889", "qty_sales_units": 500, "tier": "preferred"}])
+        o_stale = service.submit_order(ident_school, q_stale.quote_id, q_stale.quote_hash or "")
+        assert o_stale.status == "pending_approval"
+
+        monkeypatch.setenv("AIMO_NOW", "2026-11-14T12:00:00+02:00")
+        ident_aurora = service.Identity(agent_id="buyer-1", customer_id="hotel-aurora")
+        q_orig = service.make_quote(ident_aurora, DELIVERY, [{"product_id": "464306", "qty_sales_units": 1000, "tier": "best"}])
+        o_orig = service.submit_order(ident_aurora, q_orig.quote_id, q_orig.quote_hash or "")
+        assert o_orig.status == "pending_approval"
+
+        real_decide = service.decide
+        ap = InprocApprover(poll_s=0.01)
+        decide_calls: list[tuple[str, str]] = []
+        replacement_holder: list[str] = []
+
+        def spy_decide(order_id: str, **kwargs):
+            if order_id == o_orig.order_id and not any(oid == o_orig.order_id for oid, _ in decide_calls):
+                monkeypatch.setenv("AIMO_NOW", "2026-11-14T12:20:00+02:00")
+            try:
+                res = real_decide(order_id, **kwargs)
+                decide_calls.append((order_id, res.status))
+                if res.status == "placed":
+                    ap.stop.set()
+                return res
+            except service.ServiceError as exc:
+                decide_calls.append((order_id, exc.code))
+                if exc.code == "requote_needed" and isinstance(exc.detail, dict):
+                    replacement_holder.append(exc.detail["new_order"]["order_id"])
+                raise
+
+        monkeypatch.setattr(service, "decide", spy_decide)
+        ap.start()
+        try:
+            ap.join(timeout=3.0)
+            assert not ap.is_alive()
+        finally:
+            ap.stop.set()
+
+        assert all(oid != o_stale.order_id for oid, _ in decide_calls)
+        assert len(replacement_holder) == 1
+        assert decide_calls == [(o_orig.order_id, "requote_needed"), (replacement_holder[0], "placed")]
+        placed = service.get_order(replacement_holder[0])
+        assert placed.status == "placed"
+        assert placed.approved_by == APPROVERS["hotel-aurora"]
     finally:
         human_auth.reset_for_tests()
         bc.set_client(None)
@@ -378,6 +553,84 @@ def test_run_one_queries_healthz_only_for_mcp_transport(monkeypatch: pytest.Monk
     row_fake = eval_gold.run_one(ex, ns_fake, lambda pid: {})
     assert row_fake["status"] == "placed"
     assert healthz_calls == ["http://replay.local:8000/healthz"]
+    assert captured_now[-1] is None
+
+
+def test_run_one_with_inproc_transport_uses_simulated_clock_when_aimo_now_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AIMO_NOW", raising=False)
+    monkeypatch.delenv("AIMO_LLM_MODE", raising=False)
+    monkeypatch.delenv("AIMO_OFFLINE", raising=False)
+    monkeypatch.setattr(config, "OFFLINE", False)
+    monkeypatch.setenv("AIMO_REPLAY", "1")
+    monkeypatch.setenv("AIMO_REPLAY_CLOCK", "snapshot")
+    monkeypatch.setenv("AIMO_NOW_FROZEN", "1")
+    _set_gemini_keys(monkeypatch, "", "")
+
+    def fail_healthz(*args, **kwargs):
+        raise AssertionError("/healthz must not be queried for inproc transport")
+
+    monkeypatch.setattr(httpx, "get", fail_healthz)
+
+    assert clock.simulated() is True
+    expected_now = clock.now().astimezone(HELSINKI)
+    assert expected_now == datetime(2026, 11, 14, 23, 50, 28, tzinfo=HELSINKI)
+    assert _now(None, "inproc") == expected_now
+    assert _now(None, "inproc").tzinfo == HELSINKI
+
+    from aimo.buyer import agent as agent_mod
+    from aimo.buyer.fakes import FakeGateway
+    from aimo.buyer.tools import FakeTransport
+
+    monkeypatch.setattr(
+        "aimo.buyer.tools.connect",
+        lambda kind, *, agent_id, customer_id, **kw: FakeTransport(FakeGateway(customer_id, agent_id)),
+    )
+    captured_now: list[datetime | None] = []
+    real_cls = agent_mod.BuyerAgent
+
+    class SpyAgent(real_cls):
+        def __init__(self, *args, **kwargs):
+            captured_now.append(kwargs.get("now"))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(agent_mod, "BuyerAgent", SpyAgent)
+
+    ex = {
+        "id": "ip01",
+        "segment": "hotel",
+        "lang": "en",
+        "request": "We need 20 kg of lactose-free butter by Monday.",
+        "customer_id": "hotel-aurora",
+        "gold": {"acceptable_product_ids": [["402105"]], "qty_range": [[20, 22]], "must_escalate": False, "forbidden_allergens": []},
+    }
+    ns_inproc = types.SimpleNamespace(
+        gold=["gold.jsonl"],
+        transport="inproc",
+        base_url="http://replay.local:8000",
+        model=None,
+        thinking="LOW",
+        no_escalate=False,
+        approval_timeout=5,
+    )
+    row_sim = eval_gold.run_one(ex, ns_inproc, lambda pid: {})
+    assert row_sim["status"] == "placed"
+    assert captured_now == [expected_now]
+    assert resolve_date("by Monday", captured_now[0])[0] == date(2026, 11, 16)
+
+    out_report = tmp_path / "inproc_report"
+    eval_gold.write_report(out_report, [row_sim], eval_gold.summarize([row_sim]), ns_inproc, "2026-11-15 03:00", None)
+    report_txt = (out_report / "report.md").read_text(encoding="utf-8")
+    assert "AIMO_NOW=replay (" in report_txt
+
+    monkeypatch.setenv("AIMO_REPLAY", "0")
+    monkeypatch.setenv("AIMO_OFFLINE", "1")
+    assert clock.simulated() is False
+    assert _now(None, "inproc") is None
+
+    row_real = eval_gold.run_one(ex, ns_inproc, lambda pid: {})
+    assert row_real["status"] == "placed"
     assert captured_now[-1] is None
 
 

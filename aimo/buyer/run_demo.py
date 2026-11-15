@@ -126,16 +126,39 @@ def print_step(step: Any) -> None:
 
 # ---------------------------------------------------------------- simulated human approver
 def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: threading.Event,
-                       delay: float = 3.0, decision: str = "approve", poll_s: float | None = None) -> None:
+                       delay: float = 3.0, decision: str = "approve", client: Any = None,
+                       ready: threading.Event | None = None, poll_s: float | None = None) -> None:
     import httpx
     from aimo.gateway.human_auth import local_pin
+    if isinstance(client, (int, float)) and not isinstance(client, bool) and poll_s is None:
+        poll_s = float(client)
+        client = None
+    http = client or httpx
+    get_kw = {} if hasattr(http, "app") else {"timeout": 5}
+    post_kw = {} if hasattr(http, "app") else {"timeout": 10}
     interval = poll_s if poll_s is not None else min(1.0, max(0.1, float(delay)))
     seen: set[str] = set()
+    via = "HTTP" if client is None else "HTTP (in-process gateway app)"
+    baseline = False
     while not stop.is_set():
         try:
             poll_headers = {"X-Approver-Pin": local_pin(approver)}
-            r = httpx.get(f"{base_url}/v1/approvals", params={"status": "pending"}, headers=poll_headers, timeout=5)
+            r = http.get(f"{base_url}/v1/approvals", params={"status": "pending"}, headers=poll_headers, **get_kw)
             items = r.json() if r.status_code == 200 else []
+            if not baseline:
+                baseline = True
+                old = {
+                    (it.get("order", it) if isinstance(it, dict) else {}).get("order_id")
+                    for it in (items if isinstance(items, list) else [])
+                    if (it.get("order", it) if isinstance(it, dict) else {}).get("customer_id") in (None, customer_id)
+                } - {None}
+                seen |= old
+                if old:
+                    print(c(f"       [human] leaving {len(old)} order(s) that were already pending alone", "dim"),
+                          flush=True)
+                if ready is not None:
+                    ready.set()
+                continue
             for it in items if isinstance(items, list) else []:
                 order = it.get("order", it) if isinstance(it, dict) else {}
                 quote = (it.get("quote") or {}) if isinstance(it, dict) else {}
@@ -152,16 +175,19 @@ def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: thr
                         "quote_hash": order.get("quote_hash") or quote.get("quote_hash")}
                 decision_headers = {"X-Approver-Pin": local_pin(approver)}
                 try:
-                    resp = httpx.post(f"{base_url}/v1/approvals/{oid}/decision", json=body,
-                                      headers=decision_headers, timeout=10)
+                    resp = http.post(f"{base_url}/v1/approvals/{oid}/decision", json=body,
+                                     headers=decision_headers, **post_kw)
                 except Exception as e:
                     print(c(f"       [human] approval of {oid} failed: {type(e).__name__}", "red"), flush=True)
                     continue
                 if resp.status_code < 500:
                     seen.add(oid)
-                print(c(f"       [human] {approver} {decision}d {oid} via HTTP -> {resp.status_code}", "green"), flush=True)
+                print(c(f"       [human] {approver} {decision}d {oid} via {via} -> {resp.status_code}", "green"), flush=True)
         except Exception as e:
             print(c(f"       [human] approval poll failed: {type(e).__name__}", "red"), flush=True)
+            baseline = True
+            if ready is not None:
+                ready.set()
         stop.wait(interval)
 
 
@@ -266,7 +292,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--thinking", default="LOW", choices=["MINIMAL", "LOW", "MEDIUM", "HIGH"])
     ap.add_argument("--no-escalate", action="store_true", help="never switch to the reasoning model")
     ap.add_argument("--max-steps", type=int, default=14)
-    ap.add_argument("--approval-timeout", type=float, default=1800, help="seconds to wait for a human")
+    ap.add_argument("--approval-timeout", type=float, default=None,
+                    help="seconds to wait for a human (default 1800; 15 with the keyless scripted model and no "
+                         "--auto-approve-as, so a keyless scenario run ends with the order left pending)")
     ap.add_argument("--image", metavar="PATH", help="photo of a handwritten order / menu / invoice (Gemini vision)")
     ap.add_argument("--answer", default="auto", choices=["auto", "ask", "none"],
                     help="clarifying questions: auto = first option (non-interactive), ask = prompt in the terminal, "
@@ -278,7 +306,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--montage-out", default="docs/demo-montage.md")
     ap.add_argument("--baseline-pid", type=int, help="ledger pid of an earlier montage to compare cost against")
     ap.add_argument("--baseline-orders", type=int, default=5, help="orders placed in that baseline montage")
+    ap.add_argument("--baseline-label", help="name of the baseline row in the cost table (default: its ledger pid)")
     a = ap.parse_args(argv)
+    if a.faults or a.montage or SCENARIOS.get(a.scenario, {}).get("faults"):
+        os.environ.setdefault("AIMO_DEMO_FAULTS", "1")
     if a.montage:
         return run_montage(a)
     stop = threading.Event()
@@ -286,7 +317,9 @@ def main(argv: list[str] | None = None) -> int:
     if a.via_server:
         sc = SCENARIOS[a.scenario]
         return _via_server(a, a.base_url.rstrip("/"), a.text or sc["text"], a.customer or sc["customer"], stop, decision)
+    a.allergen_probe = True
     result = run_scenario(a, a.scenario, a.auto_approve_as)
+    print(c(f"\nVerdict [{a.scenario}]: {scenario_verdict(a.scenario, result)}", "b"))
     if a.json:
         with open(a.json, "w") as f:
             json.dump(result, f, indent=1, default=str)
@@ -351,22 +384,38 @@ def run_scenario(a, scenario: str, approver: str | None) -> dict:
                     f"(no external HTTP /ui server is attached in {kind} mode; pass --no-auto-approve to disable)\n",
                     "yellow"))
 
+    ready = threading.Event()
     if approver:
         if gw is not None:
             target, args = fake_auto_approver, (gw, approver, stop, delay, decision)
         elif kind == "inproc":
-            target, args = inproc_auto_approver, (approver, customer, stop, delay, decision)
+            from fastapi.testclient import TestClient
+
+            from aimo.gateway.app import create_app
+            target, args = http_auto_approver, ("", approver, customer, stop, delay, decision,
+                                                TestClient(create_app(with_mcp=False)), ready)
         else:
-            target, args = http_auto_approver, (base, approver, customer, stop, delay, decision)
+            target, args = http_auto_approver, (base, approver, customer, stop, delay, decision, None, ready)
         threading.Thread(target=target, args=args, daemon=True).start()
+        if gw is None:
+            ready.wait(10)
+
+    wait_s = getattr(a, "approval_timeout", None)
+    if wait_s is None:
+        wait_s = 15.0 if (not approver and mock_wanted()) else 1800.0
+        if wait_s < 1800:
+            print(c(f"  No --auto-approve-as: an order that needs a human stays pending (waiting {wait_s:.0f} s). "
+                    "Approve it in /ui or rerun with --auto-approve-as <approver>.\n", "dim"))
 
     agent = BuyerAgent(transport, customer, model=a.model, thinking=a.thinking, escalate=not a.no_escalate,
                        max_steps=a.max_steps, emit=print_step, audit_base_url=base if kind != "fake" else "",
-                       poll_s=0.5 if kind in ("fake", "inproc") else 2.0, approval_timeout_s=a.approval_timeout,
+                       poll_s=0.5 if kind in ("fake", "inproc") else 2.0, approval_timeout_s=wait_s,
                        image=image, answer_fn=_answer_fn(getattr(a, "answer", "auto")),
                        now=_gateway_now(base, kind))
     try:
         result = agent.run(text)
+        if getattr(a, "allergen_probe", False) and scenario == "school-allergen" and not a.text and not a.customer:
+            result["allergen_probe"] = allergen_probe(transport, result)
     finally:
         stop.set()
         transport.close()
@@ -450,6 +499,85 @@ def verdict(name: str, r: dict) -> tuple[bool, str]:
     return st != "error", st or "?"
 
 
+PROBE_MILK = "464306"
+
+
+def allergen_probe(transport, r: dict) -> dict:
+    day = ((r.get("quote") or {}).get("delivery_date") or (r.get("need") or {}).get("delivery_by"))
+    print(c(f"\n  Allergen probe: the agent tries to order 1 x {PROBE_MILK} (cow's milk) for this school ...", "b"))
+    try:
+        q = transport.call("create_quote", {"delivery_date": day, "lines": [{"product_id": PROBE_MILK,
+                                                                              "qty_sales_units": 1}]})
+        o = transport.call("place_order", {"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]})
+    except Exception as e:
+        print(c(f"       probe could not run: {type(e).__name__}: {str(e)[:160]}", "yellow"))
+        return {"ran": False, "error": f"{type(e).__name__}: {e}"[:200]}
+    hits = [h for h in ((o.get("decision") or {}).get("hits") or []) if h.get("outcome") == "reject"
+            and str(h.get("rule_id", "")).startswith("allergens")]
+    for h in hits:
+        print(wrap(f"[{h.get('outcome')}] {h.get('rule_id')}: {h.get('message')}"))
+    print(c(f"       order {o.get('order_id')}: {o.get('status')}", "green" if o.get("status") == "rejected" else "red"))
+    return {"ran": True, "status": o.get("status"), "order_id": o.get("order_id"),
+            "reason": hits[0].get("message") if hits else None}
+
+
+def scenario_verdict(name: str, r: dict) -> str:
+    st = r.get("status") or "?"
+    if st == "error":
+        return f"error: {str(r.get('error') or r.get('summary') or '')[:160]}"
+    plan = r.get("plan") or {}
+    need = r.get("need") or {}
+    lines = _lines(r) or plan.get("lines") or []
+    hits = _decision_hits(r)
+    total = (r.get("quote") or {}).get("total_net", plan.get("total_net"))
+    bits = [st]
+    if lines:
+        bits.append(f"{len(lines)} line(s)" + (f", EUR {total:,.2f}" if isinstance(total, (int, float)) else "")
+                    + f", shortfall {(plan.get('shortfall') or 0):g}")
+    rej = [cd for cd in plan.get("candidates", []) if cd.get("tier") == "rejected"]
+
+    def n_rej(*keys: str) -> int:
+        return sum(1 for cd in rej if any(k in " ".join(cd.get("reasons") or []).lower() for k in keys))
+
+    n_cut, n_alg = n_rej("cut-off", "cutoff"), n_rej("per supplier data", "no structured allergen", "allergen data")
+    n_unav = n_rej("not available", "sales block")
+    if rej:
+        bits.append(f"{len(rej)} candidate(s) rejected ({n_cut} cut-off, {n_alg} allergen, {n_unav} unavailable)")
+    usual = [p for p in need.get("preferred_product_ids") or []]
+    used = {str(l.get("product_id")) for l in lines}
+    cut_usual = [p for p in usual if any(str((cd.get("product") or {}).get("id")) == p and
+                                         "cut-off" in " ".join(cd.get("reasons") or []).lower() for cd in rej)]
+    if cut_usual and used and not (used & set(usual)):
+        bits.append(f"cut-off substitution: usual {', '.join(cut_usual)} -> {', '.join(sorted(used))}")
+    if len(lines) >= 2 and name == "stockout":
+        bits.append("partial stock split across " + ", ".join(f"{l.get('product_id')} x{(l.get('qty_sales_units') or 0):g}"
+                                                             for l in lines))
+    excl = need.get("excluded_allergens") or []
+    if excl:
+        alg = [h for h in hits if h.get("rule_id", "").startswith("allergens")]
+        bits.append(f"excluded {', '.join(excl)}; allergen rule: "
+                    + ("; ".join(f"[{h.get('outcome')}] {h.get('message', '')[:90]}" for h in alg) or "not evaluated"))
+    inj = [h for h in hits if "injection" in h.get("rule_id", "") and h.get("outcome") != "allow"]
+    if inj:
+        bits.append(f"injection flagged on {len(inj)} line(s), needs a human")
+    held = [h for h in hits if "drift" in h.get("rule_id", "") and h.get("outcome") != "allow"]
+    if st == "needs_confirmation" or (held and name == "drift"):
+        bits.append("standing-order drift held for human confirmation")
+    who = (r.get("order") or {}).get("approved_by")
+    if who:
+        bits.append(f"approved by {who}")
+    elif st == "pending_approval":
+        role = next((s["data"].get("approver_role") for s in r.get("steps", []) if s["kind"] == "approval_wait"), None)
+        bits.append(f"waiting for a human ({role or 'approver'}); nothing ordered")
+    pr = r.get("allergen_probe")
+    if pr:
+        bits.append(f"allergen probe ({PROBE_MILK}, cow's milk): {pr.get('status') or 'not run'}"
+                    + (f" by policy ({pr['reason'].split(') ', 1)[-1][:70]})" if pr.get("reason") else ""))
+    if r.get("mock"):
+        bits.append("model: scripted (no Gemini)")
+    return "; ".join(bits)
+
+
 def _ledger_by_run(run_ids: set[str]) -> dict[str, dict]:
     from aimo.buyer.costs import ledger_rows, summarize
     rows = ledger_rows(run_ids=run_ids)
@@ -517,6 +645,22 @@ def run_montage(a) -> int:
     return 0 if all(ok for _, _, ok, _, _ in rows) else 1
 
 
+def _approvals_line(rows) -> str:
+    human = [(n, (r.get("order") or {}).get("approved_by")) for n, r, *_ in rows
+             if r.get("status") == "placed" and not str((r.get("order") or {}).get("approved_by") or "").startswith("policy:")]
+    auto = [n for n, r, *_ in rows if r.get("status") == "placed"
+            and str((r.get("order") or {}).get("approved_by") or "").startswith("policy:")]
+    held = [n for n, r, *_ in rows if r.get("status") not in ("placed",)]
+    parts = [f"{len(human)} order(s) approved by a named human ({', '.join(f'{n}: {w}' for n, w in human)}) through "
+             "`POST /v1/approvals/{id}/decision` with the operator's approver credential (`X-Approver-Pin`); the agent "
+             "has no approval tool and any request with agent identity gets 403"]
+    if auto:
+        parts.append(f"{len(auto)} auto-approved by the customer's own policy within its limits ({', '.join(auto)})")
+    if held:
+        parts.append(f"{len(held)} not placed ({', '.join(f'{n}: {r_st}' for n, r_st in ((n, r.get('status')) for n, r, *_ in rows if n in held))})")
+    return "**Approvals:** " + "; ".join(parts) + "."
+
+
 def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -> None:
     from aimo.buyer.costs import CACHED_FRACTION, PRICES_PER_M
     from aimo.buyer.mock_model import MOCK_MODEL_NAME, mock_wanted
@@ -542,16 +686,16 @@ def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -
                    f"{lg.get('out', 0):,} / {lg.get('thinking', 0):,} | ${lg.get('cost_usd', 0):.4f} |")
     out += ["", f"**Total:** {tot['calls']} Gemini calls; {tot['in']:,} input ({tot['cached']:,} served from Gemini's implicit "
                 f"cache), {tot['out']:,} output and {tot['thinking']:,} thinking tokens; {tot['gemini_s']:.1f} s inside Gemini "
-                f"calls; {wall:.1f} s wall clock (includes the simulated approver's 3 s delay per approval).", "",
+                f"calls; {wall:.1f} s wall clock (includes a 3 s pause before each human approval).", "",
+            _approvals_line(rows), "",
             "## Cost per order and escalation", "",
             "| Run | Runs | Orders placed | Gemini calls | Input tokens per run | Cached share | Total cost | Cost per run | "
             "Cost per order | Escalated to gemini-4-hydrogen |",
             "|---|---|---|---|---|---|---|---|---|---|"]
     if base is not None:
-        # The round-2 montage placed 5 orders out of 6 runs (drift is held by design).
-        out += _cost_block(f"Before token trim (round 2 montage, ledger pid {a.baseline_pid})", base,
-                           a.baseline_orders, base["runs"])
-    out += _cost_block("This run" + (" (after token trim)" if base is not None else ""), tot, orders, runs)
+        label = getattr(a, "baseline_label", None) or f"Before token trim (round 2 montage, ledger pid {a.baseline_pid})"
+        out += _cost_block(label, base, a.baseline_orders, base["runs"])
+    out += _cost_block("This run", tot, orders, runs)
     prices = ", ".join(f"{m} ${p[0]:g} / ${p[1]:g}" for m, p in PRICES_PER_M.items())
     out += ["", f"Cost = fresh input x input price + cached input x {CACHED_FRACTION:.0%} of input price + "
                 f"(output + thinking) x output price. Prices per 1M tokens (input / output, team Gemini playbook): {prices}. "
@@ -569,8 +713,9 @@ def _write_montage(path: str, started, a, rows, tot, wall, orders, runs, base) -
 
 def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, decision: str) -> int:
     import httpx
+    from aimo.gateway.human_auth import local_pin
     approver = None if getattr(a, "no_auto_approve", False) else (a.auto_approve_as or _env_approver(customer))
-    headers = {"X-Customer-Id": customer}
+    headers = {"X-Customer-Id": customer, "X-Approver-Pin": local_pin(approver)}
     agent_key = (os.environ.get("AIMO_AGENT_KEY") or "").strip()
     if agent_key:
         headers["X-Agent-Key"] = agent_key
@@ -585,8 +730,10 @@ def _via_server(a, base: str, text: str, customer: str, stop: threading.Event, d
     if faults:
         body["faults"] = faults
     if approver:
+        ready = threading.Event()
         threading.Thread(target=http_auto_approver, args=(base, approver, customer, stop,
-                                                          a.approve_delay, decision), daemon=True).start()
+                                                          a.approve_delay, decision, None, ready), daemon=True).start()
+        ready.wait(5)
     status = "error"
     try:
         r = httpx.post(f"{base}/v1/agent/runs", json=body, headers=headers, timeout=10)

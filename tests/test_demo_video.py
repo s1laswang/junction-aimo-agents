@@ -586,10 +586,11 @@ def test_live_playwright_e2e_demo_beats(tmp_path: Path, monkeypatch: pytest.Monk
 
             expect(page.locator("#view-approvals .card.requote")).to_be_visible(timeout=10000)
             expect(page.locator("#view-approvals .card.requote")).to_contain_text("Prices changed: re-quote needed")
+            expect(page.locator("#timeline")).to_contain_text("Order re-quoted", timeout=10000)
 
-            expect(page.locator("#timeline .tl-item.k-final")).to_be_visible(timeout=10000)
-
-            requote_approve_btn = page.locator("#view-approvals .card.requote button.btn-ok")
+            requote_approve_btn = page.locator(
+                "#view-approvals .card.requote button.btn-ok, #view-approvals .decide-actions button.btn-ok"
+            ).first
             expect(requote_approve_btn).to_be_enabled(timeout=10000)
             with page.expect_response(
                 lambda r: f"/v1/approvals/{new_order_id}/decision" in r.url and r.request.method == "POST",
@@ -602,6 +603,8 @@ def test_live_playwright_e2e_demo_beats(tmp_path: Path, monkeypatch: pytest.Monk
             placed_order = placed_http.json()
             assert placed_order["status"] == "placed"
             assert placed_order["response_code"] == "AP"
+
+            expect(page.locator("#timeline .tl-item.k-final")).to_be_visible(timeout=10000)
 
             expect(page.locator("#order-response")).to_be_visible(timeout=10000)
             expect(page.locator("#order-response")).to_contain_text("Placed", timeout=10000)
