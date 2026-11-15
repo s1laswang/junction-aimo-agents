@@ -318,6 +318,7 @@ class BuyerAgent:
         self.tool_failures: dict[str, int] = {}
         self.injections: list[dict] = []
         self._tool_injections: list[tuple[str, str]] = []
+        self._suspicious_queries: list[str] = []
         self.escalate_next = False
         self.escalated = False
         self.models_used: list[dict] = []
@@ -708,8 +709,11 @@ class BuyerAgent:
             given_raw = given.get("raw_text").strip() if isinstance(given.get("raw_text"), str) else ""
             pq_screen = self._record_tool_injection("product_query", given_pq)
             self._record_tool_injection("raw_text", given_raw)
-            has_inj = bool(self.injections or self._request_injection_flags() or pq_screen.get("suspicious"))
-            if given_pq and not pq_screen.get("suspicious"):
+            given_pq_susp = bool(given_pq and pq_screen.get("suspicious"))
+            if given_pq_susp and given_pq not in self._suspicious_queries:
+                self._suspicious_queries.append(given_pq)
+            has_inj = bool(self.injections or self._request_injection_flags() or given_pq_susp)
+            if given_pq and not given_pq_susp:
                 if not has_inj:
                     chosen_pq = given_pq
                 else:
@@ -743,7 +747,9 @@ class BuyerAgent:
             ]))
             given_need = args.get("need") if isinstance(args.get("need"), dict) else {}
             if isinstance(given_need.get("product_query"), str):
-                self._record_tool_injection("product_query", given_need.get("product_query"))
+                given_q_pq = given_need.get("product_query").strip()
+                if self._record_tool_injection("product_query", given_q_pq).get("suspicious") and given_q_pq not in self._suspicious_queries:
+                    self._suspicious_queries.append(given_q_pq)
             if isinstance(given_need.get("raw_text"), str):
                 self._record_tool_injection("raw_text", given_need.get("raw_text"))
             locked_keys = (
