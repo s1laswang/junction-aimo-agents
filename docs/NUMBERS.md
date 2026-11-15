@@ -2,9 +2,9 @@
 
 Every number we say in the README, demo, deck, submission or Gemini write-up, with the exact command that produces it. Rule: if a number is not in this file with a command, we don't say it.
 
-Setup for all commands: a clone with `.env` (never committed), `uv sync --extra dev`, and `uv run aimo serve` run once (builds `data/catalog.sqlite`, embeddings and allergen hints). Commands marked **live** call the Valio Aimo mock API or Gemini and need the keys; **replay** commands run with no keys against `AIMO_REPLAY=tests/fixtures/snapshot uv run aimo serve`; everything else is offline. Where `sqlite3` CLI is not installed, run the same SQL via `uv run python -c "import sqlite3; print(sqlite3.connect('data/catalog.sqlite').execute('<SQL>').fetchall())"`.
+Setup for all commands: a clone with `.env` (never committed), `uv sync --extra dev`, and `uv run aimo serve` run once (builds `data/catalog.sqlite`, embeddings and allergen hints when keyed, or unpacks the bundled 669-product replay catalog subset into `<DATA_DIR>/catalog-fixture/` when keyless). Commands marked **live** call the Valio Aimo mock API or Gemini and need the keys; **replay** commands run with no keys against `uv run aimo serve` (automatic replay from `tests/fixtures/snapshot/replay/` when `AIMO_API_KEY` is unset, or explicit `AIMO_REPLAY=1` / `AIMO_REPLAY=tests/fixtures/snapshot`); everything else is offline. Where `sqlite3` CLI is not installed, run the same SQL via `uv run python -c "import sqlite3; print(sqlite3.connect('data/catalog.sqlite').execute('<SQL>').fetchall())"`.
 
-Status: **R** = re-run by the person or session named, with the date; **S** = single source (a report or a one-off run), not re-run. Latest re-runs: Sat 14 Nov 23:05 to Sun 15 Nov 00:35 Helsinki.
+Status: **R** = re-run by the person or session named, with the date; **S** = single source (a report or a one-off run), not re-run. Latest re-runs: Sat 14 Nov 23:05 to Sun 15 Nov 02:15 Helsinki.
 
 ## Catalog and data
 | Number | Claimed in | Command | Value | Status |
@@ -18,7 +18,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Delivery reliability for 4,425 products | ASSUMPTIONS | `sqlite3 data/catalog.sqlite "select count(*) from products where delivery_reliability is not null"` | 4425 | R pitch, Sat 19:00 |
 | Unit parser agrees with live comparison price on 702 of 752 sampled products (93%) | ASSUMPTIONS, SUBMISSION | none committed (catalog report, Sat 14:40; re-sampling needs ~752 live price lookups, avoided due to mock-API rate limits; at plan time live comparison price overrides mismatches via `content_from_price`) | 93% (702 / 752) | S. Always say "single source" with it. |
 | Product JSON 87 MB | DECISIONS | `ls -l data/valio_aimo_junction26_product_data.json` | 87,077,467 bytes | R pitch |
-| Replay snapshot: 92 product ids, 4 delivery dates, recorded Sat 14 Nov 14:20 | README | `cat tests/fixtures/snapshot/meta.json` | 92 ids; 13, 15, 16, 17 Nov | R submit, Sat 23:10 |
+| Replay snapshots: bundled default `tests/fixtures/snapshot/replay/` has 669 product ids + a 669-product gzipped challenge catalog subset across 5 delivery dates (`2026-11-16`..`2026-11-20`, recorded `2026-11-14T23:50:28+0200` via `scripts/record_replay.py` in 10 upstream calls); `tests/fixtures/snapshot/` has 92 product ids across 4 delivery dates (13, 15, 16, 17 Nov, recorded `2026-11-14T14:20:06+0200`) | README, DEMO, SUBMISSION | `cat tests/fixtures/snapshot/replay/meta.json` and `cat tests/fixtures/snapshot/meta.json` (re-record live with `uv run python scripts/record_replay.py`) | 669 ids + 669 catalog products (`2026-11-16`..`2026-11-20`, 10 calls); 92 ids (13, 15, 16, 17 Nov) | R replay (`2a68792`) + R docs (`2e6ae66`), Sun 15 Nov |
 
 ## Mock API behaviour
 | Number | Claimed in | Command | Value | Status |
@@ -46,7 +46,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | 13 MCP tools, no approval tool | README, SUBMISSION, GEMINI, DEMO | `uv run python -c "import asyncio; from aimo.gateway.mcp_server import build_mcp; print(len(asyncio.run(build_mcp().list_tools())))"` (offline) or `uv run aimo mcp-check` (gateway running) | 13 | R submit, Sat 23:00; R docs (`ffd8e9a`), Sun 15 Nov |
-| Conformance: Valio Aimo gateway 44/44, Nordic Bakery Supply 44/44 | README, OPENNESS | `uv run python -m conformance --base http://127.0.0.1:8000` (**replay** works); Nordic Bakery: `uv run uvicorn toywholesaler.app:app --port 8820` then `uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"`; both with `AIMO_APPROVER_PIN` set in the environment of the server and the suite | 44/44 and 44/44 (1.3 s, 1.0 s) | R submit, Sat 23:20 (was 43/43 before the human-only approval checks were added) |
+| Conformance: Valio Aimo gateway 44/44, Nordic Bakery Supply 44/44 | README, OPENNESS, SUBMISSION | `uv run python -m conformance --base http://127.0.0.1:8000` (**replay** off `tests/fixtures/snapshot/replay/` works keyless with zero downloaded `data/`); Nordic Bakery: `uv run uvicorn toywholesaler.app:app --port 8820` then `uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"`; both with `AIMO_APPROVER_PIN` set in the environment of the server and the suite | 44/44 and 44/44 (1.2 s, 1.0 s) | R submit, Sat 23:20; R replay (`2a68792`) + R docs (`2e6ae66`), Sun 15 Nov |
 
 ## Gemini buyer agent (live montage)
 | Number | Claimed in | Command | Value | Status |
@@ -62,9 +62,9 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 ## Acceptance scenarios and tests
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
-| s0–s7: 8/8 PASS (88 checks) | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 (88 checks) | R lead (`2468bdd`), Sun 00:18 |
-| Test count | README, SUBMISSION, deck, COMBINE | `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (with the catalog JSON, or keyless without it) | **743 passed, 7 skipped, 2 xfailed** with the catalog JSON on `2468bdd`; **646 passed, 105 skipped, 2 xfailed** keyless without catalog JSON on `ffd8e9a` (**645 passed, 105 skipped, 2 xfailed** on `97be499`); standalone `main` (`89bc3db` / `81e730d`) runs **344 passed, 7 skipped, 1 xfailed, 1 xpassed** | R lead (`2468bdd`, 94.7 s) with catalog JSON; R docs (`ffd8e9a`, 48.9 s; `97be499`, 43.9 s) keyless; R submit (`89bc3db`, 34 s) standalone `main`. Re-run at the freeze. |
-| `make accept` | README, SUBMISSION | `make accept` | RESULT: PASS (table in docs/reports/submit.md "Gate runs") | R submit |
+| s0–s7: 8/8 PASS (88 checks), live and keyless replay | PLAN, docs/SCENARIOS.md, README, SUBMISSION | `uv run python -m scenarios.run_all` (**live** with `AIMO_API_KEY`, or **keyless replay** automatically off `tests/fixtures/snapshot/replay/` with an empty `.env`) | 8/8 PASS (88 checks) | R lead (`2468bdd`), Sun 00:18 (live); R replay (`2a68792`) + R docs (`2e6ae66`, ~11 s) keyless replay |
+| Test count | README, SUBMISSION, deck, COMBINE | `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (with the full 17,546-product catalog JSON, or keyless without it) | **743 passed, 7 skipped, 2 xfailed** with the full catalog JSON on `2468bdd`; **707 passed, 105 skipped, 1 xfailed, 1 xpassed** keyless offline without `data/valio_aimo_junction26_product_data.json` on `2e6ae66` (814 collected tests); standalone `main` (`2a68792`) runs **344 passed, 7 skipped** keyed (`89bc3db` / `81e730d`: **344 passed, 7 skipped, 1 xfailed, 1 xpassed**) | R lead (`2468bdd`, 94.7 s) with catalog JSON; R docs (`2e6ae66`, 77.7 s) keyless offline; R replay (`2a68792`) + R submit (`89bc3db`, 34 s) standalone `main`. Re-run at the freeze. |
+| `make accept` (keyless and keyed) | README, SUBMISSION | `: > .env && make accept` (keyless replay off `tests/fixtures/snapshot/replay/`) or `make accept` with keys | `RESULT: PASS`: keyless fresh clone (`2a68792`, `docs/reports/replay.md`) gives `PASS=16 FAIL=0 SKIP=4` (`scenarios.run_all` 8/8 replay, `conformance` 44/44, `qa_milk_flow.py` MILK FLOW OK with Peppol `OrderResponseCode AP` and `audit verify ok` over 20 events); keyed (`2a68792`) gives `PASS=19 FAIL=0` (table also in `docs/reports/submit.md` "Gate runs") | R replay (`2a68792`), Sun 02:00 + R submit |
 
 ## Input hardening
 | Number | Claimed in | Command | Value | Status |

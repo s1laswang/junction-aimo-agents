@@ -1,11 +1,11 @@
 # Wind tunnel + QA report
 
-Branch `team/windtunnel`. Last updated Sat 14 Nov, about 18:45 Helsinki.
+Branch `team/windtunnel`. Initial run Sat 14 Nov, about 18:45 Helsinki; updated Sun 15 Nov 01:56 Helsinki with S3 `need` v2 (`89bc3db` / `81e730d`) and S1 `replay` (`2a68792` / `2e6ae66`) gate runs.
 
 ## Status
 - **Pipeline numbers were re-run on current main** (trust r2, gateway r3, buyer r2, catalog r3; merged at dfecb2a, code unchanged since then). Tables: `docs/windtunnel-results.md`. Small JSON for UI and pitch: `docs/windtunnel-results.json`. Chart: `docs/windtunnel-thinking.svg`.
 - All numbers were produced on the **laptop**. Pipeline mode is CPU-light: 640 scenarios take about 40 s, 2,560 take about 3 min.
-- **Freighter:** one sweep job (44427, `aimo-wt-sweep`) generated 8,000 scenarios but then stalled on the offline compute node. Likely cause: catalog `semantic_hits` embeds the query with Gemini and retries when there is no internet. I cancelled the job (my own, by id). **TODO:** an offline switch for semantic recall in catalog, then re-run. The tests job 44428 ran: 112 passed, and the data-dependent tests were skipped because of a conftest data-path bug, now fixed.
+- **Freighter:** one sweep job (44427, `aimo-wt-sweep`) generated 8,000 scenarios but then stalled on the offline compute node. Likely cause: catalog `semantic_hits` embeds the query with Gemini and retries when there is no internet. I cancelled the job (my own, by id). Offline semantic switch (`AIMO_SEMANTIC=0` / `AIMO_OFFLINE=1`) subsequently added and verified in `tests/test_catalog.py::test_semantic_switch_off_is_immediate` (with cold-import warm-up in `2a68792`). The tests job 44428 ran: 112 passed, and the data-dependent tests were skipped because of a conftest data-path bug, now fixed.
 - The e2e test "1,000 L milk over HTTP" (TestClient, recorded fixtures) passes against current main. The approver must be a registered user: `anna@hotel-aurora.example`.
 - Agent mode (Gemini buyer + real gateway): re-run on current main in progress. The previous run on c3ee30d gave 48 runs, 0 policy violations, 0 allergen violations, and a judge score of 0.95 for mandate followed.
 
@@ -53,7 +53,7 @@ Changes since the first run on 7dad8d0 (same 640 scenarios):
 7. **Mock API:** availability ignores requestedDate (availableDate is always 16 Nov, closingTime is fixed). Stock items show cutoff_passed after Sun 15 Nov 17:00, which matters for any live demo after that. The wind tunnel freezes "now" at the snapshot time.
 8. **Gemini declines to write injection payloads** (blocked prompt or refusal), so the payloads come from a hand-written library.
 
-## Reproduce
+## Reproduce (Commands)
 ```bash
 uv run python -m windtunnel.generate --n 640 --gemini --out data/windtunnel/scenarios/wt640_gem.jsonl   # or --relabel <file>
 uv run python -m windtunnel.run pipeline --scenarios data/windtunnel/scenarios/wt640_gem.jsonl --sut team
@@ -74,3 +74,18 @@ The snapshot (`data/windtunnel/snapshot`, 1,674 ids × 7 dates) was recorded and
 
 ## Disclosures
 - Before the freighter rule arrived (about 14:35), I listed `~/momin`, `~/momin/fleet` and `teams.conf` read-only. It shows a `valio` fleet team on repo `junction26-valio`, branch `dev`, which may be Momin's gateway (PLAN question 1). I also ran one read-only `scontrol show job` on a fleet job. I modified nothing. Since the rule I have touched only my own `aimo-wt-*` jobs.
+
+## Post-S3 and S1 gate runs (`81e730d`, `2a68792`, `fr8/valio` `2e6ae66`)
+Re-run on `wt640` (same 640 Gemini-written scenarios and snapshot, `AIMO_SEMANTIC=0` offline, Sun 15 Nov ~00:30, reported in `89bc3db` / `81e730d` and `docs/reports/need.md`):
+
+| System | Escalation precision | Escalation recall | Outcome accuracy | Policy violations | Allergen violations | Plan coverage |
+|---|---|---|---|---|---|---|
+| before (`main` `fac34f0`) | 54.0% | 98.8% | 55.0% | 1 | 0 | 92.4% |
+| after S3 v1 (`main` `e337c7b`) | 67.5% | 94.3% | 72.0% | 21 | 3 | 91.4% |
+| after S3 v2 (`main` `89bc3db` / `81e730d`) | **68.2%** | **99.7%** | **73.4%** | **0** | **0** | 91.4% |
+
+- **Findings 1, 2, 4, 7 follow-up:**
+  - *Split-order evasion (Finding 1):* closed by `split_order` rule over a 7-day rolling window (escalates on the 2nd order once cumulative auto-placed spend passes the auto limit) -> **0 policy violations** on `wt640`.
+  - *Escalation precision (Finding 2):* `policy.catalog_verify`, `new_product: allow` (normal units only), `auto_approve_alternatives_below_eur`, learned swaps, and hotel scope widening (21 dry goods + 41 frozen food; claim-only allergen-free treated as `unknown`) raised `wt640` precision from `54.0%` to `68.2%` at `99.7%` recall (**0 allergen violations**; >= 90% precision target not met, 331 true / 154 false escalations).
+  - *Price-drift rule (Finding 4):* `price_jump` (>15% above last paid unit price in 90 days or `reference_unit_price`) added in S3 `need`.
+  - *Cut-off clock after Sun 15 Nov 17:00 (Finding 7):* S1 `replay` (`14d6939` / `2a68792`, ported on `fr8/valio/docs` `2e6ae66`) anchors replay mode at snapshot `timeNow` (`2026-11-14T23:50:28+0200`) and computes delivery dates via `aimo.backend.clock.next_delivery_day()`; keyless `scenarios.run_all` passes **8/8** (88 checks) and keyless offline `pytest -q` passes **707 passed, 105 skipped, 1 xfailed, 1 xpassed** on `2e6ae66`.
