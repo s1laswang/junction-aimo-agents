@@ -48,15 +48,33 @@ def validate_need(need: Need) -> None:
         raise ValueError("need.quantity must be greater than 0")
     if qty > MAX_NEED_QUANTITY:
         raise ValueError("need.quantity must be at most 1000000")
+    qf = float(qty)
+    if not math.isfinite(qf) or qf <= 0.0:
+        raise ValueError("need.quantity must be a finite number greater than 0")
+    raw_text = getattr(need, "raw_text", "")
+    if raw_text is not None and not isinstance(raw_text, str):
+        raise ValueError("need.raw_text must be a string")
+    customer_id = getattr(need, "customer_id", None)
+    if not isinstance(customer_id, str) or not customer_id.strip() or len(customer_id) > 128:
+        raise ValueError("need.customer_id must be a non-empty string")
     query = getattr(need, "product_query", None)
     if not isinstance(query, str) or not query.strip():
         raise ValueError("need.product_query must be a non-empty string")
+    if len(query) > 500:
+        raise ValueError("need.product_query must be at most 500 characters")
     unit = getattr(need, "unit", None)
     if not isinstance(unit, str) or unit not in VALID_UNITS:
         raise ValueError("need.unit must be one of L, KG, PCS")
     delivery_by = getattr(need, "delivery_by", None)
     if not isinstance(delivery_by, date) or isinstance(delivery_by, datetime):
         raise ValueError("need.delivery_by must be a date")
+    for fname in ("required_claims", "excluded_allergens", "preferred_product_ids"):
+        seq = getattr(need, fname, None)
+        if not isinstance(seq, (list, tuple)) or not all(isinstance(item, str) for item in seq):
+            raise ValueError(f"need.{fname} must be a list of strings")
+    prefs = getattr(need, "preferences", None)
+    if not isinstance(prefs, dict):
+        raise ValueError("need.preferences must be a dict")
 
 # product-type markers: candidates must carry the same set as the reference product
 TYPE_MARKERS: dict[str, list[str]] = {
@@ -243,19 +261,41 @@ def _d(dt) -> str:
 
 def effective_content(d: dict[str, Any], offer: Optional[Offer]) -> tuple[Optional[float], Optional[str], Optional[str]]:
     """Static content, overridden by the price-derived value when they disagree."""
-    amt, unit = d.get("content_amount"), d.get("content_unit")
+    amt, unit = _pos_finite(d.get("content_amount")), d.get("content_unit")
     if offer is not None:
         return U.reconcile_with_price(amt, unit, offer.unit_price, offer.comparison_price, offer.comparison_unit)
     return amt, unit, None
 
 
-def price_per_unit(offer: Optional[Offer], content: Optional[float], unit: Optional[str], need_unit: str) -> Optional[float]:
-    if offer is None or offer.unit_price is None:
+def _finite(v: Any) -> Optional[float]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    if offer.comparison_price and offer.comparison_unit == need_unit:
-        return float(offer.comparison_price)
-    if content and unit == need_unit:
-        return offer.unit_price / content
+    try:
+        fv = float(v)
+    except OverflowError:
+        return None
+    return fv if math.isfinite(fv) else None
+
+
+def _pos_finite(v: Any) -> Optional[float]:
+    fv = _finite(v)
+    return fv if (fv is not None and fv > 0.0) else None
+
+
+def price_per_unit(offer: Optional[Offer], content: Optional[float], unit: Optional[str], need_unit: str) -> Optional[float]:
+    if offer is None:
+        return None
+    up = _pos_finite(offer.unit_price)
+    if up is None:
+        return None
+    cp = _pos_finite(offer.comparison_price)
+    if cp is not None and offer.comparison_unit == need_unit:
+        return cp
+    cf = _pos_finite(content)
+    if cf is not None and unit == need_unit:
+        res = up / cf
+        if math.isfinite(res) and res > 0.0:
+            return res
     return None
 
 
@@ -430,38 +470,73 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                             injection_screen=screen_out, screen_raw=sc))
 
     # ---- scores (relative within the eligible set)
+    for x in scratch:
+        cf = _pos_finite(x["content"])
+        x["content"] = cf
+        x["summary"].content_amount = cf
+        if cf is None and x["cunit"] == need.unit:
+            x["reject"].append("invalid content amount")
+            x["tier"] = "rejected"
+        offer = x["offer"]
+        if offer is not None:
+            if offer.unit_price is not None and _pos_finite(offer.unit_price) is None:
+                x["reject"].append("invalid price")
+                x["tier"] = "rejected"
+            if offer.available_amount is not None:
+                ar = offer.available_amount
+                if (isinstance(ar, bool) or not isinstance(ar, (int, float))
+                        or (isinstance(ar, float) and math.isnan(ar)) or ar < 0):
+                    if "unavailable" not in x["flags"]:
+                        x["flags"].append("unavailable")
+                    x["reject"].append("invalid available amount")
+                    x["tier"] = "rejected"
+                elif ar == 0 and offer.available and not offer.cutoff_passed and not offer.sales_block:
+                    if "unavailable" not in x["flags"]:
+                        x["flags"].append("unavailable")
+                    if "out of stock" not in x["reject"]:
+                        x["reject"].append("out of stock")
+                    x["tier"] = "rejected"
     eligible = [x for x in scratch if x["tier"] != "rejected"]
     ppu = {x["pid"]: price_per_unit(x["offer"], x["content"], x["cunit"], need.unit) for x in scratch}
-    prices = [ppu[x["pid"]] for x in eligible if ppu[x["pid"]]]
+    prices = [p for x in eligible if (p := ppu[x["pid"]]) is not None and math.isfinite(p) and p > 0.0]
     min_p = min(prices) if prices else None
-    co2s = [x["d"].get("co2_kg_per_kg") for x in eligible if x["d"].get("co2_kg_per_kg")]
+    co2s = [c for x in eligible if (c := _pos_finite(x["d"].get("co2_kg_per_kg"))) is not None]
     min_co2 = min(co2s) if co2s else None
+    need_qty = _pos_finite(need.quantity)
     for x in scratch:
         d, offer, pid = x["d"], x["offer"], x["pid"]
         p = ppu[pid]
-        price_s = (min_p / p) if (p and min_p) else 0.3
-        rel = d.get("delivery_reliability")
-        rel_s = rel if rel is not None else 0.85
-        co2 = d.get("co2_kg_per_kg")
-        co2_s = (min_co2 / co2) if (co2 and min_co2) else 0.7
-        content = x["content"] or 0
+        raw_ps = (min_p / p) if (p is not None and min_p is not None and p > 0.0) else None
+        price_s = raw_ps if (raw_ps is not None and math.isfinite(raw_ps) and raw_ps > 0.0) else 0.3
+        rel = _finite(d.get("delivery_reliability"))
+        rel_s = min(1.0, max(0.0, rel)) if rel is not None else 0.85
+        co2 = _pos_finite(d.get("co2_kg_per_kg"))
+        raw_co2 = (min_co2 / co2) if (co2 is not None and min_co2 is not None and co2 > 0.0) else None
+        co2_s = raw_co2 if (raw_co2 is not None and math.isfinite(raw_co2) and raw_co2 > 0.0) else 0.7
+        content = x["content"]
         pack_s = 1.0
-        if need.quantity >= 50 and content:
-            pack_s = 1.0 if content >= 1 else (0.6 if content >= 0.25 else 0.3)
+        if need_qty is not None and need_qty >= 50.0 and content is not None and content > 0.0:
+            pack_s = 1.0 if content >= 1.0 else (0.6 if content >= 0.25 else 0.3)
         cover_s = 1.0
-        if offer is not None and offer.available_amount is not None and content:
-            if offer.available_amount < 1e8:
-                cov = offer.available_amount * content / need.quantity
-                cover_s = min(1.0, cov)
-                if cov < 1.0 and x["tier"] != "rejected":
-                    x["flags"].append("partial_stock")
-        x["score"] = round(0.5 * price_s + 0.2 * rel_s + 0.1 * co2_s + 0.1 * pack_s + 0.1 * cover_s
-                           - (0.2 if x.get("type_note") else 0.0), 4)
+        if (offer is not None and offer.available_amount is not None
+                and content is not None and content > 0.0 and need_qty is not None):
+            avail_f = _finite(offer.available_amount)
+            if avail_f is not None and 0.0 <= avail_f < 1e8:
+                numer = avail_f * content
+                if math.isfinite(numer):
+                    cov = numer / need_qty
+                    if math.isfinite(cov):
+                        cover_s = min(1.0, max(0.0, cov))
+                        if cov < 1.0 and x["tier"] != "rejected":
+                            x["flags"].append("partial_stock")
+        score_val = (0.5 * price_s + 0.2 * rel_s + 0.1 * co2_s + 0.1 * pack_s + 0.1 * cover_s
+                     - (0.2 if x.get("type_note") else 0.0))
+        x["score"] = round(score_val, 4) if math.isfinite(score_val) else 0.0
         x["ppu"] = p
         x["reasons"].extend(_reasons(x, spec, need))
 
     scratch.sort(key=lambda x: (TIER_ORDER[x["tier"]], 0 if x["pid"] in prefs else 1, -x["score"],
-                                -(relevance.get(x["pid"]) or 0)))
+                                -(_finite(relevance.get(x["pid"])) or 0.0)))
     out: list[Candidate] = []
     n_rej = 0
     for x in scratch:
@@ -526,14 +601,17 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
             diffs.append(f"different product category ({d.get('category')} vs {spec.category})")
         r.append("Meets the hard constraints" + (f"; differs: {', '.join(diffs)}" if diffs else ""))
     r.append(pack)
+    up_r = _pos_finite(offer.unit_price) if offer is not None else None
     if x["ppu"]:
-        r.append(f"{_fmt_money(x['ppu'])}/{need.unit}" + (f" ({_fmt_money(offer.unit_price)} per {d.get('sales_unit')})" if offer and offer.unit_price else ""))
-    if d.get("delivery_reliability") is not None:
-        r.append(f"delivery reliability {d['delivery_reliability']:.2f}")
+        r.append(f"{_fmt_money(x['ppu'])}/{need.unit}" + (f" ({_fmt_money(up_r)} per {d.get('sales_unit')})" if up_r is not None else ""))
+    rel_r = _finite(d.get("delivery_reliability"))
+    if rel_r is not None:
+        r.append(f"delivery reliability {rel_r:.2f}")
     else:
         r.append("delivery reliability: no data")
-    if d.get("co2_kg_per_kg") is not None:
-        r.append(f"CO2 {d['co2_kg_per_kg']:.2f} kg CO2e/kg (category average)")
+    co2_r = _pos_finite(d.get("co2_kg_per_kg"))
+    if co2_r is not None:
+        r.append(f"CO2 {co2_r:.2f} kg CO2e/kg (category average)")
     if need.required_claims and not any(m.startswith("missing required claim") for m in x["reject"]):
         r.append("has " + ", ".join(need.required_claims))
     if need.excluded_allergens and not any("allergen" in m or ":" in m for m in x["reject"]):
@@ -541,9 +619,12 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
     if offer is not None:
         if offer.logistic_model:
             r.append(f"{offer.logistic_model} item" + (f", order by {_d(offer.closing_time)}" if offer.closing_time and not offer.cutoff_passed else ""))
-        if offer.available_amount is not None and offer.available_amount < 1e8 and x["content"]:
-            r.append(f"only {offer.available_amount:g} {d.get('sales_unit')} in stock (= {offer.available_amount * x['content']:g} {need.unit})"
-                     if "partial_stock" in x["flags"] else f"{offer.available_amount:g} {d.get('sales_unit')} in stock")
+        avail_r = _finite(offer.available_amount)
+        if avail_r is not None and 0.0 <= avail_r < 1e8 and x["content"]:
+            stock_amt = avail_r * x["content"]
+            if math.isfinite(stock_amt):
+                r.append(f"only {avail_r:g} {d.get('sales_unit')} in stock (= {stock_amt:g} {need.unit})"
+                         if "partial_stock" in x["flags"] else f"{avail_r:g} {d.get('sales_unit')} in stock")
     if x["cnote"]:
         r.append(x["cnote"])
     sr = screen_reason(x.get("screen_raw"))
