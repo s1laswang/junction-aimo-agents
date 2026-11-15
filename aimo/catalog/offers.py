@@ -6,12 +6,14 @@ data/cache/catalog_offers/ for OFFER_TTL_S, no retries in a tight loop.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import hashlib
 import json
 import logging
 import math
+import os
 import re
+import threading
 import time
 from datetime import date, datetime, timezone
 from typing import Any, Optional
@@ -24,6 +26,22 @@ CACHE_DIR = DATA_DIR / "cache" / "catalog_offers"
 OFFER_TTL_S = 300
 UNLIMITED = 1e9          # Stock items report 9999999999 when effectively unlimited
 TERMINAL_UNKNOWN = 999999.0
+MAX_ID_LEN = 64
+MAX_OFFER_IDS = 10_000
+MAX_SCAN_ITEMS = 50_000
+BATCH_SIZE = 1000
+_KIND_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_ISO_DT_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?$"
+)
+
+
+def _has_bad_char(s: str) -> bool:
+    for ch in s:
+        code = ord(ch)
+        if code < 32 or 127 <= code <= 159 or 0xD800 <= code <= 0xDFFF:
+            return True
+    return False
 
 
 def _require_date(d: Any) -> date:
@@ -35,13 +53,24 @@ def _require_date(d: Any) -> date:
 def _clean_ids(product_ids: Any) -> list[str]:
     if not isinstance(product_ids, Iterable) or isinstance(product_ids, (str, bytes, bytearray, dict)):
         raise ValueError("product_ids must be an iterable of product id strings")
-    out: list[str] = []
+    seen: dict[str, None] = {}
+    scanned = 0
     for item in product_ids:
-        if isinstance(item, str):
-            s = item.strip()
-            if s:
-                out.append(s)
-    return list(dict.fromkeys(out))
+        scanned += 1
+        if scanned > MAX_SCAN_ITEMS:
+            raise ValueError(f"product_ids exceeds maximum scan size ({MAX_SCAN_ITEMS})")
+        if not isinstance(item, str):
+            continue
+        s = item.strip(" \t\r\n")
+        if not s:
+            continue
+        if len(s) > MAX_ID_LEN or any(ch.isspace() for ch in s) or _has_bad_char(s):
+            raise ValueError("invalid product id in product_ids")
+        if s not in seen:
+            if len(seen) >= MAX_OFFER_IDS:
+                raise ValueError(f"too many unique product_ids (max {MAX_OFFER_IDS})")
+            seen[s] = None
+    return list(seen)
 
 
 def _pos_finite(v: Any) -> Optional[float]:
@@ -89,10 +118,13 @@ def _sanitize_offer(raw: Any, fallback_pid: str, requested_date: date) -> Option
             d_copy["product_id"] = fallback_pid
         if not isinstance(d_copy.get("requested_date"), date) or isinstance(d_copy.get("requested_date"), datetime):
             d_copy["requested_date"] = requested_date
-        o = Offer.model_validate(d_copy)
+        try:
+            o = Offer.model_validate(d_copy)
+        except Exception:
+            return None
     else:
         return None
-    issues = list(o.issues or [])
+    issues = [x for x in o.issues if isinstance(x, str) and x.strip() and not _has_bad_char(x)] if isinstance(o.issues, (list, tuple)) else []
     available = bool(o.available)
     up = _pos_finite(raw_up)
     if up is None:
@@ -115,7 +147,15 @@ def _sanitize_offer(raw: Any, fallback_pid: str, requested_date: date) -> Option
             available = False
             if "out_of_stock" not in issues:
                 issues.append("out_of_stock")
-    if o.cutoff_passed or o.sales_block or (o.available_date is not None and o.available_date > requested_date):
+    adate = o.available_date
+    if adate is not None and (not isinstance(adate, date) or isinstance(adate, datetime)):
+        ok_ad, parsed_ad = _avail_date(adate)
+        adate = parsed_ad if ok_ad else None
+        if not ok_ad:
+            available = False
+            if "availability_error" not in issues:
+                issues.append("availability_error")
+    if o.cutoff_passed or o.sales_block or (adate is not None and adate > requested_date):
         available = False
     return o.model_copy(update={
         "unit_price": up,
@@ -124,6 +164,7 @@ def _sanitize_offer(raw: Any, fallback_pid: str, requested_date: date) -> Option
         "comparison_price": cp,
         "tax_rate": tr,
         "available_amount": av,
+        "available_date": adate,
         "available": available,
         "issues": list(dict.fromkeys(issues)),
     })
@@ -133,6 +174,10 @@ def get_offers(product_ids: list[str], requested_date: date, customer_id: str | 
     """Gateway client if present (its errors, e.g. injected 429/5xx, propagate so the gateway can
     answer 503); otherwise the catalog's own direct fallback."""
     req_date = _require_date(requested_date)
+    if customer_id is not None and (
+        not isinstance(customer_id, str) or len(customer_id) > 128 or _has_bad_char(customer_id)
+    ):
+        raise ValueError("invalid customer_id")
     ids = _clean_ids(product_ids)
     if not ids:
         return {}
@@ -144,18 +189,24 @@ def get_offers(product_ids: list[str], requested_date: date, customer_id: str | 
         fn = None
     if fn is not None:
         try:
-            try:
-                res = fn(ids, req_date, customer_id=customer_id)
-            except TypeError:
-                res = fn(ids, req_date)
             out: dict[str, Offer] = {}
-            for k, v in (res or {}).items():
-                if not isinstance(k, str) or not k.strip():
+            for i in range(0, len(ids), BATCH_SIZE):
+                chunk = ids[i:i + BATCH_SIZE]
+                try:
+                    res = fn(chunk, req_date, customer_id=customer_id)
+                except TypeError:
+                    res = fn(chunk, req_date)
+                if not isinstance(res, Mapping):
                     continue
-                ks = k.strip()
-                clean = _sanitize_offer(v, ks, req_date)
-                if clean is not None:
-                    out[ks] = clean
+                for k, v in res.items():
+                    if not isinstance(k, str) or not k.strip():
+                        continue
+                    ks = k.strip()
+                    if len(ks) > MAX_ID_LEN or any(ch.isspace() for ch in ks) or _has_bad_char(ks):
+                        continue
+                    clean = _sanitize_offer(v, ks, req_date)
+                    if clean is not None:
+                        out[ks] = clean
             return out
         except (NotImplementedError, ModuleNotFoundError) as e:
             log.warning("aimo.backend.get_offers unavailable (%s); using catalog fallback client", type(e).__name__)
@@ -163,38 +214,70 @@ def get_offers(product_ids: list[str], requested_date: date, customer_id: str | 
 
 
 def _cache_path(kind: str, ids: list[str], d: date):
-    h = hashlib.sha1(",".join(sorted(ids)).encode()).hexdigest()[:16]
-    return CACHE_DIR / f"{kind}-{d.isoformat()}-{h}.json"
+    if not isinstance(kind, str) or not _KIND_RE.match(kind):
+        raise ValueError("invalid offer cache kind")
+    req_date = _require_date(d)
+    clean = _clean_ids(ids)
+    h = hashlib.sha1(",".join(sorted(clean)).encode("utf-8", errors="replace")).hexdigest()[:16]
+    return CACHE_DIR / f"{kind}-{req_date.isoformat()}-{h}.json"
 
 
 def _post(kind: str, ids: list[str], d: date) -> dict:
-    p = _cache_path(kind, ids, d)
-    if p.exists() and (OFFLINE or time.time() - p.stat().st_mtime < OFFER_TTL_S):
-        return json.loads(p.read_text())
+    clean = _clean_ids(ids)
+    p = _cache_path(kind, clean, d)
+    try:
+        st = p.stat()
+        if OFFLINE or time.time() - st.st_mtime < OFFER_TTL_S:
+            cached = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(cached, dict):
+                return cached
+            log.warning("ignoring non-object cached offers in %s", p.name)
+    except FileNotFoundError:
+        pass
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        log.warning("ignoring unreadable cached offers %s (%s)", p.name, type(e).__name__)
     if OFFLINE:
         raise RuntimeError("AIMO_OFFLINE=1 and no cached offers")
     import httpx
-    body = {"customer": "aimo-catalog", "requestedDate": d.isoformat(), "products": ids}
+    body = {"customer": "aimo-catalog", "requestedDate": d.isoformat(), "products": clean}
     r = httpx.post(f"{AIMO_BASE_URL}/api/{kind}", json=body, headers={"X-API-Key": AIMO_API_KEY}, timeout=30)
     r.raise_for_status()
     data = r.json()
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data))
+    if not isinstance(data, dict):
+        raise ValueError("upstream offers response must be a JSON object")
+    tmp = None
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError as e:
+        log.warning("catalog offer cache write failed: %s", type(e).__name__)
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     return data
 
 
 def _dt(s: Any) -> Optional[datetime]:
-    if not isinstance(s, str) or not s.strip():
+    if not isinstance(s, str):
         return None
-    txt = s.strip()
-    if txt.endswith("Z"):
+    txt = s.strip(" \t\r\n")
+    if not txt or len(txt) > 64 or _has_bad_char(txt) or not _ISO_DT_RE.match(txt):
+        return None
+    if txt.endswith(("Z", "z")):
         txt = txt[:-1] + "+00:00"
     m = re.match(r"^(.*)([+-]\d{2})(\d{2})$", txt)
     if m:
         txt = f"{m.group(1)}{m.group(2)}:{m.group(3)}"
     try:
-        return datetime.fromisoformat(txt)
-    except ValueError:
+        dt = datetime.fromisoformat(txt)
+        if dt.tzinfo is not None:
+            dt.astimezone(timezone.utc)
+        return dt
+    except (ValueError, OverflowError, TypeError):
         return None
 
 
@@ -205,26 +288,48 @@ def _avail_date(s: Any) -> tuple[bool, Optional[date]]:
         return True, s
     if not isinstance(s, str):
         return False, None
-    txt = s.strip()
+    txt = s.strip(" \t\r\n")
     if not txt:
         return True, None
+    if len(txt) > 64 or _has_bad_char(txt):
+        return False, None
+    head = txt[:10]
+    if len(head) != 10 or head[4] != "-" or head[7] != "-":
+        return False, None
+    if len(txt) > 10 and txt[10] not in ("T", "t", " "):
+        return False, None
     try:
-        return True, date.fromisoformat(txt[:10])
-    except ValueError:
+        return True, date.fromisoformat(head)
+    except (ValueError, OverflowError):
         return False, None
 
 
 def _before(a: datetime, b: datetime) -> bool:
-    if (a.tzinfo is None) == (b.tzinfo is None):
-        return a < b
-    az = a if a.tzinfo is not None else a.replace(tzinfo=timezone.utc)
-    bz = b if b.tzinfo is not None else b.replace(tzinfo=timezone.utc)
-    return az < bz
+    try:
+        if (a.tzinfo is None) == (b.tzinfo is None):
+            return a < b
+        az = a if a.tzinfo is not None else a.replace(tzinfo=timezone.utc)
+        bz = b if b.tzinfo is not None else b.replace(tzinfo=timezone.utc)
+        return az < bz
+    except OverflowError:
+        return False
+
+
+def _clean_short_str(val: Any, max_len: int = 32) -> Optional[str]:
+    if not isinstance(val, str):
+        return None
+    s = val.strip(" \t\r\n")
+    if not s or len(s) > max_len or _has_bad_char(s):
+        return None
+    return s
 
 
 def build_offer(pid: str, d: date, price: Optional[dict], avail: Optional[dict], time_now: Optional[datetime]) -> Offer:
-    if not isinstance(pid, str) or not pid.strip():
+    if not isinstance(pid, str):
         raise ValueError("pid must be a non-empty string")
+    clean_pid = pid.strip(" \t\r\n")
+    if not clean_pid or len(clean_pid) > MAX_ID_LEN or any(ch.isspace() for ch in clean_pid) or _has_bad_char(clean_pid):
+        raise ValueError("pid must be a non-empty string without whitespace or control characters")
     req_date = _require_date(d)
     issues: list[str] = []
     now = time_now if isinstance(time_now, datetime) else datetime.now().astimezone()
@@ -240,16 +345,16 @@ def build_offer(pid: str, d: date, price: Optional[dict], avail: Optional[dict],
         list_val = _pos_finite(lp.get("value"))
         cmp_val = _pos_finite(cmp_d.get("value"))
         tax_val = _nonneg_finite(tax_d.get("taxRate"))
-        curr = cp.get("currency")
-        cu = price.get("comparisonUnit")
+        curr = _clean_short_str(cp.get("currency"), 16)
+        cu = _clean_short_str(price.get("comparisonUnit"), 32)
         kw.update(
             unit_price=up,
             unit_price_gross=ug,
             list_price=list_val,
             comparison_price=cmp_val,
-            comparison_unit=cu.strip() if isinstance(cu, str) and cu.strip() else None,
+            comparison_unit=cu,
             tax_rate=tax_val,
-            currency=curr.strip() if isinstance(curr, str) and curr.strip() else "EUR",
+            currency=curr or "EUR",
             price_valid_to=_dt(cp.get("validTo")),
         )
         if up is not None:
@@ -275,10 +380,8 @@ def build_offer(pid: str, d: date, price: Optional[dict], avail: Optional[dict],
             if amt is None:
                 amt_valid = False
         ok_date, adate = _avail_date(line.get("availableDate"))
-        lm_raw = avail.get("logisticModel")
-        lm = lm_raw if isinstance(lm_raw, str) else None
-        su_raw = line.get("salesUnit")
-        su = su_raw if isinstance(su_raw, str) else None
+        lm = _clean_short_str(avail.get("logisticModel"), 32)
+        su = _clean_short_str(line.get("salesUnit"), 32)
         cutoff = bool(closing and _before(closing, now))
         if lm == "Terminal" and amt == TERMINAL_UNKNOWN:
             amt = None
@@ -316,7 +419,7 @@ def build_offer(pid: str, d: date, price: Optional[dict], avail: Optional[dict],
     else:
         issues.append("availability_error")
     return Offer(
-        product_id=pid.strip(),
+        product_id=clean_pid,
         requested_date=req_date,
         available=available,
         fetched_at=datetime.now().astimezone(),
@@ -331,8 +434,8 @@ def fallback_get_offers(ids: list[str], d: date) -> dict[str, Offer]:
     if not clean:
         return {}
     out: dict[str, Offer] = {}
-    for i in range(0, len(clean), 1000):
-        chunk = clean[i:i + 1000]
+    for i in range(0, len(clean), BATCH_SIZE):
+        chunk = clean[i:i + BATCH_SIZE]
         try:
             pr = _post("price", chunk, req_date)
             av = _post("availability", chunk, req_date)
@@ -342,12 +445,12 @@ def fallback_get_offers(ids: list[str], d: date) -> dict[str, Offer]:
         pr_list = pr.get("products") if isinstance(pr, dict) else None
         av_list = av.get("products") if isinstance(av, dict) else None
         prices = {
-            pid: p for p in (pr_list if isinstance(pr_list, list) else [])
-            if isinstance(p, dict) and isinstance(pid := p.get("productId"), str) and pid.strip()
+            pid.strip(" \t\r\n"): p for p in (pr_list if isinstance(pr_list, list) else [])
+            if isinstance(p, dict) and isinstance(pid := p.get("productId"), str) and pid.strip(" \t\r\n")
         }
         avails = {
-            pid: p for p in (av_list if isinstance(av_list, list) else [])
-            if isinstance(p, dict) and isinstance(pid := p.get("productId"), str) and pid.strip()
+            pid.strip(" \t\r\n"): p for p in (av_list if isinstance(av_list, list) else [])
+            if isinstance(p, dict) and isinstance(pid := p.get("productId"), str) and pid.strip(" \t\r\n")
         }
         now = _dt(av.get("timeNow")) if isinstance(av, dict) else None
         for pid in chunk:

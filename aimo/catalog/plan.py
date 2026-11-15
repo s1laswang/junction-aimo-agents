@@ -527,11 +527,100 @@ def plan_need(need: Need, offers_fn: Optional[Callable[[list[str], Any], dict[st
     cover = coverage_sentence(need, plan)
     out_need = (original.model_copy(update={"excluded_allergens": list(policy_need.excluded_allergens)})
                 if list(policy_need.excluded_allergens) != list(original.excluded_allergens) else original)
-    plan = plan.model_copy(update={"need": out_need, "explanation": " ".join(
-        [*notes, cover, plan.explanation, *late_notes, *advice]).strip()})
+    req_hits = list(dict.fromkeys([*_request_injection(original), *_request_injection(need)]))[:3]
+    plan_expl = _strip_request_injection_warning(plan.explanation)
+    full_expl = " ".join([*notes, cover, plan_expl, *late_notes, *advice]).strip()
+    if req_hits:
+        full_expl = _with_request_injection_warning(full_expl, req_hits)
+    plan = plan.model_copy(update={"need": out_need, "explanation": full_expl})
     if os.environ.get("AIMO_RECIPE_CHECK", "1") != "0":
         _recipe_checks(need, plan)
     return plan
+
+
+_ZW_CHARS_RE = re.compile(r"[\u200b-\u200f\ufeff]")
+_MILK_QUERY_RE = re.compile(r"\b(?:milk|[a-zåäö]*maito\w*|[a-zåäö]*mjölk\w*|dairy)\b", re.I)
+_MILK_SOLID_RE = re.compile(
+    r"\b(?:butter|buttermilk|voi\b|smör|cheese|juusto|cream|kerma|grädde|yoghurt|yogurt|jogurtti|"
+    r"quark|rahka|sour\s*milk|sourmilk|piimä|filmjölk|powder|jauhe|ice\s*cream|jäätelö|"
+    r"sauce|kastike|soup|keitto|oil|öljy|egg|eggs|kananmuna|muna|ägg|fish|kala|fisk)\b",
+    re.I,
+)
+_PLANT_MILK_SUB_RE = re.compile(
+    r"\b(?:drink|[a-zåäö]*juoma\w*|[a-zåäö]*dryck\w*|oat\w*|kaura\w*|havre\w*|soy\w*|soija\w*|soja\w*|"
+    r"almond\w*|rice|riisi\w*|coconut|kookos\w*|oddlygood|oatly|aito|alpro)\b",
+    re.I,
+)
+_NON_MILK_LIQUID_RE = re.compile(
+    r"\b(?:oil|[a-zåäö]*öljy\w*|sauce|[a-zåäö]*kastike\w*|juice|[a-zåäö]*mehu\w*|saft|soup|[a-zåäö]*keitto\w*|"
+    r"broth|liemi|vinegar|etikka|syrup|siirappi)\b",
+    re.I,
+)
+_BREAD_KIND_RE = re.compile(
+    r"\b(?:[a-zåäö]*bread\w*|[a-zåäö]*leipä\w*|[a-zåäö]*bröd\w*|loaf|loaves|rolls?|[a-zåäö]*sämpylä\w*)\b",
+    re.I,
+)
+_FLOUR_KIND_RE = re.compile(r"\b(?:[a-zåäö]*flour\w*|[a-zåäö]*jauho\w*|[a-zåäö]*mjöl(?!k))\b", re.I)
+_PASTA_KIND_RE = re.compile(
+    r"\b(?:pasta\w*|macaroni|makaroni\w*|spaghetti|spagetti|penne|fusilli|lasagne|lasagna|noodle\w*|nuudeli\w*)\b",
+    re.I,
+)
+_GLUTEN_BARE_RE = re.compile(r"\b(?:gluten|gluteeni\w*|cereals\s+containing\s+gluten)\b", re.I)
+_MODIFIER_CONCEPTS = frozenset({
+    "lactose free", "gluten free", "low lactose", "semi skimmed", "skimmed", "organic", "vegan",
+    "liquid", "sliced", "dark", "white", "whole", "raw", "plain", "salted", "unsalted", "roasted",
+    "crushed", "ground", "chopped", "diced", "minced", "dried", "smoked",
+})
+
+
+_INJECTION_TAIL_RE = re.compile(
+    r"[;(]|\b(?:system|admin|developer|ignore|disregard|bypass|disable|override|allow)\b",
+    re.I,
+)
+
+
+def _usual_matches_allergen_need(need: Need, row: dict[str, Any], named: list[str]) -> bool:
+    from aimo.catalog.substitution import GENERIC_CONCEPTS, missing_query_concepts
+
+    if row.get("content_unit") is not None and row.get("content_unit") != need.unit:
+        return False
+    q_low = _ZW_CHARS_RE.sub("", (need.product_query or "").lower())
+    q_head = _INJECTION_TAIL_RE.split(q_low, maxsplit=1)[0].strip()
+    u_name = _ZW_CHARS_RE.sub(
+        "",
+        " ".join(str(row.get(k) or "") for k in ("name", "name_en", "name_fi", "name_sv")).lower(),
+    )
+    for cand_q in dict.fromkeys([need.product_query or "", q_head]):
+        if not cand_q:
+            continue
+        q_concepts = [
+            c for c, _ in parse_query(cand_q)
+            if c not in GENERIC_CONCEPTS and c not in _LITERAL_ALLERGEN_PHRASES
+        ]
+        if q_concepts and not missing_query_concepts(cand_q, row):
+            return True
+    if "milk" in named and row.get("content_unit") == "L":
+        if _MILK_QUERY_RE.search(q_head or q_low) and not _MILK_SOLID_RE.search(q_head or q_low):
+            return bool(_PLANT_MILK_SUB_RE.search(u_name) and not _NON_MILK_LIQUID_RE.search(u_name))
+    if "gluten" in named:
+        g_q = q_head or q_low
+        if _FLOUR_KIND_RE.search(g_q):
+            return bool(_FLOUR_KIND_RE.search(u_name))
+        if _PASTA_KIND_RE.search(g_q):
+            return bool(_PASTA_KIND_RE.search(u_name))
+        if _BREAD_KIND_RE.search(g_q) or _GLUTEN_BARE_RE.search(g_q):
+            return bool(_BREAD_KIND_RE.search(u_name))
+    rem = re.sub(r"\u2019", "'", q_head or q_low)
+    for phrase in sorted(_LITERAL_ALLERGEN_PHRASES, key=len, reverse=True):
+        rem = re.sub(rf"(?<![a-zåäö']){re.escape(phrase)}(?![a-zåäö'])", " ", rem)
+    rem = re.sub(r"\s+", " ", rem).strip()
+    if not rem:
+        return False
+    rem_concepts = [
+        c for c, _ in parse_query(rem)
+        if c not in GENERIC_CONCEPTS and c not in _MODIFIER_CONCEPTS
+    ]
+    return bool(rem_concepts) and not missing_query_concepts(rem, row)
 
 
 def _allergen_safe_alternative(
@@ -556,6 +645,7 @@ def _allergen_safe_alternative(
             eff_excl,
             allergen_source=rows[pid].get("allergen_source"),
         )
+        and _usual_matches_allergen_need(need, rows[pid], named)
     ]
     head = (
         f"'{need.product_query}' is itself {' and '.join(named)}, which this customer's policy excludes, "
@@ -674,6 +764,34 @@ def _candidate_injection_reasons(c: Candidate, existing: list[str]) -> list[str]
     return []
 
 
+def _candidate_allergen_blocked(c: Candidate, excl: list[str], row: Optional[dict[str, Any]]) -> bool:
+    if not excl:
+        return False
+    if "allergen_unknown" in c.flags:
+        return True
+    excl_set = set(excl)
+    if any(
+        f.startswith(("contains:", "may_contain:"))
+        and set(normalize_allergens([f.split(":", 1)[1]])) & excl_set
+        for f in c.flags
+    ):
+        return True
+    if row is not None and ("allergens" in row or "allergen_source" in row):
+        if blocking(row.get("allergens") or {}, excl, allergen_source=row.get("allergen_source")):
+            return True
+    return False
+
+
+def _row_for_allergen_guard(pid: str, shortlist: dict, loaded: dict) -> Optional[dict[str, Any]]:
+    s_row = shortlist.get(pid)
+    if isinstance(s_row, dict) and ("allergens" in s_row or "allergen_source" in s_row):
+        return s_row
+    l_row = loaded.get(pid)
+    if isinstance(l_row, dict) and ("allergens" in l_row or "allergen_source" in l_row):
+        return l_row
+    return None
+
+
 def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, rel: dict,
                 hints: dict) -> tuple[Plan, list[str]]:
     """Cover a shortfall with products that are only blocked by date (cut-off / late availability).
@@ -725,10 +843,14 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
             raise ValueError("plan.shortfall must be a finite non-negative number")
         return plan, []
     from aimo.catalog.delivery import earliest_feasible, fmt, late_offer
+    eff_excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    full_rows = _load_rows([c.product.id for c in full if c.product.id not in shortlist]) if eff_excl else {}
     allow = bool((need.preferences or {}).get("allow_split_delivery"))
     late: dict[str, tuple[Candidate, date, bool]] = {}
     for c in full:
         if not _only_orderability(c) or c.offer is None:
+            continue
+        if _candidate_allergen_blocked(c, eff_excl, _row_for_allergen_guard(c.product.id, shortlist, full_rows)):
             continue
         if _pos_num(c.offer.unit_price) is None:
             continue
@@ -746,7 +868,10 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     if not late:
         return plan, []
     last = max(d for _c, d, _e in late.values())
-    late_need = need.model_copy(update={"delivery_by": last})
+    late_updates: dict[str, Any] = {"delivery_by": last}
+    if eff_excl != list(need.excluded_allergens):
+        late_updates["excluded_allergens"] = eff_excl
+    late_need = need.model_copy(update=late_updates)
     late_offers = {pid: late_offer(c.offer, d) for pid, (c, d, _e) in late.items()}
     ranked = rank_substitutes(late_need, late_offers, limit=50, rows={p: shortlist[p] for p in late if p in shortlist},
                               relevance=rel, inferred_allergens=hints)
@@ -762,6 +887,8 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     for c in ranked:
         if remaining <= 1e-9:
             break
+        if _candidate_allergen_blocked(c, eff_excl, _row_for_allergen_guard(c.product.id, shortlist, loaded_lots)):
+            continue
         content = _pos_num(c.product.content_amount)
         unit_price = _pos_num(c.offer.unit_price) if c.offer is not None else None
         if content is None or unit_price is None or c.product.content_unit != need.unit:
@@ -810,6 +937,10 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
                 f" ({', '.join(f'{l.covered_amount:g} {need.unit} of {l.product_name} ({l.product_id})' for l in new_lines)})"
                 f"{' (estimated)' if any(late[l.product_id][2] for l in new_lines) else ''}. Not added to the plan: "
                 f"re-plan for {fmt(d_all)} or allow split delivery.")
+        if req_hits := _request_injection(need):
+            plan = plan.model_copy(
+                update={"explanation": _with_request_injection_warning(plan.explanation, req_hits)}
+            )
         return plan, [note]
     lines = [*plan.lines, *new_lines]
     covered_total = round(sum(l.covered_amount for l in lines), 4)
@@ -817,7 +948,10 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
     shortfall = round(max(0.0, float(need.quantity) - covered_total), 4)
     note = (f"Split delivery: {late_cov:g} {need.unit} arrive {fmt(d_all)} (late_option lines, flagged for review).")
     _ = first
-    explanation = explain(need, lines, plan.candidates, covered_total, shortfall, total_net)
+    explanation = _with_request_injection_warning(
+        explain(need, lines, plan.candidates, covered_total, shortfall, total_net),
+        _request_injection(need),
+    )
     return plan.model_copy(update={"lines": lines, "covered_amount": covered_total, "total_net": total_net,
                                    "shortfall": shortfall, "explanation": explanation}), [note]
 
@@ -935,7 +1069,7 @@ def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
                 l = futs[f]
                 try:
                     j = f.result()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 verdict = "compatible" if j.get("compatible") else "NOT compatible"
                 l.reasons.append(f"Gemini recipe check vs usual product: {verdict} ({j.get('confidence')}): "
@@ -943,8 +1077,8 @@ def _recipe_checks(need: Need, plan: Plan, timeout_s: float = 8.0) -> None:
                 if not j.get("compatible"):
                     l.flags = sorted(set(l.flags) | {"recipe_check_failed"})
         finally:
-            ex.shutdown(wait=False, cancel_futures=True)   # never block the plan on a slow LLM
-    except Exception:  # noqa: BLE001
+            ex.shutdown(wait=False, cancel_futures=True)
+    except Exception:
         return
 
 
@@ -1046,8 +1180,61 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
     covered_total = round(sum(l.covered_amount for l in lines), 4)
     total_net = round(sum(l.line_total for l in lines), 2)
     shortfall = round(max(0.0, float(need.quantity) - covered_total), 4)
+    text = explain(need, lines, cands, covered_total, shortfall, total_net)
+    req_hits = _request_injection(need)
+    if req_hits:
+        text = _with_request_injection_warning(text, req_hits)
     return Plan(need=need, lines=lines, candidates=cands, covered_amount=covered_total, shortfall=shortfall,
-                total_net=total_net, explanation=explain(need, lines, cands, covered_total, shortfall, total_net))
+                total_net=total_net, explanation=text)
+
+
+_REQUEST_INJECTION_WARNING_RE = re.compile(
+    r"^(?:Warning: the request contains instructions aimed at AI agents \(.+?\)\. "
+    r"They were ignored, and the customer's policy will ask a human to confirm\.\s*)+"
+)
+
+
+def _format_request_injection_warning(req_hits: list[str]) -> str:
+    return (
+        "Warning: the request contains instructions aimed at AI agents ("
+        + ", ".join(req_hits)
+        + "). They were ignored, and the customer's policy will ask a human to confirm."
+    )
+
+
+def _strip_request_injection_warning(text: str) -> str:
+    return _REQUEST_INJECTION_WARNING_RE.sub("", text or "").lstrip()
+
+
+def _with_request_injection_warning(text: str, req_hits: list[str]) -> str:
+    clean_text = _strip_request_injection_warning(text)
+    if not req_hits:
+        return clean_text
+    warn = _format_request_injection_warning(req_hits)
+    return f"{warn} {clean_text}" if clean_text else warn
+
+
+def _request_injection(need: Need) -> list[str]:
+    try:
+        text = " \n".join(str(t) for t in (need.raw_text, need.product_query) if t)
+        if not text.strip():
+            return []
+        try:
+            from aimo.trust.screening import screen_text
+
+            try:
+                s = screen_text(text, use_gemini=False)
+            except TypeError:
+                s = screen_text(text)
+        except (ImportError, NotImplementedError, AttributeError):
+            from aimo.catalog.screening_bridge import _fallback_screen
+
+            s = _fallback_screen(text)
+        if not isinstance(s, dict) or not s.get("suspicious"):
+            return []
+        return list(dict.fromkeys(s.get("strong_reasons") or s.get("reasons") or ["suspicious"]))[:3]
+    except Exception:
+        return []
 
 
 def explain(need: Need, lines: list[PlanLine], cands: list[Candidate], covered: float, shortfall: float,
