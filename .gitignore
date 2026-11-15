@@ -11,3 +11,4 @@ keys/
 *.pem
 .DS_Store
 .git_rev
+conformance-*.json

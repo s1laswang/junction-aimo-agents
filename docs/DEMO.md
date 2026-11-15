@@ -80,7 +80,9 @@ Measured result to quote ([demo-montage.md](demo-montage.md), Sun 15 Nov 02:54, 
 How to run it for the pitch (it takes about 3 minutes, so start it before going on stage):
 1. Run it against a **second gateway with its own state**, so its five placed orders do not count towards the hotel's weekly budget in the hero demo:
    ```bash
-   AIMO_DATA_DIR=~/aimo-montage-data uv run aimo serve --port 8031      # data dir prepared like step 1 of the checklist
+   AIMO_DEMO_FAULTS=1 AIMO_DATA_DIR=~/aimo-montage-data uv run aimo serve --port 8031   # data dir prepared like step 1 of the checklist
+   # AIMO_DEMO_FAULTS=1: the montage injects stock-outs and supplier-text attacks as the agent on purpose. Without it the
+   # gateway ignores X-Aimo-Faults / X-Aimo-Now on any request carrying agent identity (an agent cannot backdate or fake stock).
    uv run aimo demo --montage --base-url http://localhost:8031 --montage-out /tmp/montage.md
    ```
    `--montage-out` keeps the committed `docs/demo-montage.md` unchanged.
