@@ -498,14 +498,22 @@ def fallback_parse_items(text: str, customer_id: str, now: datetime | None = Non
     if d is None:
         prefs["delivery_date_assumed"] = True
     allergens = detect_allergens(text)
-    items = [it for it in split_items(text) if it["query"]]
+    raw_items = split_items(text)
+    items = [it for it in raw_items if it["query"] or it["quantity"] <= 0]
     if len(items) <= 1:
         qty = (items[0]["quantity"], items[0]["unit"]) if items else (parse_quantity(text) or (1.0, "PCS"))
         specs = [(qty, guess_query(text), detect_claims(text))]
     else:
         g = _global_claims(text)
-        specs = [((it["quantity"], it["unit"]), it["query"], list(dict.fromkeys([*detect_claims(it["clause"]), *g])))
-                 for it in items]
+        fallback_q = guess_query(text)
+        specs = [
+            (
+                (it["quantity"], it["unit"]),
+                it["query"] or fallback_q,
+                list(dict.fromkeys([*detect_claims(it["clause"]), *g])),
+            )
+            for it in items
+        ]
     needs = [Need(raw_text=text, customer_id=customer_id, product_query=q, required_claims=claims,
                   excluded_allergens=allergens, quantity=qty[0], unit=qty[1],
                   delivery_by=d[0] if d else today + timedelta(days=2), preferences=dict(prefs))
@@ -516,6 +524,22 @@ def fallback_parse_items(text: str, customer_id: str, now: datetime | None = Non
 def fallback_parse(text: str, customer_id: str, now: datetime | None = None,
                    profile: dict | None = None) -> Need:
     return fallback_parse_items(text, customer_id, now, profile)[0]
+
+
+_DAIRY_PROFILE_RE = re.compile(
+    r"\b(?:milk|mai[dt]o\w*|mjölk\w*|cream|kerm\w*|grädd\w*|butter|voi(?:ta|n)?|smör\w*|"
+    r"cheese|juust\w*|ost\w*|yogh?urt\w*|jogurt\w*|rahk\w*|quark|kvarg\w*|piim\w*|filmjölk\w*|buttermilk)\b",
+    re.I,
+)
+_PLANT_PROFILE_RE = re.compile(
+    r"\b(?:oat|kaura\w*|havre\w*|soy|soija\w*|soja\w*|plant|vegan\w*|vegansk\w*|almond|manteli\w*|mandel\w*|"
+    r"pea|herne\w*|ärt\w*|coconut|kookos\w*|kokos\w*|rice|riisi\w*|ris\w*|peanut\w*|maapähkin\w*|jordnöt\w*)\b",
+    re.I,
+)
+_NAMED_BRAND_RE = re.compile(
+    r"\b(?:arla|oatly|alpro|porlammin|juustoportti|maitomaa|ingman|fazer|riitan|kuusamon|keiju|flora|sunnuntai|bridor)\b",
+    re.I,
+)
 
 
 def apply_profile(need: Need, profile: dict | None) -> Need:
@@ -536,6 +560,17 @@ def apply_profile(need: Need, profile: dict | None) -> Need:
         if std.get("qty_per_week") and need.unit == std.get("unit"):
             prefs["standing_order_qty_per_week"] = std["qty_per_week"]
             prefs["standing_order_ratio"] = round(need.quantity / float(std["qty_per_week"]), 2)
+    else:
+        prof_brand = (profile.get("preferences") or {}).get("brand")
+        q = need.product_query or ""
+        if (
+            prof_brand
+            and "brand" not in prefs
+            and _DAIRY_PROFILE_RE.search(q)
+            and not _PLANT_PROFILE_RE.search(q)
+            and not _NAMED_BRAND_RE.search(q)
+        ):
+            prefs["brand"] = prof_brand
     return need.model_copy(update={"excluded_allergens": allergens, "preferences": prefs,
                                    "preferred_product_ids": preferred})
 

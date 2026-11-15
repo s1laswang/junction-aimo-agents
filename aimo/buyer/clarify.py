@@ -44,6 +44,7 @@ LIQUID_OR_BULK = re.compile(
     r"yogh?urt|jogurtti|flour|jauho|mjöl|sugar|sokeri|socker|oil|öljy|olja)\b",
     re.I,
 )
+SMALL_LIQUID_PACK = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:dl|ml|cl)\b", re.I)
 NEXT_WEEK = re.compile(r"\bnext\s+week\b|\bensi\s+viikolla\b|\bensi\s+viikon\b|\bnästa\s+vecka\b", re.I)
 WEEKDAY = re.compile(
     r"\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b"
@@ -138,6 +139,16 @@ def find_questions(needs: list[Need], profile: dict, text: str, now: datetime,
         if DAIRY_VARIANT.search(q) and not VARIANT_WORDS.search(q) and not VARIANT_WORDS.search(_QTY_RE.sub(" ", t)) \
                 and not n.preferred_product_ids:
             hits = _products(search(q, n.required_claims))[:10]
+            pref_brand = str((n.preferences or {}).get("brand") or "").strip().lower()
+            bulk_litres = n.unit == "L" and n.quantity >= 10
+            if pref_brand or bulk_litres:
+                hits = sorted(
+                    hits,
+                    key=lambda h: (
+                        0 if (not pref_brand or str(h.get("brand") or "").strip().lower() == pref_brand) else 1,
+                        1 if (bulk_litres and SMALL_LIQUID_PACK.search(str(h.get("name") or ""))) else 0,
+                    ),
+                )
             groups: dict[str, dict] = {}
             for h in hits:
                 k = variant_key(h.get("name", ""))
