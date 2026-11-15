@@ -553,7 +553,7 @@ def test_live_http_agent_runs_sse_stream_keyless(
     keyless_env: list[str],
 ) -> None:
     base, _ = toy_live_server
-    cust_headers = {"X-Customer-Id": "hotel-aurora"}
+    cust_headers = {"X-Customer-Id": "hotel-aurora", "X-Approver-Pin": APPROVER_PIN}
     stop = _start_http_approver_safety_net(base, "hotel-aurora")
     try:
         created = httpx.post(
@@ -633,7 +633,7 @@ def test_live_replay_gateway_run_demo_and_sse_keyless(
     assert MOCK_LABEL in res["summary"]
     _verify_signed_quote_peppol_and_audit(base, res["quote"], res["order"]["order_id"], "AP")
 
-    cust_headers = {"X-Customer-Id": "hotel-aurora"}
+    cust_headers = {"X-Customer-Id": "hotel-aurora", "X-Approver-Pin": APPROVER_PIN}
     stop = _start_http_approver_safety_net(base, "hotel-aurora")
     try:
         created = httpx.post(

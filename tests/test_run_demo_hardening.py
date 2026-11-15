@@ -112,6 +112,7 @@ def _per_approver_replay_server(srv_dir: Path) -> Iterator[str]:
             "AIMO_STATE_DB": str(state_db),
             "AIMO_KEY_DIR": str(key_dir),
             "AIMO_APPROVER_PINS": json.dumps(PINS_MAP),
+            "AIMO_DEMO_FAULTS": "1",
             "AIMO_REPLAY": str(REPLAY_DIR),
             "AIMO_OFFLINE": "0",
             "AIMO_NOW": "2026-11-14T15:00:00+02:00",
