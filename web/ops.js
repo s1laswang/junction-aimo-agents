@@ -4,25 +4,39 @@
 import { h, mount, eur, num, time, dayTime, relTime, roleLabel, titleCase, actorKind } from "./util.js";
 
 // Audit actions that mean "something was stopped". Matching is by action first, then by wording.
-const BLOCK_RULES = [
-  [/approval\.refused/, "Approval refused", "Someone tried to approve without the right identity, role or quote hash."],
-  [/order\.refused/, "Order refused", "An agent tried to submit a quote it does not own, or lacks the order:submit scope."],
-  [/request\.refused/, "Request refused", "An agent without a mandate tried to quote."],
-  [/proposal\.accept_refused/, "Seller blocked", "The seller agent tried to accept its own proposal (sellers cannot order)."],
-  [/injection/, "Prompt injection", "Supplier text tried to instruct the agent; it was flagged and ignored."],
-  [/claims_corrected/, "Agent claim corrected", "The agent mislabelled a line; the gateway verified and corrected it."],
-  [/tamper/, "Tampering", "An audit event was altered; the hash chain exposed it."],
-];
+const RULE_APPROVAL = [/approval\.refused/, "Approval refused", "Someone tried to approve without the right identity, role or quote hash."];
+const RULE_ORDER = [/order\.refused/, "Order refused", "An agent tried to submit a quote it does not own, or lacks the order:submit scope."];
+const RULE_REQUEST = [/request\.refused/, "Request refused", "An agent without a mandate tried to quote."];
+const RULE_AUTH = [/(?:voice|auth|demo|run|identity|search)\.refused/, "Auth refused", "A caller with an unknown, mismatched or unauthorised identity was refused."];
+const RULE_SELLER = [/proposal\.(?:accept|decline)_refused/, "Seller blocked", "The seller agent tried to accept or decline a customer proposal (sellers cannot order)."];
+const RULE_INJECTION = [/injection/, "Prompt injection", "Supplier text tried to instruct the agent; it was flagged and ignored."];
+const RULE_CLAIMS = [/claims_corrected/, "Agent claim corrected", "The agent mislabelled a line; the gateway verified and corrected it."];
+const RULE_TAMPER = [/(?:^|[._-])tamper(?:ed|ing|s)?(?:$|[._-])|untamper[._-]refused/i, "Tampering", "An audit event was altered or a tamper attempt was refused."];
+
+const BLOCK_RULES = [RULE_APPROVAL, RULE_ORDER, RULE_REQUEST, RULE_AUTH, RULE_SELLER, RULE_INJECTION, RULE_CLAIMS, RULE_TAMPER];
+
+const APPROVAL_REFUSAL_RE = /\b(approver_mismatch|forbidden_approver|agent_cannot_approve|approver_session_required|approver_auth_required|approver_locked)\b/i;
+const AUTH_REFUSAL_RE = /\b(unknown_customer|customer_mismatch|invalid_agent_key|agent_key_required|identity_required|agent_mismatch|scope_missing)\b/i;
+const SELLER_REFUSAL_RE = /\bseller_cannot_order\b/i;
+const POSITIVE_ACTION_RE = /^(approval\.verified|order\.(approved|placed)|demo\.untamper|audit\.untampered)$/;
 
 export function blockedEvents(events) {
   const out = [];
   for (const e of events || []) {
     const a = String(e.action || "");
     let rule = BLOCK_RULES.find(([re]) => re.test(a));
-    if (!rule && /prompt injection|injection/i.test(e.summary || "") && !/^(approval\.verified|order\.(approved|placed))/.test(a)) rule = BLOCK_RULES[4];
+    if (!rule && !POSITIVE_ACTION_RE.test(a)) {
+      const d = e.data && typeof e.data === "object" ? e.data : {};
+      const detail = `${d.error || ""} ${d.code || ""} ${d.reason || ""} ${e.summary || ""}`;
+      if (APPROVAL_REFUSAL_RE.test(detail)) rule = RULE_APPROVAL;
+      else if (AUTH_REFUSAL_RE.test(detail)) rule = RULE_AUTH;
+      else if (SELLER_REFUSAL_RE.test(detail)) rule = RULE_SELLER;
+      else if (/\btamper(?:ed|ing|s)?\b/i.test(detail) || /\buntamper\b.*\brefused\b/i.test(detail)) rule = RULE_TAMPER;
+      else if (/prompt injection|injection/i.test(e.summary || "")) rule = RULE_INJECTION;
+    }
     if (rule) out.push({ e, label: rule[1], hint: rule[2] });
   }
-  return out.reverse(); // newest first
+  return out.reverse();
 }
 
 const EXC_ACTIONS = /requote|expired|order\.rejected|lines_unavailable|quote\.refused|rate_limit|upstream|retry/;
