@@ -147,3 +147,9 @@ Same 640 Gemini-written scenarios and snapshot as above; `AIMO_SEMANTIC=0`. Deta
 | final policy (main 7225d06, `main` in JSON) | **69.5%** | **99.7%** | **74.8%** | **0** | **0** | **100.0%** (80/80, 1 FP / 560) | 91.4% |
 
 Target ≥ 90% precision at ≥ 99% recall: recall met, **precision not met** (69.5% on final policy: 331 needed, 145 unnecessary escalations; 68.2% on `a99692f`).
+
+## Interactive judge surfaces & regression suite cross-reference
+
+- **One-Page Judge Walkthrough ([docs/demo/index.html](demo/index.html)):** zero-install 7-step browser walkthrough ("One-Page Judge Walkthrough") citing the `wt640` scorecard (`0` vs `372` policy violations, `0` vs `193` allergen violations, `80/80` scenario injections blocked) alongside live WebCrypto Ed25519 JWS quote verification, 403 `agent_cannot_approve`, 409 `requote_needed`, Peppol `AP`, and 6-event audit tamper check (`tests/test_judge_html_demo.py`).
+- **Red-team warehouse arena ([docs/arena/](arena/), `docs/arena/index.html`):** "Try to Scam the Agent" interactive red-team scenarios (prompt injection, allergen hard-blocks, self-approval, spend limits and re-quotes) rendered with 24 `CC0-1.0` Kenney sprites documented in [docs/demo/ASSETS.md](demo/ASSETS.md).
+- **Fleet invariant & regression coverage (`7990fa3` on `fr8/valio/main`, `d89db12` on `fr8/valio/docs`):** wind-tunnel policy, allergen and injection invariants are enforced offline alongside the `4,137` collected pytest cases in `tests/`.
