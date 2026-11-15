@@ -156,6 +156,7 @@ def mark_supplier_text(cands: list[Candidate], rows: dict[str, dict[str, Any]],
     for c in cands:
         text = (texts or {}).get(c.product.id) or (rows.get(c.product.id) or {}).get("marketing_text") or ""
         hits = _screen_supplier_text(text) if text.strip() else ()
+        c.injection_screen = {"suspicious": bool(hits), "reasons": list(hits[:5]), "screened": bool(text.strip())}
         if hits and "supplier_text_injection_suspected" not in c.flags:
             c.flags.append("supplier_text_injection_suspected")
             c.reasons.append(SUPPLIER_TEXT_REASON + " (" + ", ".join(hits[:3])
@@ -355,7 +356,8 @@ def _late_split(need: Need, plan: Plan, full: list[Candidate], shortlist: dict, 
                    f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}"]
         new_lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
                                   qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
-                                  unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=flags))
+                                  unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=flags,
+                                  injection_screen=c.injection_screen))
         remaining -= covered
     if not new_lines:
         return plan, []
@@ -539,7 +541,8 @@ def fill(need: Need, cands: list[Candidate]) -> Plan:
                        f"{units:g} x €{c.offer.unit_price:.2f} = €{total:,.2f}")
         lines.append(PlanLine(product_id=c.product.id, product_name=c.product.name, tier=c.tier,
                               qty_sales_units=units, sales_unit=c.product.sales_unit, covered_amount=covered,
-                              unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=sorted(set(flags))))
+                              unit_price=c.offer.unit_price, line_total=total, reasons=reasons, flags=sorted(set(flags)),
+                              injection_screen=c.injection_screen))
         remaining -= covered
     covered_total = round(sum(l.covered_amount for l in lines), 4)
     total_net = round(sum(l.line_total for l in lines), 2)
@@ -568,4 +571,10 @@ def explain(need: Need, lines: list[PlanLine], cands: list[Candidate], covered: 
     n_rej = sum(1 for c in cands if c.tier == "rejected")
     if n_rej:
         parts.append(f"{n_rej} candidate(s) rejected; see candidates[].reasons.")
+    flagged = list(dict.fromkeys(f"{l.product_name} ({l.product_id})" for l in lines
+                                 if (l.injection_screen or {}).get("suspicious")
+                                 or "supplier_text_injection_suspected" in l.flags))
+    if flagged:
+        parts.append(f"Prompt-injection screen: untrusted supplier text on {', '.join(flagged)} was flagged and "
+                     f"ignored; an order with this line needs a human approver.")
     return " ".join(parts)
