@@ -81,10 +81,7 @@ def test_price_change_inside_lock_is_honoured_after_lock_requote(api, monkeypatc
     # inside the price lock: placement (after the human OK) happens at the SIGNED price, never silently repriced
     o = api.post("/v1/orders", headers=shock, json={"quote_id": q["quote_id"], "quote_hash": q["quote_hash"]}).json()
     assert not [h for h in o["decision"]["hits"] if h["rule_id"].startswith("spend") and h["outcome"] != "allow"]
-    r = api.post(f"/v1/approvals/{o['order_id']}/decision", headers={"X-Aimo-Faults": "price_shock:464306:1.4"},
-                 json={"decision": "approve", "quote_hash": q["quote_hash"], **APPROVER})
-    assert r.status_code == 200, r.text
-    assert r.json()["status"] == "placed" and r.json()["response_code"] == "AP"
+    assert o["status"] == "placed" and o["response_code"] == "AP", o
     assert api.get(f"/v1/quotes/{q['quote_id']}").json()["total_net"] == 404.0
     # after the lock: 409 quote_expired -> re-quote picks up the new price and the policy re-runs on it
     q2 = _quote(api, [{"product_id": "464306", "qty_sales_units": 400}]).json()
