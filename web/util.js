@@ -114,6 +114,7 @@ const FLAGS = {
   spec_substitution: ["Spec change", "warn"],
   injection_flagged: ["Prompt injection flagged", "bad"],
   injection_suspected: ["Prompt injection flagged", "bad"],
+  supplier_text_injection_suspected: ["Prompt injection flagged", "bad"],
   suspicious_text: ["Prompt injection flagged", "bad"],
   sales_block: ["Sales block", "bad"],
   price_error: ["Price unavailable", "bad"],

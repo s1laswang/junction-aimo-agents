@@ -96,7 +96,8 @@ export function createLiveApi(base) {
         image_b64: image?.data_b64 || undefined, image_mime: image?.mime || undefined,
       }, { "X-Customer-Id": customer_id }),
     /** Answer a needs_clarification step: {option_id?, text?, question_id?}. */
-    answer: (runId, body) => req("POST", `/v1/agent/runs/${encodeURIComponent(runId)}/answer`, body),
+    answer: (runId, body, customerId) =>
+      req("POST", `/v1/agent/runs/${encodeURIComponent(runId)}/answer`, customerId ? { ...body, customer_id: customerId } : body, customerId ? { "X-Customer-Id": customerId } : undefined),
 
     /** Subscribe to the SSE AgentStep stream. Returns a close() function. */
     streamRun(runId, onStep, onEnd) {
@@ -134,7 +135,7 @@ export function createLiveApi(base) {
     getOrder: (id) => req("GET", `/v1/orders/${encodeURIComponent(id)}`),
     getQuote: (id) => req("GET", `/v1/quotes/${encodeURIComponent(id)}`),
     /** Learned swaps ({customer_id, available, swaps}); hidden when available is false. */
-    learned: (customerId) => req("GET", `/v1/customers/${encodeURIComponent(customerId)}/learned`),
+    learned: (customerId) => req("GET", `/v1/customers/${encodeURIComponent(customerId)}/learned`, null, customerId ? { "X-Customer-Id": customerId } : undefined),
     audit: (subjectId) => req("GET", subjectId ? `/v1/audit?subject_id=${encodeURIComponent(subjectId)}` : "/v1/audit"),
     verify: () => req("GET", "/v1/audit/verify"),
     report: (subjectId) => req("GET", `/v1/audit/report/${encodeURIComponent(subjectId)}`),
@@ -142,8 +143,8 @@ export function createLiveApi(base) {
     jwks: () => req("GET", "/.well-known/jwks.json"),
     // Port additions (interfaces.md): recipes, drift, seller proposals.
     recipes: () => req("GET", "/v1/recipes"),
-    planRecipe: (body) => req("POST", "/v1/recipes/plan", body),
-    drift: (customerId) => req("GET", `/v1/drift/${encodeURIComponent(customerId)}`),
+    planRecipe: (body) => req("POST", "/v1/recipes/plan", body, body?.customer_id ? { "X-Customer-Id": body.customer_id } : undefined),
+    drift: (customerId) => req("GET", `/v1/drift/${encodeURIComponent(customerId)}`, null, customerId ? { "X-Customer-Id": customerId } : undefined),
     propose: (customerId) => req("POST", "/v1/proposals", { customer_id: customerId, note: "Requested from the Valio Aimo ops console" }, { "X-Agent-Id": "valio-aimo/seller-1" }),
     proposals: (customerId) => req("GET", customerId ? `/v1/proposals?customer_id=${encodeURIComponent(customerId)}` : "/v1/proposals"),
     /** Quote + order a recipe plan's quote_request as the customer's own agent (only that agent may submit its quote). */

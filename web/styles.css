@@ -218,7 +218,8 @@ pre.code {
   border-radius: var(--r-sm); padding: 2px 7px; font-size: var(--fs-xs); white-space: nowrap;
 }
 .chip i { font-style: normal; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
-.chip b { font-weight: 600; }
+.chip b { font-weight: 600; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.chip { max-width: 100%; }
 
 .empty {
   border: 1px dashed var(--border-strong); border-radius: var(--r-lg); padding: var(--s6) var(--s5);
@@ -310,6 +311,10 @@ table.t tfoot td { font-weight: 600; border-top: 1px solid var(--border-strong);
 .flag.warn { background: var(--warn-tint); color: var(--warn); border-color: var(--warn-line); }
 .flag.ok { background: var(--ok-tint); color: var(--ok); border-color: var(--ok-line); }
 .plan-badge { font-size: var(--fs-xs); font-weight: 600; color: var(--ok); background: var(--ok-tint); border: 1px solid var(--ok-line); border-radius: var(--r-sm); padding: 2px 7px; white-space: nowrap; }
+.plan-screen { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 4px; margin-top: 4px; padding: 3px 8px; border-radius: var(--r-sm); border: 1px solid; font-size: var(--fs-xs); line-height: 1.35; }
+.plan-screen.ok { color: var(--ok); background: var(--ok-tint); border-color: var(--ok-line); font-weight: 500; }
+.plan-screen.bad { display: block; color: var(--bad); background: var(--bad-tint); border-color: var(--bad-line); }
+.plan-screen b { font-weight: 600; }
 details.rejected-group > summary {
   cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--s2); padding: var(--s2) 0; font-weight: 500;
 }
@@ -533,8 +538,16 @@ tr.short td { background: var(--warn-tint); }
 .signin-card .card-body { display: flex; flex-direction: column; gap: var(--s3); align-items: flex-start; }
 .signin-card h3 { margin: 0; }
 .signin-card p { margin: 0; max-width: 62ch; }
-.signed-as { display: flex; align-items: center; gap: var(--s2); min-height: 34px; }
+.signed-as { display: flex; align-items: center; gap: var(--s2); min-height: 34px; white-space: nowrap; flex-wrap: wrap; }
 .inline-warn { color: var(--warn); background: var(--warn-tint); border: 1px solid var(--warn-line); border-radius: var(--r-md); padding: 6px 10px; }
+
+.mode-pill, .blocked-pill, .open-strip a, .approver-chip, .brand-text strong { white-space: nowrap; }
+.open-strip { margin-left: var(--s3); }
+@media (max-width: 1480px) {
+  .open-label, .brand-text span { display: none; }
+  .approver-chip.on .role { display: none; }
+  .open-strip { gap: var(--s3); }
+}
 
 /* ------------------------------------------------------------- voice approval (S5) */
 .btn-voice { border-color: var(--accent); color: var(--accent-ink); }
