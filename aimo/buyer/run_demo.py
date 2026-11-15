@@ -31,11 +31,9 @@ SCENARIOS: dict[str, dict[str, str]] = {
     "drift": {"customer": "hotel-aurora", "fake": "happy",
               "text": "Standing order for next week: 4,000 litres of lactose-free milk by Monday."},
     "event": {"customer": "hotel-aurora", "fake": "happy",
-              # Sunday delivery is impossible in the live data (all cut-offs passed); Monday's cut-off is Sun 17:00.
               "text": "Last-minute conference dinner for 150 on Monday evening: we need 40 L cream and 20 kg butter, lactose-free."},
 }
 
-# ---------------------------------------------------------------- pretty printing
 _TTY = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 C = {"dim": "2", "b": "1", "red": "31", "green": "32", "yellow": "33", "blue": "34", "mag": "35", "cyan": "36"}
 
@@ -54,6 +52,77 @@ ICON = {"thought": ("·", "dim"), "tool_call": ("→", "cyan"), "tool_result": (
 
 def wrap(s: str, indent: int = 7) -> str:
     return textwrap.fill(s, width=100, initial_indent=" " * indent, subsequent_indent=" " * indent)
+
+
+def _split_plan_segments(text: str) -> list[str]:
+    segs: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    n = len(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch in "\r\n":
+            s = "".join(buf).strip()
+            if s:
+                segs.append(s)
+            buf = []
+            depth = 0
+            i += 1
+            continue
+        if depth == 0 and buf and text[i - 1].isspace() and text.startswith(("Warning:", "Note:"), i):
+            s = "".join(buf).strip().rstrip(";-")
+            if s:
+                segs.append(s.strip())
+            buf = []
+        if ch in "([":
+            depth += 1
+        elif ch in ")]" and depth > 0:
+            depth -= 1
+        buf.append(ch)
+        if depth == 0 and ch in ".!?" and i + 1 < n and text[i + 1].isspace():
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if j < n and (text[j].isupper() or text.startswith(("Warning:", "Note:"), j)):
+                s = "".join(buf).strip()
+                if s:
+                    segs.append(s)
+                buf = []
+                i = j
+                continue
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        segs.append(tail)
+    return segs
+
+
+def _plan_warnings(plan_exp: Any, rationale: Any = None) -> list[str]:
+    text = str(plan_exp or "").strip()
+    if not text:
+        return []
+    segs = _split_plan_segments(text)
+    rat_norm = " ".join(str(rationale or "").split()).lower()
+    out: list[str] = []
+    seen: set[str] = set()
+    idx = 0
+    while idx < len(segs):
+        seg = segs[idx]
+        if seg.startswith(("Warning:", "Note:")):
+            head = seg
+            full = seg
+            if seg.startswith("Warning:") and idx + 1 < len(segs) and segs[idx + 1].startswith("They were ignored"):
+                full = f"{seg} {segs[idx + 1]}"
+                idx += 1
+            head_key = " ".join(head.rstrip(".").split()).lower()
+            full_key = " ".join(full.rstrip(".").split()).lower()
+            if head_key and head_key not in seen:
+                seen.add(head_key)
+                if not rat_norm or (full_key not in rat_norm and head_key not in rat_norm):
+                    out.append(full)
+        idx += 1
+    return out
 
 
 def print_step(step: Any) -> None:
@@ -97,6 +166,9 @@ def print_step(step: Any) -> None:
         rej = [cd for cd in plan.get("candidates", []) if cd.get("tier") == "rejected"]
         for cd in rej[:4]:
             print(c(f"       rejected  {cd.get('product', {}).get('id')}  {'; '.join(cd.get('reasons') or [])[:90]}", "dim"))
+        plan_exp = str(plan.get("explanation") or "")
+        for msg in _plan_warnings(plan_exp, d.get("rationale")):
+            print(c(wrap(msg), "yellow"))
         if d.get("rationale"):
             print(c(wrap("Why: " + d["rationale"]), "mag"))
     elif kind == "decision":
@@ -124,7 +196,6 @@ def print_step(step: Any) -> None:
             print(c("  models: " + ", ".join(f"{m['model']}/{m['thinking']}" for m in mu), "dim"))
 
 
-# ---------------------------------------------------------------- simulated human approver
 def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: threading.Event,
                        delay: float = 3.0, decision: str = "approve", client: Any = None,
                        ready: threading.Event | None = None, poll_s: float | None = None) -> None:
@@ -180,9 +251,30 @@ def http_auto_approver(base_url: str, approver: str, customer_id: str, stop: thr
                 except Exception as e:
                     print(c(f"       [human] approval of {oid} failed: {type(e).__name__}", "red"), flush=True)
                     continue
+                if resp.status_code == 409:
+                    body_err: dict[str, Any] = {}
+                    try:
+                        parsed = resp.json()
+                        if isinstance(parsed, dict):
+                            body_err = parsed
+                    except Exception:
+                        body_err = {}
+                    if body_err.get("error") == "requote_needed":
+                        detail = body_err.get("detail")
+                        detail_d = detail if isinstance(detail, dict) else {}
+                        new_order = detail_d.get("new_order")
+                        new_order_d = new_order if isinstance(new_order, dict) else {}
+                        reason = detail_d.get("reason") or "requote_needed"
+                        new_oid = new_order_d.get("order_id") or "?"
+                        seen.add(oid)
+                        print(c(f"       [human] {oid} needs re-quote ({reason}) -> replacement {new_oid}", "yellow"),
+                              flush=True)
+                        continue
                 if resp.status_code < 500:
                     seen.add(oid)
-                print(c(f"       [human] {approver} {decision}d {oid} via {via} -> {resp.status_code}", "green"), flush=True)
+                color = "red" if resp.status_code >= 400 else "green"
+                print(c(f"       [human] {approver} {decision}d {oid} via {via} -> {resp.status_code}", color),
+                      flush=True)
         except Exception as e:
             print(c(f"       [human] approval poll failed: {type(e).__name__}", "red"), flush=True)
             baseline = True
@@ -273,7 +365,6 @@ def _gateway_now(base_url: str | None, kind: str):
     return None
 
 
-# ---------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="aimo demo", description="Gemini buyer agent, terminal demo")
     ap.add_argument("--scenario", default="happy", choices=sorted(SCENARIOS))
@@ -443,7 +534,6 @@ def _answer_fn(mode: str):
     return first
 
 
-# ---------------------------------------------------------------- montage
 MONTAGE = ["happy", "stockout", "school-allergen", "injection", "drift", "event"]
 APPROVERS = {"hotel-aurora": "anna@hotel-aurora.example", "school-tampere": "liisa@school-tampere.example",
              "hospital-meilahti": "sara@hospital-meilahti.example"}
@@ -614,7 +704,7 @@ def run_montage(a) -> int:
             approver = a.auto_approve_as or _env_approver(cust) or APPROVERS.get(cust, "anna@hotel-aurora.example")
         try:
             r = run_scenario(a, name, approver)
-        except Exception as e:  # noqa: BLE001  one broken scenario must not stop the montage
+        except Exception as e:
             r = {"status": "error", "error": f"{type(e).__name__}: {e}"[:300], "steps": [], "scenario": name,
                  "customer_id": sc["customer"], "latency_s": 0, "run_id": ""}
         results.append((name, r))
