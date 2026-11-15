@@ -101,6 +101,7 @@ The script is about 30 lines. Keys come **only** from the JWKS you pass, never f
 - A Nordic quote verifies against Nordic's JWKS (`VERIFIED`).
 - The same quote **fails** against Valio's JWKS (`signature BAD` / `FAILED`): the keys are separate, so a signature from one wholesaler can't pass as another's.
 - A quote with an edited `total_net` fails (`hash MISMATCH`).
+- Keyless browser inspection of the same `otap/0.1` proofs (no backend or API keys needed): open the **One-Page Judge Walkthrough** in [docs/demo/](demo/) (`docs/demo/index.html`, step-by-step Ed25519 JWS quote verification, 403 agent-approval refusal, 409 price-change requote, Peppol `AP` response, and audit chain tamper check) or **"Try to Scam the Agent"** in [docs/arena/](arena/) (`docs/arena/index.html`, static pixel-art wholesale warehouse red-team game across 5 guardrail scam attempts + 30 s happy-path order + scoreboard over recorded gateway JWS/audit responses; `CC0-1.0` Kenney sprite ledger in [docs/demo/ASSETS.md](demo/ASSETS.md)).
 
 ## Known portability gaps (for the gateway and trust owners)
 - `aimo/backend/client.py` puts `"source": "valio-aimo-mock-api"` in offer provenance. This should come from the client, e.g. `getattr(client, "source", …)`. Nordic's offers show its `upstream` (`static://nordic-bakery-supply`) correctly, but carry that source label.
