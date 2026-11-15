@@ -338,6 +338,8 @@ def ui_server(tmp_path_factory: pytest.TempPathFactory):
     }
     env.pop("AIMO_AGENT_KEYS", None)
     env.pop("AIMO_AGENT_KEY", None)
+    env.pop("AIMO_REPLAY", None)
+    env.pop("AIMO_NOW", None)
     with open(log_path, "w+", encoding="utf-8") as log_file:
         proc = subprocess.Popen(
             [sys.executable, str(script_path), str(port), str(data_dir), str(state_path), APPROVER_PIN],
@@ -555,6 +557,7 @@ def test_live_partial_stock_requote_one_click_approval_and_audit_verify(
         assert verify_json["checked"] >= 4
 
         page.locator("#tab-audit").click()
+        expect(page.locator("#view-audit ol.chain")).to_be_visible(timeout=10000)
         page.locator("#view-audit button", has_text="Verify chain").click()
         expect(page.locator("#view-audit .verify-result.ok")).to_be_visible(timeout=10000)
         assert page_errors == []
@@ -675,7 +678,8 @@ def test_live_plan_tab_clean_supplier_flagged_and_buyer_request_injection_screen
         assert "\u2014" not in raw_warn_text
         expect(clean_milk_row.locator(".plan-screen.ok")).to_have_text("Prompt-injection screen: clean")
         expect(clean_milk_row.locator(".plan-screen.bad")).to_have_count(0)
-        expect(page.locator("#view-plan .verdict.needs_approval")).to_contain_text("injection:request")
+        expect(page.locator("#view-plan .verdict.needs_approval")).to_contain_text("injection")
+        expect(page.locator("#view-plan .verdict.needs_approval")).to_contain_text("instruction override")
 
         delivery_day = (datetime.now(timezone.utc).date() + timedelta(days=5)).isoformat()
         pq_plan_res = httpx.post(
