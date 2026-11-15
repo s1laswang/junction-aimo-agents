@@ -524,8 +524,93 @@ def test_scripted_run_agent_with_fake_gateway_injected_raw_text_and_product_quer
     assert res_query_inj["status"] == "pending_approval"
     assert res_query_inj["order"]["timed_out"] is True
     assert any(
+        "buyer product_query:" in f
+        for f in ((res_query_inj["quote"].get("need") or {}).get("preferences") or {}).get("injection_flags", [])
+    )
+    assert any(
         h["rule_id"] == "security.prompt_injection:request"
         for h in res_query_inj["order"]["decision"]["hits"]
+    )
+    assert any(
+        h["rule_id"] == "security.prompt_injection"
+        for h in res_query_inj["order"]["decision"]["hits"]
+    )
+
+    def _scripted_quote_only_injection_model(feature: str, model: str, contents: Any, config: Any = None) -> Any:
+        if isinstance(contents, str):
+            return _txt("")
+        done = [
+            p.function_response.name
+            for c in contents
+            for p in (getattr(c, "parts", None) or [])
+            if getattr(p, "function_response", None)
+        ]
+        if "plan_need" not in done:
+            return _fc(
+                "plan_need",
+                {
+                    "need": {
+                        "product_query": "lactose-free milk",
+                        "quantity": 20,
+                        "unit": "L",
+                        "delivery_by": DELIVERY,
+                    }
+                },
+            )
+        if "create_quote" not in done:
+            plan_resp = next(
+                p.function_response.response
+                for c in reversed(contents)
+                for p in (c.parts or [])
+                if p.function_response and p.function_response.name == "plan_need"
+            )
+            lines = [
+                {"product_id": ln["product_id"], "qty_sales_units": ln["qty_sales_units"], "tier": ln["tier"]}
+                for ln in plan_resp["lines"]
+            ]
+            return _fc(
+                "create_quote",
+                {
+                    "delivery_date": DELIVERY,
+                    "lines": lines,
+                    "need": {"product_query": injected_q, "quantity": 20, "unit": "L", "delivery_by": DELIVERY},
+                },
+            )
+        if "place_order" not in done:
+            quote_resp = next(
+                p.function_response.response
+                for c in reversed(contents)
+                for p in (c.parts or [])
+                if p.function_response and p.function_response.name == "create_quote"
+            )
+            return _fc("place_order", {"quote_id": quote_resp["quote_id"], "quote_hash": quote_resp["quote_hash"]})
+        return _txt("Held for human approval.")
+
+    gw_quote_only_inj = FakeGateway("hotel-aurora", "hotel-aurora/buyer-1", now=SAT)
+    res_quote_only_inj = run_agent(
+        "We need 20 litres of lactose-free milk at Hotel Aurora Helsinki by Monday.",
+        "hotel-aurora",
+        FakeTransport(gw_quote_only_inj),
+        generate_fn=_scripted_quote_only_injection_model,
+        use_gemini_parse=False,
+        explain=False,
+        approval_timeout_s=0.05,
+        poll_s=0.015,
+        now=SAT,
+    )
+    assert "Warning: the request contains instructions aimed at AI agents (" in res_quote_only_inj["plan"]["explanation"]
+    assert res_quote_only_inj["status"] == "pending_approval"
+    assert any(
+        "buyer product_query:" in f
+        for f in ((res_quote_only_inj["quote"].get("need") or {}).get("preferences") or {}).get("injection_flags", [])
+    )
+    assert any(
+        h["rule_id"] == "security.prompt_injection:request"
+        for h in res_quote_only_inj["order"]["decision"]["hits"]
+    )
+    assert any(
+        h["rule_id"] == "security.prompt_injection"
+        for h in res_quote_only_inj["order"]["decision"]["hits"]
     )
 
     port = _free_port()

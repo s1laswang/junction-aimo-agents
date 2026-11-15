@@ -317,7 +317,7 @@ class BuyerAgent:
         self.drift: Optional[dict] = None
         self.tool_failures: dict[str, int] = {}
         self.injections: list[dict] = []
-        self._suspicious_queries: list[str] = []
+        self._tool_injections: list[tuple[str, str]] = []
         self.escalate_next = False
         self.escalated = False
         self.models_used: list[dict] = []
@@ -705,11 +705,11 @@ class BuyerAgent:
                 locked["raw_text"] = raw_pq
             locked["product_query"] = clean_locked_pq
             given_pq = given.get("product_query").strip() if isinstance(given.get("product_query"), str) else ""
-            given_pq_susp = bool(given_pq and _screen_fast(given_pq).get("suspicious"))
-            if given_pq_susp and given_pq not in self._suspicious_queries:
-                self._suspicious_queries.append(given_pq)
-            has_inj = bool(self.injections or self._request_injection_flags() or given_pq_susp)
-            if given_pq and not given_pq_susp:
+            given_raw = given.get("raw_text").strip() if isinstance(given.get("raw_text"), str) else ""
+            pq_screen = self._record_tool_injection("product_query", given_pq)
+            self._record_tool_injection("raw_text", given_raw)
+            has_inj = bool(self.injections or self._request_injection_flags() or pq_screen.get("suspicious"))
+            if given_pq and not pq_screen.get("suspicious"):
                 if not has_inj:
                     chosen_pq = given_pq
                 else:
@@ -718,13 +718,11 @@ class BuyerAgent:
                     chosen_pq = given_pq if (base_tokens and (base_tokens & given_tokens)) else clean_locked_pq
             else:
                 chosen_pq = clean_locked_pq
-            base_raw = str(locked.get("raw_text") or "")
-            if self._suspicious_queries and not _screen_fast(base_raw).get("suspicious"):
-                locked["raw_text"] = f"{base_raw} [{self._suspicious_queries[0]}]".strip()
             given_prefs = given.get("preferences") if isinstance(given.get("preferences"), dict) else {}
             prefs_src = (locked.get("preferences") or {}) if has_inj else {**(locked.get("preferences") or {}), **given_prefs}
             merged = {
                 **locked,
+                "raw_text": self._with_tool_injections_raw_text(locked.get("raw_text")),
                 "product_query": chosen_pq,
                 "preferences": {k: v for k, v in prefs_src.items() if k in PLANNER_PREF_KEYS},
             }
@@ -744,9 +742,10 @@ class BuyerAgent:
                 *(self.profile.get("excluded_allergens") or []),
             ]))
             given_need = args.get("need") if isinstance(args.get("need"), dict) else {}
-            given_q_pq = given_need.get("product_query").strip() if isinstance(given_need.get("product_query"), str) else ""
-            if given_q_pq and _screen_fast(given_q_pq).get("suspicious") and given_q_pq not in self._suspicious_queries:
-                self._suspicious_queries.append(given_q_pq)
+            if isinstance(given_need.get("product_query"), str):
+                self._record_tool_injection("product_query", given_need.get("product_query"))
+            if isinstance(given_need.get("raw_text"), str):
+                self._record_tool_injection("raw_text", given_need.get("raw_text"))
             locked_keys = (
                 "customer_id",
                 "product_query",
@@ -759,14 +758,17 @@ class BuyerAgent:
                 "raw_text",
             )
             merged_need = {**given_need, **{k: quote_need[k] for k in locked_keys if k in quote_need}}
-            base_q_raw = str(merged_need.get("raw_text") or "")
-            if self._suspicious_queries and not _screen_fast(base_q_raw).get("suspicious"):
-                merged_need["raw_text"] = f"{base_q_raw} [{self._suspicious_queries[0]}]".strip()
+            merged_need["raw_text"] = self._with_tool_injections_raw_text(merged_need.get("raw_text"))
             prefs = dict(quote_need.get("preferences") or {})
             inj_flags = list(dict.fromkeys([*self._injection_flags(), *self._request_injection_flags()]))
             if inj_flags:
                 prefs["injection_flags"] = inj_flags
             merged_need["preferences"] = prefs
+            if isinstance(self.plan, dict):
+                warn = self._request_injection_warning()
+                exp = str(self.plan.get("explanation") or "")
+                if warn and "Warning: the request contains instructions aimed at AI agents" not in exp:
+                    self.plan = {**self.plan, "explanation": f"{warn} {exp}".strip()}
             args["need"] = merged_need
             args["delivery_date"] = (
                 min(x.delivery_by for x in self.needs).isoformat()
@@ -889,11 +891,13 @@ class BuyerAgent:
         ps = [self.plans[i] for i in sorted(self.plans)]
         if len(ps) == 1:
             return ps[0]
+        explanations = list(dict.fromkeys(str(p.get("explanation") or "").strip() for p in ps if str(p.get("explanation") or "").strip()))
         return {"need": self._quote_need(), "lines": [l for p in ps for l in p.get("lines", [])],
                 "candidates": [c for p in ps for c in p.get("candidates", [])],
                 "covered_amount": sum(p.get("covered_amount") or 0 for p in ps),
                 "shortfall": sum(p.get("shortfall") or 0 for p in ps),
                 "total_net": round(sum(p.get("total_net") or 0 for p in ps), 2),
+                "explanation": " ".join(explanations),
                 "items": [{"product_query": (p.get("need") or {}).get("product_query"), "shortfall": p.get("shortfall"),
                            "total_net": p.get("total_net")} for p in ps]}
 
@@ -939,21 +943,67 @@ class BuyerAgent:
             out.append(f"{f.get('product_id') or f.get('tool')} {key[1]}: {', '.join(f.get('reasons') or [])}")
         return out
 
+    def _record_tool_injection(self, field_name: str, text: Any) -> dict:
+        val = str(text or "").strip()
+        if not val:
+            return {"suspicious": False, "reasons": [], "strong_reasons": []}
+        s = _screen_fast(val)
+        if s.get("suspicious"):
+            store = getattr(self, "_tool_injections", None)
+            if store is None:
+                store = []
+                self._tool_injections = store
+            pair = (field_name, val)
+            if pair not in store:
+                store.append(pair)
+        return s
+
+    def _with_tool_injections_raw_text(self, base_raw: Any) -> str:
+        raw = str(base_raw or "")
+        extras: list[str] = []
+        for _, val in getattr(self, "_tool_injections", ()):
+            if val and val not in raw and val not in extras:
+                extras.append(val)
+        if not extras:
+            return raw
+        return f"{raw}\n" + "\n".join(extras) if raw else "\n".join(extras)
+
+    def _request_injection_warning(self) -> str:
+        items = self.needs or ([self.need] if self.need is not None else [])
+        reasons: list[str] = []
+        candidates = [
+            *(val for x in items for val in (x.raw_text, x.product_query) if val),
+            *(val for _, val in getattr(self, "_tool_injections", ()) if val),
+        ]
+        for val in candidates:
+            s = _screen_fast(val)
+            if s.get("suspicious"):
+                for r in (s.get("strong_reasons") or s.get("reasons") or ["suspicious_instruction"]):
+                    rs = str(r)
+                    if rs and rs not in reasons:
+                        reasons.append(rs)
+        if not reasons:
+            return ""
+        return f"Warning: the request contains instructions aimed at AI agents ({', '.join(reasons)[:200]})."
+
     def _request_injection_flags(self) -> list[str]:
         items = self.needs or ([self.need] if self.need is not None else [])
         seen: set[str] = set()
         out: list[str] = []
-        for x in items:
-            for field_name, val in (("raw_text", x.raw_text), ("product_query", x.product_query)):
-                if not val:
-                    continue
-                s = _screen_fast(val)
-                if s.get("suspicious"):
-                    rs = list(dict.fromkeys(s.get("strong_reasons") or s.get("reasons") or ["suspicious buyer text"]))
-                    entry = f"buyer {field_name}: {', '.join(str(r) for r in rs[:3])}"
-                    if entry not in seen:
-                        seen.add(entry)
-                        out.append(entry)
+        pairs = [
+            *((field_name, val) for x in items for field_name, val in (("raw_text", x.raw_text), ("product_query", x.product_query))),
+            *getattr(self, "_tool_injections", ()),
+        ]
+        for field_name, val in pairs:
+            if not val:
+                continue
+            s = _screen_fast(val)
+            if s.get("suspicious"):
+                rs = list(dict.fromkeys(s.get("strong_reasons") or s.get("reasons") or ["suspicious buyer text"]))
+                entry = f"buyer {field_name}: {', '.join(str(r) for r in rs[:3])}"
+                if entry not in seen:
+                    seen.add(entry)
+                    out.append(entry)
         return out
 
     def _after(self, name: str, args: dict, result: Any) -> Any:
@@ -962,6 +1012,10 @@ class BuyerAgent:
         if name == "plan_need" and "lines" in result:
             self._replan_pending.discard(self._plan_idx)
             self._replan_needed = bool(self._replan_pending)
+            warn = self._request_injection_warning()
+            exp = str(result.get("explanation") or "")
+            if warn and "Warning: the request contains instructions aimed at AI agents" not in exp:
+                result = {**result, "explanation": f"{warn} {exp}".strip()}
             self.plans[self._plan_idx] = result
             self.plan = self._merge_plans()
             rationale = self._explain(result) if self.explain_enabled else ""

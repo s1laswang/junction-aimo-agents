@@ -167,6 +167,9 @@ def _tool_errors(contents: Any) -> list[str]:
     return out
 
 
+_REPLAN_ERRORS = ("lines_unavailable", "lot_size_mismatch", "fractional_quantity")
+
+
 class MockModel:
     """Drop-in for BuyerAgent(generate_fn=...). Reads the agent's harness state, never invents
     quantities: the harness locks the need and corrects quote lines to the planner's lines."""
@@ -175,6 +178,7 @@ class MockModel:
         self.agent = agent
         self.calls: list[str] = []
         self._last_errors: list[str] = []
+        self._replan_started = False
 
     def __call__(self, feature: str, model: str, contents: Any, config: Any = None):
         self.calls.append(feature)
@@ -197,19 +201,32 @@ class MockModel:
         ]
         if any((getattr(x, "quantity", 1) or 0) <= 0 for _, x in active):
             return _text(self._summary("buyer.agent_step"))
-        done = [p.function_response.name for c in contents for p in (c.parts or []) if p.function_response]
+        frs = [p.function_response for c in contents for p in (c.parts or []) if p.function_response]
+        done = [fr.name for fr in frs]
         plan_failed = any(err.startswith("plan_need:") for err in self._last_errors)
-        if not plan_failed:
+        if not plan_failed and "create_quote" not in done:
             for seq, (i, need) in enumerate(active):
                 if i not in a.plans and done.count("plan_need") <= seq:
                     return _call("plan_need", {"need": need.model_dump(mode="json")})
+        quote_idxs = [idx for idx, fr in enumerate(frs) if fr.name == "create_quote"]
+        replan_needed = bool(getattr(a, "_replan_needed", False))
+        if len(quote_idxs) == 1 and a.quote is None:
+            q_resp = frs[quote_idxs[0]].response
+            q_err = q_resp.get("error") if isinstance(q_resp, dict) else None
+            if replan_needed or q_err in _REPLAN_ERRORS:
+                self._replan_started = True
+        replan_items = [need for _, need in active] or ([a.need] if getattr(a, "need", None) is not None else [])
+        replanned = sum(1 for fr in frs[quote_idxs[0] + 1 :] if fr.name == "plan_need") if len(quote_idxs) == 1 else 0
+        if not plan_failed and len(quote_idxs) == 1 and a.quote is None and self._replan_started:
+            if replanned < len(replan_items):
+                return _call("plan_need", {"need": replan_items[replanned].model_dump(mode="json")})
         lines = _collect_plan_lines(a)
         raw_texts = (
             " ".join((x.raw_text or "") for _, x in active)
             if active
             else ((a.need.raw_text or "") if getattr(a, "need", None) else "")
         ).lower()
-        if not plan_failed and a.quote is None and any(
+        if not plan_failed and a.quote is None and "create_quote" not in done and any(
             k in raw_texts for k in ("detail", "alternative", "ingredient", "ainesos", "innehåll", "ingrediens")
         ):
             inspected = _inspected_products(contents)
@@ -220,7 +237,13 @@ class MockModel:
                         return _call("get_product", {"product_id": pid})
         if plan_failed or (active and any(i not in a.plans for i, _ in active)) or (a.quote is None and not lines):
             return _text(self._summary("buyer.agent_step"))
-        if a.quote is None and "create_quote" not in done:
+        can_quote = "create_quote" not in done or (
+            len(quote_idxs) == 1
+            and self._replan_started
+            and not replan_needed
+            and replanned >= len(replan_items)
+        )
+        if a.quote is None and can_quote:
             delivery_date = (
                 min(x.delivery_by for _, x in active).isoformat()
                 if active
@@ -235,9 +258,11 @@ class MockModel:
         a = self.agent
         if feature == "buyer.explain":
             return f"{MOCK_LABEL} Plan from the deterministic planner; see the reasons on each line."
-        order = getattr(a, "order", None) or {}
+        raw_order = getattr(a, "order", None)
+        order = raw_order if isinstance(raw_order, dict) else {}
         drift = getattr(a, "drift", None)
-        q = getattr(a, "quote", None) or {}
+        raw_quote = getattr(a, "quote", None)
+        q = raw_quote if isinstance(raw_quote, dict) else {}
         status = order.get("status") or ("needs_confirmation" if drift and q else "no_order")
         plans = getattr(a, "plans", None) or {}
         shortfall = (
@@ -278,6 +303,11 @@ class MockModel:
             bits.append(f"approved by {who}")
         elif status == "needs_confirmation":
             bits.append("held for human confirmation")
+        if order.get("response_code") == "CA":
+            bits.append("partial confirmation (Peppol CA)")
         if getattr(a, "injections", None):
             bits.append("suspicious supplier text was detected and ignored")
+        req_fn = getattr(a, "_request_injection_flags", None)
+        if callable(req_fn) and req_fn():
+            bits.append("suspicious instructions in buyer request were ignored")
         return f"{MOCK_LABEL} " + "; ".join(bits) + "."
