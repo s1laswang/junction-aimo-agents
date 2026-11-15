@@ -104,6 +104,7 @@ def _per_approver_replay_server(srv_dir: Path) -> Iterator[str]:
         for k, v in os.environ.items()
         if k not in ("AIMO_APPROVER_PIN", "AIMO_AGENT_KEY", "AIMO_AGENT_KEYS")
     }
+    env.pop("AIMO_CATALOG_FIXTURE", None)
     env.update(
         {
             "PYTHONPATH": str(ROOT),
@@ -111,6 +112,7 @@ def _per_approver_replay_server(srv_dir: Path) -> Iterator[str]:
             "AIMO_STATE_DB": str(state_db),
             "AIMO_KEY_DIR": str(key_dir),
             "AIMO_APPROVER_PINS": json.dumps(PINS_MAP),
+            "AIMO_DEMO_FAULTS": "1",
             "AIMO_REPLAY": str(REPLAY_DIR),
             "AIMO_OFFLINE": "0",
             "AIMO_NOW": "2026-11-14T15:00:00+02:00",
@@ -868,6 +870,7 @@ def test_live_replay_http_per_approver_pins_healthz_clock_and_injection_tags(
     _set_keyless(monkeypatch)
     monkeypatch.setattr(run_demo, "_TTY", False)
     monkeypatch.delenv("AIMO_APPROVER_PIN", raising=False)
+    monkeypatch.delenv("AIMO_CATALOG_FIXTURE", raising=False)
     monkeypatch.delenv("AIMO_NOW", raising=False)
     monkeypatch.setenv("AIMO_APPROVER_PINS", json.dumps(PINS_MAP))
     monkeypatch.setenv("AIMO_REPLAY", str(REPLAY_DIR))
