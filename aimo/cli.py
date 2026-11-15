@@ -19,7 +19,7 @@ def _fetch(force: bool = False) -> None:
 
     sys.path.insert(0, str(config.ROOT / "scripts"))
     try:
-        from fetch_data import ensure_data  # type: ignore
+        from fetch_data import ensure_data
     finally:
         sys.path.pop(0)
     ensure_data(force=force, quiet=not force)
@@ -34,7 +34,7 @@ def _build_catalog(gemini_builds: str = "background") -> None:
     gemini_builds: "background" (default; search degrades to FTS until done), "sync" (block), "skip".
     """
     try:
-        from aimo.backend.catalog_store import load_catalog  # type: ignore
+        from aimo.backend.catalog_store import load_catalog
     except ImportError:
         print("catalog store not available: using gateway fallback search")
         return
@@ -55,18 +55,18 @@ def _build_catalog(gemini_builds: str = "background") -> None:
 
     missing = []
     try:
-        from aimo.catalog import embeddings  # type: ignore
+        from aimo.catalog import embeddings
 
         if not embeddings.available():
             missing.append("embeddings")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"embeddings module unavailable ({e}); semantic search off, FTS only")
     try:
-        from aimo.catalog import gemini_allergens  # type: ignore
+        from aimo.catalog import gemini_allergens
 
         if not gemini_allergens.CACHE.exists():
             missing.append("allergen hints")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"allergen-hint module unavailable ({e})")
     if not missing:
         print("embeddings and allergen hints present")
@@ -87,7 +87,7 @@ def _build_catalog(gemini_builds: str = "background") -> None:
             if "allergen hints" in missing:
                 gemini_allergens.precompute()
             print(f"catalog Gemini builds finished ({what}); semantic search is on")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"catalog Gemini build failed ({e}); search stays on FTS. Retry with:  {BUILD_CMD}")
 
     if gemini_builds == "sync":
@@ -101,19 +101,66 @@ def _build_catalog(gemini_builds: str = "background") -> None:
         threading.Thread(target=run, name="catalog-gemini-build", daemon=True).start()
 
 
+_LOCAL_MCP_HOSTS = frozenset({
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+    "::",
+    "0:0:0:0:0:0:0:1",
+    "0:0:0:0:0:0:0:0",
+})
+
+
+def _local_mcp_port(explicit: str) -> tuple[bool, int | None]:
+    from urllib.parse import urlsplit
+
+    candidate = explicit if "://" in explicit else f"http://{explicit}"
+    scheme, rest = candidate.split("://", 1)
+    scheme_low = scheme.lower()
+    default_port = 443 if scheme_low == "https" else 80 if scheme_low == "http" else None
+    auth = rest.split("/", 1)[0].split("?", 1)[0].split("\x23", 1)[0]
+    auth_low = auth.lower()
+    if auth_low in ("::1", "::"):
+        return True, default_port
+    if auth_low.startswith("::1:") and auth_low[4:].isdigit():
+        return True, int(auth_low[4:])
+    if auth_low.startswith(":::") and auth_low[3:].isdigit():
+        return True, int(auth_low[3:])
+    try:
+        parsed = urlsplit(candidate)
+        host_part = (parsed.hostname or "").lower().rstrip(".")
+        port_part = parsed.port
+    except ValueError:
+        return False, None
+    if host_part not in _LOCAL_MCP_HOSTS:
+        return False, None
+    return True, (port_part if port_part is not None else default_port)
+
+
 def _export_serve_url(host: str, port: int) -> None:
     """The buyer agent's MCP URL follows the port actually served (aimo.buyer.runs.mcp_url_for).
     Exported before uvicorn starts so --reload workers inherit it. An explicit AIMO_MCP_URL that points at a
     different local port is almost certainly stale: say so instead of letting runs hit the wrong server."""
     import os
 
-    stripped = host.strip("[]")
-    local = "127.0.0.1" if stripped in ("0.0.0.0", "::", "", "localhost") else stripped
-    url = f"http://{'[' + local + ']' if ':' in local else local}:{port}"
+    port_num = int(port)
+    stripped = (host or "").strip().strip("[]").strip()
+    local = "127.0.0.1" if stripped.lower() in ("0.0.0.0", "::", "", "localhost") else stripped
+    url = f"http://{'[' + local + ']' if ':' in local else local}:{port_num}"
     os.environ["AIMO_SERVE_URL"] = url
-    explicit = os.environ.get("AIMO_MCP_URL", "").strip()
-    if explicit and any(h in explicit for h in ("localhost", "127.0.0.1", "[::1]")) and f":{port}/" not in explicit + "/":
-        print(f"warning: AIMO_MCP_URL={explicit} does not match the served port {port}; agent runs will use "
+    raw_explicit = os.environ.get("AIMO_MCP_URL")
+    if raw_explicit is None:
+        return
+    explicit = raw_explicit.strip()
+    if not explicit:
+        os.environ.pop("AIMO_MCP_URL", None)
+        return
+    if explicit != raw_explicit:
+        os.environ["AIMO_MCP_URL"] = explicit
+    is_local, mcp_port = _local_mcp_port(explicit)
+    if is_local and mcp_port != port_num:
+        print(f"warning: AIMO_MCP_URL={explicit} does not match the served port {port_num}; agent runs will use "
               f"{url}/mcp instead (unset AIMO_MCP_URL to silence this)")
         os.environ["AIMO_MCP_URL"] = f"{url}/mcp"
 
@@ -122,14 +169,14 @@ def cmd_serve(a: argparse.Namespace) -> None:
     import uvicorn
 
     try:
-        sys.stdout.reconfigure(line_buffering=True)  # startup messages before uvicorn's logs
+        sys.stdout.reconfigure(line_buffering=True)
     except AttributeError:
         pass
     try:
         _fetch()
     except SystemExit as e:
         print(f"warning: {e}")
-    except Exception as e:  # network trouble must not block serving cached data
+    except Exception as e:
         print(f"warning: data download failed: {e}")
     _build_catalog("skip" if a.no_build else "sync" if a.build_sync else "background")
     print(f"Valio Aimo Trusted Trade gateway on http://{a.host}:{a.port}  (docs /docs, MCP /mcp, UI /ui)")
@@ -139,9 +186,8 @@ def cmd_serve(a: argparse.Namespace) -> None:
         w = credential_warning()
         if w:
             print(f"warning: {w}")
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-    # proxy_headers=False: never trust X-Forwarded-For, so per-client approver lockouts cannot be dodged by spoofing
     uvicorn.run("aimo.gateway.app:app", host=a.host, port=a.port, reload=a.reload, log_level="info",
                 proxy_headers=False)
 
@@ -157,7 +203,7 @@ def cmd_demo(a: argparse.Namespace, rest: list[str]) -> None:
 
 
 def cmd_mcp(_: argparse.Namespace) -> None:
-    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)  # stdout is the MCP channel
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
     from aimo.gateway.mcp_server import main
 
     main()
