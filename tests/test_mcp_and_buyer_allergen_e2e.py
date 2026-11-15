@@ -1494,6 +1494,7 @@ def test_replay_snapshot_mcp_and_scripted_buyer_allergen_hardblock(
     replay_data.mkdir(parents=True, exist_ok=True)
     _close_cached_catalog_con()
 
+    monkeypatch.delenv("AIMO_CATALOG_FIXTURE", raising=False)
     monkeypatch.setenv("AIMO_REPLAY", "1")
     monkeypatch.setenv("AIMO_OFFLINE", "0")
     monkeypatch.setattr(config, "OFFLINE", False)

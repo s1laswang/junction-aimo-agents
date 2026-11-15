@@ -220,27 +220,24 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AIMO_RECIPE_CHECK", "0")
     monkeypatch.setenv("AIMO_SEMANTIC", "0")
     monkeypatch.setenv("AIMO_NOW", "2026-11-14T14:00:00+02:00")
-    used_synth_catalog = not config.PRODUCT_JSON.exists()
-    if used_synth_catalog:
-        pjson = tmp_path / "valio_aimo_junction26_product_data.json"
-        cdb = tmp_path / "catalog.sqlite"
-        pjson.write_text(json.dumps(_synthetic_catalog_products()), encoding="utf-8")
-        monkeypatch.setattr(config, "PRODUCT_JSON", pjson)
-        monkeypatch.setattr(config, "CATALOG_DB", cdb)
-        monkeypatch.setattr(catalog_store, "PRODUCT_JSON", pjson)
-        monkeypatch.setattr(catalog_store, "CATALOG_DB", cdb)
-        monkeypatch.setattr(catalog_store, "RELIABILITY_CSV", tmp_path / "missing_rel.csv")
-        monkeypatch.setattr(catalog_store, "CO2_CSV", tmp_path / "missing_co2.csv")
-        textsearch._con.cache_clear()
-        textsearch._nonfood_categories.cache_clear()
+    pjson = tmp_path / "valio_aimo_junction26_product_data.json"
+    cdb = tmp_path / "catalog.sqlite"
+    pjson.write_text(json.dumps(_synthetic_catalog_products()), encoding="utf-8")
+    monkeypatch.setattr(config, "PRODUCT_JSON", pjson)
+    monkeypatch.setattr(config, "CATALOG_DB", cdb)
+    monkeypatch.setattr(catalog_store, "PRODUCT_JSON", pjson)
+    monkeypatch.setattr(catalog_store, "CATALOG_DB", cdb)
+    monkeypatch.setattr(catalog_store, "RELIABILITY_CSV", tmp_path / "missing_rel.csv")
+    monkeypatch.setattr(catalog_store, "CO2_CSV", tmp_path / "missing_co2.csv")
+    textsearch._con.cache_clear()
+    textsearch._nonfood_categories.cache_clear()
     bc.set_client(_RecipeFixtureClient())
     try:
         yield
     finally:
         bc.set_client(None)
-        if used_synth_catalog:
-            textsearch._con.cache_clear()
-            textsearch._nonfood_categories.cache_clear()
+        textsearch._con.cache_clear()
+        textsearch._nonfood_categories.cache_clear()
 
 
 def test_plan_recipe_surfaces_injection_screen_clean_single_and_wildcard(isolated_env: None) -> None:
