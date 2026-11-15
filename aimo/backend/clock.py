@@ -16,6 +16,7 @@ policy freshness via trust's `now=`) reads `now()`. Other components can use `ai
 from __future__ import annotations
 
 import contextvars
+import math
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -29,14 +30,24 @@ def demo_enabled() -> bool:
 
 
 def parse(value: str | None) -> datetime | None:
-    if not value:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s or len(s) > 64:
         return None
     from aimo.backend.client import parse_dt
 
-    dt = parse_dt(value.strip())
-    if dt is None:
+    try:
+        dt = parse_dt(s)
+        if dt is None:
+            return None
+        aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        dt_utc = aware.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    if not (2000 <= dt_utc.year <= 2100):
+        return None
+    return aware
 
 
 def set_request_now(value: str | None) -> contextvars.Token:
@@ -78,9 +89,10 @@ def _now_any() -> datetime:
         return datetime.now(timezone.utc)
     if os.environ.get("AIMO_NOW_FROZEN", "0") == "1":
         return a
-    from datetime import timedelta
-
-    return a + timedelta(seconds=time.time() - _START)
+    try:
+        return a + timedelta(seconds=max(0.0, time.time() - _START))
+    except OverflowError:
+        return datetime.now(timezone.utc)
 
 
 def simulated() -> bool:
@@ -106,8 +118,17 @@ def next_delivery_day(at: datetime | None = None, min_days: int = 1, weekday: in
     after today whose Stock cut-off (the day before at 17:00 Helsinki) is still ahead of `at` (default now())."""
     from datetime import time as _time
 
+    if isinstance(min_days, bool):
+        days = 1
+    else:
+        try:
+            fv = float(min_days)
+            days = max(1, min(365, int(fv))) if math.isfinite(fv) else 1
+        except (TypeError, ValueError, OverflowError):
+            days = 1
+
     n = (at or now()).astimezone(HELSINKI_TZ)
-    d = n.date() + timedelta(days=max(1, int(min_days)))
+    d = n.date() + timedelta(days=days)
     for _ in range(21):
         cutoff = datetime.combine(d - timedelta(days=1), _time(STOCK_CUTOFF_HOUR), HELSINKI_TZ)
         if d.weekday() < 5 and (weekday is None or d.weekday() == weekday) and n < cutoff:

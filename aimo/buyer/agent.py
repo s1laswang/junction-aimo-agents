@@ -720,6 +720,8 @@ class BuyerAgent:
     def _wait_for_approval(self, order: dict) -> dict:
         dec = order.get("decision") or {}
         oid = order["order_id"]
+        seen_orders = {oid}
+        self._approved_polls = 0
         self.emit("approval_wait", f"Waiting for {dec.get('approver_role') or 'a human'} to approve order {oid}",
                   order_id=oid, approver_role=dec.get("approver_role"), quote_id=order.get("quote_id"),
                   quote_hash=order.get("quote_hash"), hits=dec.get("hits", []), poll_s=self.poll_s)
@@ -738,11 +740,62 @@ class BuyerAgent:
                 if self._approved_polls < 15:  # up to ~30 s for placement
                     continue
                 break
+            if isinstance(cur, dict) and cur.get("status") == "expired":
+                prov = cur.get("provenance") or {}
+                next_oid = prov.get("requoted_as") if isinstance(prov, dict) else None
+                if isinstance(next_oid, str) and next_oid and next_oid not in seen_orders:
+                    old_oid = oid
+                    seen_orders.add(next_oid)
+                    self._approved_polls = 0
+                    oid = next_oid
+                    rq_id = prov.get("requote_quote_id") if isinstance(prov, dict) else None
+                    rq_hash = prov.get("requote_quote_hash") if isinstance(prov, dict) else None
+                    if isinstance(self.quote, dict) and isinstance(rq_id, str) and rq_id:
+                        q_upd: dict[str, Any] = {"quote_id": rq_id}
+                        if isinstance(rq_hash, str) and rq_hash:
+                            q_upd["quote_hash"] = rq_hash
+                        elif rq_id != self.quote.get("quote_id"):
+                            q_upd["quote_hash"] = None
+                        self.quote = {**self.quote, **q_upd}
+                    reason = (prov.get("requote_reason") if isinstance(prov, dict) else None) or "requote_needed"
+                    dec = cur.get("decision") or dec
+                    self.emit(
+                        "approval_wait",
+                        f"Order re-quoted ({old_oid} -> {oid}); waiting for {dec.get('approver_role') or 'a human'} to approve order {oid}",
+                        order_id=oid,
+                        old_order_id=old_oid,
+                        requote_reason=reason,
+                        approver_role=dec.get("approver_role"),
+                        quote_id=rq_id if isinstance(rq_id, str) and rq_id else (self.quote or {}).get("quote_id"),
+                        quote_hash=rq_hash if isinstance(rq_hash, str) and rq_hash else (self.quote or {}).get("quote_hash"),
+                        hits=dec.get("hits", []),
+                        poll_s=self.poll_s,
+                    )
+                    cur = {
+                        **cur,
+                        "order_id": oid,
+                        "status": "pending_approval",
+                        **(
+                            {"quote_id": rq_id, "quote_hash": rq_hash if isinstance(rq_hash, str) and rq_hash else None}
+                            if isinstance(rq_id, str) and rq_id
+                            else {}
+                        ),
+                    }
+                    continue
+                break
             if isinstance(cur, dict) and cur.get("status") != "pending_approval":
                 break
         else:
+            if isinstance(cur, dict) and isinstance(self.quote, dict):
+                q_sync = {k: cur[k] for k in ("quote_id", "quote_hash") if isinstance(cur.get(k), str) and cur.get(k)}
+                if q_sync:
+                    self.quote = {**self.quote, **q_sync}
             self.emit("error", f"No human decision within {self.approval_timeout_s:.0f}s", order_id=oid)
             return {**cur, "status": cur.get("status", "pending_approval"), "timed_out": True}
+        if isinstance(cur, dict) and isinstance(self.quote, dict):
+            q_sync = {k: cur[k] for k in ("quote_id", "quote_hash") if isinstance(cur.get(k), str) and cur.get(k)}
+            if q_sync:
+                self.quote = {**self.quote, **q_sync}
         who = cur.get("approved_by") or "the approver"
         self.emit("order", f"Order {oid} {cur.get('status')} (human decision by {who})", order=cur)
         return cur

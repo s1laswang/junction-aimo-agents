@@ -15,6 +15,7 @@ production. Unit codes map the catalog's sales units to UN/ECE Rec 20 (assumptio
 """
 from __future__ import annotations
 
+import math
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -50,7 +51,18 @@ def _cac(parent: ET.Element, tag: str) -> ET.Element:
 
 
 def _num(x: float) -> str:
-    return f"{x:.4f}".rstrip("0").rstrip(".") if x != int(x) else str(int(x))
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        raise ValueError("Peppol numeric value must be finite")
+    try:
+        val = float(x)
+    except OverflowError as exc:
+        raise ValueError("Peppol numeric value must be finite") from exc
+    if not math.isfinite(val):
+        raise ValueError("Peppol numeric value must be finite")
+    if val == 0.0:
+        return "0"
+    s = f"{val:.4f}".rstrip("0").rstrip(".") if val != int(val) else str(int(val))
+    return "0" if s in ("", "-0") else s
 
 
 def _party(parent: ET.Element, role: str, p: dict[str, str]) -> None:

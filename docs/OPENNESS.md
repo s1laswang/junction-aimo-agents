@@ -49,10 +49,10 @@ AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0
 
 | Wholesaler | Result | Report |
 |---|---|---|
-| Valio Aimo Trusted Trade Gateway (replay of recorded mock-API responses, `AIMO_REPLAY=tests/fixtures/snapshot`) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
+| Valio Aimo Trusted Trade Gateway (automatic keyless replay off `tests/fixtures/snapshot/replay/`, 669 products across `2026-11-16`..`2026-11-20`, re-run automatically by keyless `make accept` on every fresh clone; `tests/fixtures/snapshot` also holds the earlier 92-product snapshot) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
 | Nordic Bakery Supply (synthetic, static backend) | **44/44 PASS** | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) |
 
-The earlier run (Sat 19:10, 43 checks, Valio against the live mock API) also passed in full. Both gateways and the suite need the same `AIMO_APPROVER_PIN` in their environment, because the suite's approval checks act as a human.
+The committed Valio report is from the Sat 14 Nov 23:20 `tests/fixtures/snapshot` (92-product) run, and automatic keyless replay (`tests/fixtures/snapshot/replay/`, 669 products + 669-product catalog subset across `2026-11-16`..`2026-11-20`, no `.env`) also passes **44/44 PASS** (re-run automatically by keyless `make accept` on every fresh clone; re-verified Sun 15 Nov 02:15 Helsinki in 1.7 s), as did the earlier live mock-API run (Sat 19:10, 43 checks). Both gateways and the suite need the same `AIMO_APPROVER_PIN` in their environment, because the suite's approval checks act as a human.
 
 `uv run pytest -q tests/test_openness.py` boots Nordic Bakery Supply and runs all 44 conformance checks fully offline (no network, no keys), while `tests/test_toywholesaler_scripted_buyer.py` verifies keyless MCP ordering end to end.
 
@@ -101,3 +101,31 @@ The script is about 30 lines. Keys come **only** from the JWKS you pass, never f
 - `aimo/backend/client.py` puts `"source": "valio-aimo-mock-api"` in offer provenance. This should come from the client, e.g. `getattr(client, "source", …)`. Nordic's offers show its `upstream` (`static://nordic-bakery-supply`) correctly, but carry that source label.
 - `aimo/trust/approvals.py` and `policy.py` texts say "signed by Valio Aimo" / "placed with Valio Aimo". A `supplier_name` setting would make the audit wording supplier-neutral.
 - The buyer profile (`aimo/buyer/profiles.py`) seeds Valio product ids (463038). At Nordic the agent asked for them, got "unavailable" and carried on. This is harmless, but a per-supplier profile would be cleaner.
+
+## Production path
+
+The order is read-only first, then quotes, then orders. Durations and targets are our proposals and have not been checked with Valio.
+
+1. **Read-only pilot** with 3 customers (a hotel, a school kitchen and a hospital ward). Tokens get `catalog:read` only, and humans still order in the webshop. Measure the agent's plan against what the human actually ordered.
+2. **Quotes** (`quote:create`). These are signed fixed-price quotes with a 15-minute lock. Valio legal must confirm whether a signed quote is a binding offer under the sales terms.
+3. **Orders, every one human-approved** (`order:submit`, with every policy outcome forced to `needs_approval`). Approvers are named in the customer's own identity provider.
+4. **Autonomy inside limits.** Relax rules one at a time, using audit evidence. Allergen rules never relax for schools and hospitals.
+5. **Integrations.**
+   - SAP and webshop behind the existing `BackendClient` seam: contract prices and real available-to-promise.
+   - GS1 Synkka as the allergen and net-content truth source, so Gemini hints stay advisory.
+   - Buyer agents hosted in kitchen systems (JAMIX, Aromi).
+   - Peppol Order / Order Response through Valio's access point.
+6. **Identity and keys.**
+   - OAuth 2.1 per the MCP authorization spec, with spend limits as RFC 9396 `authorization_details`.
+   - Signing keys in a KMS or HSM.
+   - Audit to WORM storage with anchored chain heads.
+
+Pilot KPIs:
+- zero-correction order rate;
+- **0** allergen or policy violations reaching an order;
+- escalation precision and recall;
+- time from request to order, and approver wait;
+- AP / CA / RE mix;
+- substitution acceptance;
+- 24-hour complaints vs human orders;
+- model cost per order.

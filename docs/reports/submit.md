@@ -26,6 +26,8 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 | Sun 15 Nov 00:28–00:31 | 81e730d (rebased on 89bc3db: S2 harden, S3 need v1+v2, S5 ui round 2 merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (34 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov ~02:00 | 2a68792 (`origin/main`, S1 replay on 81e730d) | 344 passed, 7 skipped (keyed) | 8/8 PASS (replay keyless + live keyed) | keyless empty `.env`: RESULT: PASS (PASS=16 FAIL=0 SKIP=4; conformance 44/44, MILK FLOW OK replay, `ORD-20261114-762250e2` Peppol AP, audit verify 20 events); keyed: PASS=19 FAIL=0 |
 | Sun 15 Nov 01:56 | 2e6ae66 (`fr8/valio/docs`, S1 replay + fleet suites merged) | 707 passed, 105 skipped, 1 xfailed, 1 xpassed (79.06 s, keyless offline); 14 passed in 1.24 s (`test_docs_submission_hygiene.py` + `test_replay_port.py`) | 8/8 PASS (replay keyless, 88 checks) | keyless offline suite clean (0 failed); s0–s7 8/8 passed off bundled replay snapshot |
+| Sun 15 Nov 02:29-02:31 | 738c93a on 2a68792 (`origin/main`, S1 replay + hourly re-check 3) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | keyed RESULT: PASS (19 PASS, 1 SKIP); keyless fresh clone RESULT: PASS (16 PASS, 4 SKIP) -> pushed to main |
+| Sun 15 Nov 02:48 | 6973c2d (`fr8/valio/docs` on `627c692`, S2 `/v1` fuzz + input hardening + doc reproducibility suites) | 1,150 passed, 105 skipped, 1 xfailed, 1 xpassed (117.61 s, 1,257 collected keyless offline, 0 failures: all catalog-dependent tests skip cleanly without `data/valio_aimo_junction26_product_data.json`); 18 passed in 1.22 s (`test_docs_submission_hygiene.py` + `test_numbers_reproducibility.py`) | 8/8 PASS (replay keyless, 88 checks) | keyless offline suite clean (0 failed); s0-s7 8/8 passed off bundled replay snapshot |
 
 ## Done (hourly re-check 1, Sun 15 Nov 00:28)
 - S3 need: wind-tunnel headline now 0 policy / 0 allergen violations for the gateway, recall 99.7%, precision 68.2% (from 54.0%; 90% target not met). Naive column stays Sat 18:24 and is labelled as against the earlier policy. Updated SUBMISSION, GEMINI row 8, DEMO 2:45 line, deck slide 5, QA 15–16, DECISIONS D5, ASSUMPTIONS, NUMBERS, README pillar 3.
@@ -33,6 +35,10 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 - S2 harden: fuzz (0 server errors over ~2,600 requests) and quantity 422s in SUBMISSION, QA 13, NUMBERS; audit reports now label the simulated clock (DEMO 2:30 note).
 - S5 round 2 (re-quote after the price lock, presenter fit): no claim in S4 docs affected.
 - Test count 344 / 7 / 1 xfailed / 1 xpassed everywhere.
+
+## Done (hourly re-check 3, Sun 15 Nov 02:28)
+- S1 replay merged (`2a68792`, synced at `738c93a`): README env table, keyless vs keyed table, quickstart and `make accept` description rewritten (automatic replay, 669-product snapshot and catalog subset, 503 `catalog_missing`, bundled live fallback); DEMO step 1 and the Wi-Fi row drop `AIMO_REPLAY_FALLBACK`; NUMBERS, ASSUMPTIONS, OPENNESS, QA 13 and SUBMISSION updated.
+- Own keyless check on `origin/main` `738c93a` (fresh clone, empty `.env`, key variables unset): RESULT: PASS, 16 PASS / 4 SKIP. Standalone `main` keyless pytest had 8 failures from S2/S3 tests that need the full catalog and are not marked `needs_data`; on `fr8/valio/docs` `6973c2d` (on `fr8/valio/main` `627c692`), keyless offline `AIMO_OFFLINE=1 pytest -q` passes `1,150 passed, 105 skipped, 1 xfailed, 1 xpassed` across `1,257` collected tests with 0 failures (all catalog-dependent tests skip cleanly without `data/valio_aimo_junction26_product_data.json`).
 
 ## Open items
 - Re-check README, SUBMISSION, DEMO and QA against main every hour while the other sessions merge:
@@ -43,11 +49,12 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 - At the freeze: re-run pytest and the ledger snapshot; paste the video URL and public URL (or the "runs locally" sentence) into SUBMISSION.
 
 ## Requests to other sessions
-- ~~**S1 replay:** consider defaulting `AIMO_REPLAY_FALLBACK` to `tests/fixtures/snapshot` when `data/windtunnel/snapshot` is missing.~~ Resolved in S1 replay (`14d6939` / `2a68792`, ported in `2e6ae66`): `aimo/backend/replay.py` `fallback_dir()` defaults automatically to `tests/fixtures/snapshot/replay` (`replay.BUNDLED_DIR`) when `data/windtunnel/snapshot` is missing.
+- **S2 harden / S3 need (standalone `main`):** mark the 8 catalog-dependent tests (`tests/test_harden.py` x7, `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit`) `needs_data` so standalone `main` keyless pytest is clean instead of 8 failures (already clean with 0 failures on `fr8/valio/docs` `6973c2d` / `fr8/valio/main` `627c692`: `1,150 passed, 105 skipped, 1 xfailed, 1 xpassed` across `1,257` collected tests).
+- ~~**S1 replay:** consider defaulting `AIMO_REPLAY_FALLBACK` to `tests/fixtures/snapshot` when `data/windtunnel/snapshot` is missing.~~ Resolved in S1 replay (`14d6939` / `2a68792`, ported in `2e6ae66` / `627c692`): `aimo/backend/replay.py` `fallback_dir()` defaults automatically to `tests/fixtures/snapshot/replay` (`replay.BUNDLED_DIR`) when `data/windtunnel/snapshot` is missing.
 - ~~**S5 ui:** plain-text PIN prompt~~ resolved by S5's sign-in panel (masked PIN field), merged Sat 23:18; DEMO and README updated.
 - **Gateway owner (no session owns it):** agent identity is header-only. Known and documented (ASSUMPTIONS A8, QA Q4); no change requested before the freeze.
 
-## Verification on `fr8/valio` (`2e6ae66`, Sun 15 Nov 01:56 Helsinki)
-- `PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m scenarios.run_all`: booted fresh keyless gateway on bundled replay snapshot, **8/8 passed** across 88 checks (`s0_guardrails` 12, `s1_milk` 11, `s2_recipe_order` 11, `s3_event_substitution` 9, `s4_stockout` 8, `s5_allergen_safe` 10, `s6_proactive_seller` 14, `s7_drift` 13).
-- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m pytest -q tests/test_docs_submission_hygiene.py tests/test_replay_port.py`: **14 passed in 1.24s**.
-- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m pytest -q`: **707 passed, 105 skipped, 1 xfailed, 1 xpassed in 79.06s** (0 failures).
+## Verification on `fr8/valio` (`6973c2d` on `627c692`, Sun 15 Nov Helsinki)
+- `AIMO_REPLAY=1 AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/python -m scenarios.run_all`: booted fresh keyless gateway on bundled replay snapshot, **8/8 passed** across 88 checks (`s0_guardrails` 12, `s1_milk` 11, `s2_recipe_order` 11, `s3_event_substitution` 9, `s4_stockout` 8, `s5_allergen_safe` 10, `s6_proactive_seller` 14, `s7_drift` 13).
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/pytest -q tests/test_docs_submission_hygiene.py tests/test_numbers_reproducibility.py`: **18 passed in 1.22s**.
+- `AIMO_OFFLINE=1 PYTHONPATH=. /tmp/fleet-root/shared/junction-aimo-agents-venv/bin/pytest -q`: **1,150 passed, 105 skipped, 1 xfailed, 1 xpassed in 117.61s** across `1,257` collected tests (0 failures keyless offline: all catalog-dependent tests skip cleanly without `data/valio_aimo_junction26_product_data.json`; `627c692` on `fr8/valio/main` had `1,146 passed` across `1,253` collected; full 17,546-product catalog JSON on `2468bdd` had `743 passed, 7 skipped, 2 xfailed`).

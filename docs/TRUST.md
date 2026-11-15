@@ -49,7 +49,7 @@ When several roles are needed, the decision names the first one in the policy's 
 - The approver's *directory* role is the role the decision names or an override role. A role claimed in the request never overrides the directory.
 - The decision was `needs_approval`, so a hard reject cannot be overridden.
 - `quote_hash` equals the signed quote's hash, and the signature verifies.
-- The quote has not expired.
+- The quote has not expired. If the 15-minute lock expired or live price/cut-off moved while waiting, `POST /v1/approvals/{id}/decision` returns `409 requote_needed` with an old-vs-new diff, a fresh signed quote, and a replacement pending order (`order.requoted` in audit).
 
 Every attempt, accepted or refused (`approval.refused`), is audited.
 

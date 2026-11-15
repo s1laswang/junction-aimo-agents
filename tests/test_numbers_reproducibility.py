@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import gzip
 import json
 import pathlib
 import re
 import xml.etree.ElementTree as ET
+
+import yaml
 
 from aimo.buyer.costs import summarize
 from aimo.gateway.mcp_server import build_mcp
@@ -273,3 +276,173 @@ def test_openness_conformance_reports_valid_json():
     assert "conformance-nordic-bakery.json" in openness
     for doc_text in (openness, numbers, readme):
         assert "44/44" in doc_text
+
+
+def _pct1(val: float) -> str:
+    return f"{val * 100:.1f}%"
+
+
+def _by_sut(systems: list[dict]) -> dict[str, dict]:
+    return {s["meta"]["sut"]: s for s in systems}
+
+
+def _load_policy(customer_id: str) -> dict:
+    path = ROOT / "aimo" / "trust" / "policies" / f"{customer_id}.yaml"
+    assert path.is_file()
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["policy_id"] == customer_id
+    return data
+
+
+def _rules_by_type(policy: dict) -> dict[str, dict]:
+    rules = policy["rules"]
+    by_type = {r["type"]: r for r in rules}
+    assert len(by_type) == len(rules)
+    return by_type
+
+
+def test_windtunnel_json_matches_documented_metrics():
+    wt = json.loads(_read_text("docs/windtunnel-results.json"))
+
+    wt640 = wt["main"]
+    assert wt640["name"] == "wt640"
+    assert wt640["scenarios"]["n"] == 640
+    sys640 = _by_sut(wt640["systems"])
+    gw640 = sys640["team"]
+    nv640 = sys640["baseline"]
+
+    assert gw640["n"] == 640
+    assert nv640["n"] == 640
+    assert nv640["policy_violations"] == 372
+    assert nv640["allergen_violations"] == 193
+    assert _pct1(nv640["escalation"]["recall"]) == "17.8%"
+    assert _pct1(nv640["escalation"]["precision"]) == "90.8%"
+    assert _pct1(gw640["injection"]["block_rate"]) == "56.2%"
+
+    wt2560 = wt["scale"]
+    assert wt2560["name"] == "wt2560"
+    assert wt2560["scenarios"]["n"] == 2560
+    sys2560 = _by_sut(wt2560["systems"])
+    gw2560 = sys2560["team"]
+    nv2560 = sys2560["baseline"]
+
+    assert gw2560["n"] == 2560
+    assert nv2560["n"] == 2560
+    assert gw2560["policy_violations"] == 11
+    assert nv2560["policy_violations"] == 1452
+    assert gw2560["allergen_violations"] == 0
+    assert nv2560["allergen_violations"] == 728
+    assert _pct1(gw2560["escalation"]["recall"]) == "98.7%"
+    assert _pct1(nv2560["escalation"]["recall"]) == "21.4%"
+    assert _pct1(gw2560["escalation"]["precision"]) == "56.6%"
+    assert _pct1(nv2560["escalation"]["precision"]) == "94.3%"
+
+    se = wt["screen_eval"]
+    assert _pct1(se["regex"]["recall"]) == "44.4%"
+    assert _pct1(se["gemini"]["recall"]) == "94.4%"
+    neg_per_kind = se["gemini"]["negatives"] // 2
+    assert neg_per_kind == 60
+    buyer_fp = se["gemini"]["fp_by_kind"]["request"]
+    supplier_fp = se["gemini"]["fp_by_kind"]["marketing"]
+    assert (buyer_fp, supplier_fp) == (42, 0)
+
+    wt_md = _read_text("docs/windtunnel-results.md")
+    numbers_md = _read_text("docs/NUMBERS.md")
+    submission_md = _read_text("docs/SUBMISSION.md")
+
+    for doc_name, doc_text in (
+        ("docs/windtunnel-results.md", wt_md),
+        ("docs/NUMBERS.md", numbers_md),
+        ("docs/SUBMISSION.md", submission_md),
+    ):
+        for tok in ("wt640", "640", "372", "193", "17.8%", "90.8%", "56.2%", "wt2560", "728", "44.4%", "94.4%"):
+            assert tok in doc_text, f"{doc_name} missing windtunnel metric {tok!r}"
+        assert "2560" in doc_text or "2,560" in doc_text, f"{doc_name} missing wt2560 N"
+        assert "1452" in doc_text or "1,452" in doc_text, f"{doc_name} missing wt2560 naive policy violations"
+        assert re.search(r"\b11\b", doc_text), f"{doc_name} missing wt2560 gateway policy violations (11)"
+        assert re.search(r"\b42(?:/|\s+of\s+)60\b", doc_text), f"{doc_name} missing 42/60 buyer FP"
+        assert re.search(r"\b0(?:/|\s+of\s+)60\b", doc_text), f"{doc_name} missing 0/60 supplier FP"
+
+    for doc_name, doc_text in (
+        ("docs/windtunnel-results.md", wt_md),
+        ("docs/NUMBERS.md", numbers_md),
+    ):
+        for tok in ("98.7%", "21.4%", "56.6%", "94.3%", "42/60", "0/60"):
+            assert tok in doc_text, f"{doc_name} missing windtunnel scale/screen metric {tok!r}"
+
+
+def test_customer_policy_yamls_match_trust_doc_approval_matrix():
+    hotel = _load_policy("hotel-aurora")
+    school = _load_policy("school-tampere")
+    hospital = _load_policy("hospital-meilahti")
+
+    hotel_rules = _rules_by_type(hotel)
+    school_rules = _rules_by_type(school)
+    hospital_rules = _rules_by_type(hospital)
+
+    assert (hotel_rules["spend_threshold"]["auto_max"], hotel_rules["spend_threshold"]["approval_max"]) == (500, 5000)
+    assert (school_rules["spend_threshold"]["auto_max"], school_rules["spend_threshold"]["approval_max"]) == (300, 3000)
+    assert (hospital_rules["spend_threshold"]["auto_max"], hospital_rules["spend_threshold"]["approval_max"]) == (1000, 10000)
+
+    assert hotel_rules["allergen_block"]["excluded"] == []
+    assert school_rules["allergen_block"]["excluded"] == ["milk", "nuts"]
+    assert hospital_rules["allergen_block"]["excluded"] == ["gluten"]
+
+    school_usual = [p["product_id"] for p in school["preferred_products"]]
+    assert school_usual == ["470889"]
+    assert hotel_rules["substitution"]["auto_approve_alternatives_below_eur"] == 50
+
+    trust_md = _read_text("docs/TRUST.md")
+    assumptions_md = _read_text("docs/ASSUMPTIONS.md")
+
+    assert "auto_approve_alternatives_below_eur" in trust_md
+    assert "€50" in trust_md
+
+    matrix_rows: dict[str, str] = {}
+    for line in trust_md.splitlines():
+        for cid in ("hotel-aurora", "school-tampere", "hospital-meilahti"):
+            if line.startswith(f"| `{cid}` |"):
+                matrix_rows[cid] = line
+    assert set(matrix_rows) == {"hotel-aurora", "school-tampere", "hospital-meilahti"}
+
+    assert "€500" in matrix_rows["hotel-aurora"] and "5,000" in matrix_rows["hotel-aurora"]
+    assert "463038" in matrix_rows["hotel-aurora"] and "464306" in matrix_rows["hotel-aurora"]
+
+    assert "€300" in matrix_rows["school-tampere"] and "3,000" in matrix_rows["school-tampere"]
+    assert "470889" in matrix_rows["school-tampere"]
+    assert "milk" in matrix_rows["school-tampere"] and "nuts" in matrix_rows["school-tampere"]
+    assert "472833" not in matrix_rows["school-tampere"].split("(")[0]
+
+    assert "€1,000" in matrix_rows["hospital-meilahti"] and "10,000" in matrix_rows["hospital-meilahti"]
+    assert "gluten" in matrix_rows["hospital-meilahti"]
+
+    for fname in ("hotel-aurora.yaml", "school-tampere.yaml", "hospital-meilahti.yaml"):
+        assert fname in assumptions_md
+    assert "470889" in assumptions_md
+    assert "milk and nuts" in assumptions_md
+    assert "€500 / €5,000" in assumptions_md
+    assert "€50" in assumptions_md
+
+
+def test_injection_fp_repro_script_or_screening_zero_fp_documented():
+    script = ROOT / "docs" / "pitch" / "repro_injection_fp.py"
+    assert script.is_file()
+    assert script.stat().st_size > 0
+    source = script.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(script))
+    func_names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    assert "main" in func_names
+    assert "screen_text" in source
+
+    zero_fp_re = re.compile(r"\b0\s*(?:of|/)\s*34,159\b")
+    nonzero_fp_re = re.compile(r"\b[1-9]\d*\s*(?:of|/)\s*34,159\b")
+
+    for rel in ("docs/TRUST.md", "docs/NUMBERS.md", "docs/SUBMISSION.md"):
+        doc_text = _read_text(rel)
+        assert zero_fp_re.search(doc_text), f"{rel} missing '0 of 34,159' / '0 / 34,159'"
+        assert not nonzero_fp_re.search(doc_text), f"{rel} claims non-zero FP over 34,159"
+
+    numbers_md = _read_text("docs/NUMBERS.md")
+    assert "docs/pitch/repro_injection_fp.py" in numbers_md
+    assert "0 of 34,159" in numbers_md and "0 / 34,159" in numbers_md
+

@@ -55,9 +55,13 @@ def _secret_path() -> Path:
     return config.KEY_DIR / "approver_session_secret" if config.KEY_DIR != _ORIG_KEY_DIR else SECRET_FILE
 
 
+def _utf8(value: str) -> bytes:
+    return value.encode("utf-8", errors="surrogatepass")
+
+
 def _read_or_create(path: Path, make) -> str:
     if path.exists():
-        return path.read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8", errors="replace").strip()
     path.parent.mkdir(parents=True, exist_ok=True)
     val = make()
     path.write_text(val, encoding="utf-8")
@@ -78,8 +82,10 @@ def _directory_approver_ids() -> list[str]:
 
 
 def _canonical_approver_id(approver_id: str | None) -> str | None:
-    raw = (approver_id or "").strip()
-    if not raw:
+    if approver_id is None:
+        return None
+    raw = str(approver_id).strip()
+    if not raw or len(raw) > 256 or any(ord(ch) < 32 or ord(ch) == 127 or 0xD800 <= ord(ch) <= 0xDFFF for ch in raw):
         return None
     from aimo.gateway import service
 
@@ -100,14 +106,19 @@ def _configured_approver_pins() -> dict[str, str]:
         if isinstance(parsed, dict):
             for k, v in parsed.items():
                 ks = _canonical_approver_id(str(k))
-                vs = str(v).strip() if v is not None else ""
+                vs = str(v).strip() if isinstance(v, (str, int)) and not isinstance(v, bool) else ""
                 if ks and vs:
                     entries[ks] = vs
             return entries
     for part in raw.split(","):
         item = part.strip()
-        sep = "=" if "=" in item else (":" if ":" in item else "")
-        if not sep:
+        if ":" in item and "=" in item:
+            sep = ":" if item.index(":") < item.index("=") else "="
+        elif "=" in item:
+            sep = "="
+        elif ":" in item:
+            sep = ":"
+        else:
             continue
         k, v = item.split(sep, 1)
         ks = _canonical_approver_id(k)
@@ -203,10 +214,10 @@ def expected_pin_for(approver_id: str) -> str | None:
 
 
 def _secret_for(approver_id: str) -> bytes:
-    cid = _canonical_approver_id(approver_id) or approver_id.strip()
+    cid = _canonical_approver_id(approver_id) or str(approver_id or "").strip()
     base = _read_or_create(_secret_path(), lambda: secrets.token_hex(32))
     pin = expected_pin_for(cid) or ""
-    return hashlib.sha256(f"{base}|{cid}|{pin}".encode("utf-8")).digest()
+    return hashlib.sha256(_utf8(f"{base}|{cid}|{pin}")).digest()
 
 
 def credential_warning() -> str | None:
@@ -279,13 +290,18 @@ def check_pin_for(pin: str | None, approver_id: str | None, source: str = "?") -
         return check_pin(pin, source)
     if locked_for(source, approver_id) > 0:
         return False
-    provided = str(pin).strip() if pin is not None else ""
+    provided = str(pin).strip(" \t\r\n") if pin is not None else ""
     if not provided:
         return False
+    if len(provided) > 1024 or any(ord(ch) < 32 or ord(ch) == 127 or 0xD800 <= ord(ch) <= 0xDFFF for ch in provided):
+        hmac.compare_digest(_utf8(provided[:256]), b"invalid-approver-credential")
+        _record_failure(_lock_key_id(approver_id), source)
+        return False
+    provided_b = _utf8(provided)
     exp = expected_pin_for(approver_id)
-    if exp is not None and hmac.compare_digest(provided.encode("utf-8"), exp.encode("utf-8")):
+    if exp is not None and hmac.compare_digest(provided_b, _utf8(exp)):
         return True
-    hmac.compare_digest(provided.encode("utf-8"), b"invalid-approver-credential")
+    hmac.compare_digest(provided_b, b"invalid-approver-credential")
     _record_failure(_lock_key_id(approver_id), source)
     return False
 
@@ -293,20 +309,25 @@ def check_pin_for(pin: str | None, approver_id: str | None, source: str = "?") -
 def check_pin(pin: str | None, source: str = "?") -> bool:
     if locked_for(source, None) > 0:
         return False
-    provided = str(pin).strip() if pin is not None else ""
+    provided = str(pin).strip(" \t\r\n") if pin is not None else ""
     if not provided:
         return False
+    if len(provided) > 1024 or any(ord(ch) < 32 or ord(ch) == 127 or 0xD800 <= ord(ch) <= 0xDFFF for ch in provided):
+        hmac.compare_digest(_utf8(provided[:256]), b"invalid-approver-credential")
+        _record_failure("*", source)
+        return False
+    provided_b = _utf8(provided)
     matched = False
     single_env = os.environ.get("AIMO_APPROVER_PIN", "").strip()
     if single_env:
-        if hmac.compare_digest(provided.encode("utf-8"), single_env.encode("utf-8")):
+        if hmac.compare_digest(provided_b, _utf8(single_env)):
             matched = True
     elif _pin_path().exists():
-        legacy = _pin_path().read_text(encoding="utf-8").strip()
-        if legacy and hmac.compare_digest(provided.encode("utf-8"), legacy.encode("utf-8")):
+        legacy = _pin_path().read_text(encoding="utf-8", errors="replace").strip()
+        if legacy and hmac.compare_digest(provided_b, _utf8(legacy)):
             matched = True
     for aid, apin in approver_pins().items():
-        if locked_for(source, aid) <= 0 and hmac.compare_digest(provided.encode("utf-8"), apin.encode("utf-8")):
+        if locked_for(source, aid) <= 0 and hmac.compare_digest(provided_b, _utf8(apin)):
             matched = True
     if matched:
         return True
@@ -315,29 +336,35 @@ def check_pin(pin: str | None, source: str = "?") -> bool:
 
 
 def issue_session(approver: str) -> dict:
-    canonical = _canonical_approver_id(approver) or approver.strip()
+    canonical = _canonical_approver_id(approver) or str(approver or "").strip()
     exp = int(time.time() + SESSION_S)
     payload = f"v2.{exp}.{canonical}"
-    sig = hmac.new(_secret_for(canonical), payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    sig = hmac.new(_secret_for(canonical), _utf8(payload), hashlib.sha256).hexdigest()[:32]
     return {"session": f"{payload}.{sig}", "approver": canonical, "expires_at": exp}
 
 
 def session_approver(token: str | None) -> str | None:
-    if not token or token.count(".") < 3:
+    if not isinstance(token, str):
         return None
-    payload, sig = token.rsplit(".", 1)
+    cleaned = token.strip(" \t\r\n")
+    if not cleaned or len(cleaned) > 1024 or cleaned.count(".") < 3:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 or 0xD800 <= ord(ch) <= 0xDFFF for ch in cleaned):
+        return None
+    payload, sig = cleaned.rsplit(".", 1)
+    if not sig:
+        return None
     parts = payload.split(".", 2)
     if len(parts) != 3 or parts[0] != "v2":
         return None
-    try:
-        exp = int(parts[1])
-    except ValueError:
+    if not (parts[1].isascii() and parts[1].isdigit() and len(parts[1]) <= 20):
         return None
+    exp = int(parts[1])
     who = parts[2].strip()
     if not who or exp <= time.time():
         return None
-    good = hmac.new(_secret_for(who), payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(sig, good):
+    good = hmac.new(_secret_for(who), _utf8(payload), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(_utf8(sig), _utf8(good)):
         return None
     return who
 

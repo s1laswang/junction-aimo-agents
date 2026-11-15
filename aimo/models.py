@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
+import math
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------- catalog
@@ -89,11 +90,20 @@ class Need(BaseModel):
     product_query: str                        # e.g. "lactose-free milk"
     required_claims: list[str] = []           # e.g. ["FREE_FROM_LACTOSE"]
     excluded_allergens: list[str] = []        # EU14 keys; contains/may_contain/unknown all excluded
-    quantity: float = Field(..., gt=0, description="Total amount needed in `unit`; must be > 0 (0 or negative -> 422)")
+    quantity: float = Field(..., gt=0, allow_inf_nan=False, description="Total amount needed in `unit`; must be > 0 (0 or negative -> 422)")
     unit: Literal["L", "KG", "PCS"]
     delivery_by: date
     preferred_product_ids: list[str] = []
     preferences: dict[str, Any] = {}          # brand, fat_pct, pack, organic ...
+
+    @field_validator("quantity", mode="wrap")
+    @classmethod
+    def _clean_quantity(cls, v: Any, handler: Any) -> float:
+        if isinstance(v, bool):
+            return handler("boolean")
+        if isinstance(v, float) and not math.isfinite(v):
+            return handler(str(v))
+        return handler(v)
 
 
 Tier = Literal["preferred", "best", "better", "good", "rejected"]
