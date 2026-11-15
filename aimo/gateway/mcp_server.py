@@ -75,8 +75,9 @@ def _headers(ctx: Context | None) -> dict[str, str]:
 
 def _call(ctx: Context | None, fn, *args, **kwargs):
     h = _headers(ctx)
-    token = set_request_faults(h["x-aimo-faults"]) if "x-aimo-faults" in h else None
-    ntoken = clock.set_request_now(h["x-aimo-now"]) if "x-aimo-now" in h else None
+    ok = clock.request_overrides_allowed(bool((h.get("x-agent-id") or "").strip()))
+    token = set_request_faults(h["x-aimo-faults"] if ok else None) if "x-aimo-faults" in h else None
+    ntoken = clock.set_request_now(h["x-aimo-now"] if ok else None) if "x-aimo-now" in h else None
     try:
         return fn(*args, **kwargs)
     except service.ServiceError as e:
