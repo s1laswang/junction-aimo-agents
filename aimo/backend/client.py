@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -75,26 +76,26 @@ class UpstreamError(RuntimeError):
 
 # ------------------------------------------------------------------ helpers
 def parse_dt(value: str | None) -> datetime | None:
-    if not value:
+    if not isinstance(value, str) or not value or len(value) > 128:
         return None
     try:
         return datetime.fromisoformat(value)
-    except ValueError:
+    except (ValueError, OverflowError):
         m = re.match(r"(.*)([+-]\d{2})(\d{2})$", value)
         if m:
             try:
                 return datetime.fromisoformat(f"{m.group(1)}{m.group(2)}:{m.group(3)}")
-            except ValueError:
+            except (ValueError, OverflowError):
                 return None
         return None
 
 
 def parse_date(value: str | None) -> date | None:
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     try:
         return date.fromisoformat(value[:10])
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
@@ -147,36 +148,52 @@ class Faults:
 
 
 def parse_faults(spec: str | None) -> Faults:
-    f = Faults(spec=(spec or "").strip())
-    for part in f.spec.split(";"):
+    raw = re.sub(r"[\r\n\x00]", "", (spec if isinstance(spec, str) else "")[:2000]).strip()
+    f = Faults(spec=raw)
+    for part in f.spec.split(";")[:64]:
         bits = [b.strip() for b in part.strip().split(":")]
         if not bits or not bits[0]:
             continue
         kind, args = bits[0].lower(), bits[1:]
         try:
-            if kind == "stockout" and args:
+            if kind == "stockout" and args and args[0]:
                 f.stockout.add(args[0])
-            elif kind == "partial" and len(args) >= 2:
-                f.partial[args[0]] = float(args[1])
-            elif kind == "price_shock" and len(args) >= 2:
-                f.price_shock[args[0]] = float(args[1])
-            elif kind == "price_error" and args:
+            elif kind == "partial" and len(args) >= 2 and args[0]:
+                val = float(args[1])
+                if not math.isfinite(val) or val < 0.0:
+                    raise ValueError("invalid partial fault amount")
+                f.partial[args[0]] = 0.0 if val == 0.0 else val
+            elif kind == "price_shock" and len(args) >= 2 and args[0]:
+                val = float(args[1])
+                if not math.isfinite(val) or val <= 0.0 or val > 1e6:
+                    raise ValueError("invalid price_shock factor")
+                f.price_shock[args[0]] = val
+            elif kind == "price_error" and args and args[0]:
                 f.price_error.add(args[0])
-            elif kind == "cutoff" and args:
+            elif kind == "cutoff" and args and args[0]:
                 f.cutoff.add(args[0])
-            elif kind == "sales_block" and args:
+            elif kind == "sales_block" and args and args[0]:
                 f.sales_block.add(args[0])
             elif kind == "error_rate" and args:
-                f.error_rate = float(args[0])
+                val = float(args[0])
+                if not math.isfinite(val):
+                    raise ValueError("non-finite error_rate")
+                f.error_rate = min(1.0, max(0.0, val))
             elif kind == "rate_limit" and args:
-                f.rate_limit = float(args[0])
-            elif kind == "inject_text" and args:
+                val = float(args[0])
+                if not math.isfinite(val):
+                    raise ValueError("non-finite rate_limit")
+                f.rate_limit = min(1.0, max(0.0, val))
+            elif kind == "inject_text" and args and args[0]:
                 f.inject_text.add(args[0])
             elif kind == "latency_ms" and args:
-                f.latency_ms = int(float(args[0]))
+                val = float(args[0])
+                if not math.isfinite(val):
+                    raise ValueError("non-finite latency_ms")
+                f.latency_ms = int(min(5000.0, max(0.0, val)))
             else:
                 log.warning("ignoring unknown fault spec part %r", part)
-        except ValueError:
+        except (ValueError, OverflowError, TypeError):
             log.warning("ignoring malformed fault spec part %r", part)
     return f
 
@@ -385,12 +402,52 @@ def set_client(client) -> None:
 
 
 # ------------------------------------------------------------------ merge -> Offer
-def _price_val(p: dict | None, key: str = "value") -> float | None:
-    if not p or p.get(key) is None:
+def _price_val(p: dict | None, key: str = "value", allow_zero: bool = False) -> float | None:
+    if not isinstance(p, dict):
+        return None
+    raw = p.get(key)
+    if raw is None or isinstance(raw, bool):
         return None
     try:
-        return float(p[key])
-    except (TypeError, ValueError):
+        val = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(val):
+        return None
+    if allow_zero:
+        return (0.0 if val == 0.0 else val) if val >= 0.0 else None
+    return val if val > 0.0 else None
+
+
+def _from_ts(values: Iterable[Any]) -> datetime:
+    valid: list[float] = []
+    for v in values:
+        if v is None or isinstance(v, bool):
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(fv) and fv > 0.0:
+            valid.append(fv)
+    if valid:
+        try:
+            return datetime.fromtimestamp(min(valid), tz=timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            pass
+    return datetime.now(timezone.utc)
+
+
+def _scale_price(val: float | None, factor: float) -> float | None:
+    if val is None or isinstance(val, bool) or isinstance(factor, bool):
+        return None
+    try:
+        prod = float(val) * float(factor)
+        if not math.isfinite(prod) or prod <= 0.0:
+            return None
+        res = round(prod, 4)
+        return res if (math.isfinite(res) and res > 0.0) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -403,18 +460,29 @@ def merge_offer(
     now: datetime | None = None,
 ) -> Offer:
     issues: list[str] = []
-    fetched_ts = [x.get("_fetched_at") for x in (price_item, avail_item) if x and x.get("_fetched_at")]
-    fetched_at = datetime.fromtimestamp(min(fetched_ts), tz=timezone.utc) if fetched_ts else datetime.now(timezone.utc)
+    fetched_at = _from_ts(
+        x.get("_fetched_at") for x in (price_item, avail_item) if isinstance(x, dict)
+    )
 
-    # Estimated upstream "now": the availability response's timeNow plus time elapsed since fetch.
+    if now is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     if now is None and clock.simulated():
         now = clock.now()
     if now is None:
         now = datetime.now(timezone.utc)
-        if avail_item:
-            tn = parse_dt((avail_item.get("_meta") or {}).get("timeNow"))
-            if tn is not None and avail_item.get("_fetched_at"):
-                now = tn + timedelta(seconds=max(0.0, time.time() - float(avail_item["_fetched_at"])))
+        if isinstance(avail_item, dict):
+            meta_obj = avail_item.get("_meta")
+            tn = parse_dt(meta_obj.get("timeNow") if isinstance(meta_obj, dict) else None)
+            raw_ft = avail_item.get("_fetched_at")
+            if tn is not None and raw_ft is not None and not isinstance(raw_ft, bool):
+                if tn.tzinfo is None:
+                    tn = tn.replace(tzinfo=timezone.utc)
+                try:
+                    ft = float(raw_ft)
+                    if math.isfinite(ft):
+                        now = tn + timedelta(seconds=max(0.0, time.time() - ft))
+                except (TypeError, ValueError, OverflowError):
+                    pass
 
     available = True
     amount: float | None = None
@@ -425,24 +493,46 @@ def merge_offer(
     sales_block = False
     sales_unit = None
 
-    if not avail_item:
+    if not isinstance(avail_item, dict) or not avail_item:
         available = False
         issues.append("availability_not_found")
     else:
         logistic = avail_item.get("logisticModel")
         closing = parse_dt(avail_item.get("closingTime"))
+        if closing is not None and closing.tzinfo is None:
+            closing = closing.replace(tzinfo=timezone.utc)
         sales_block = bool(avail_item.get("salesBlock"))
         lines = avail_item.get("scheduleLines") or []
-        if lines:
+        invalid_amt = False
+        if lines and isinstance(lines, list) and isinstance(lines[0], dict):
             sl = lines[0]
             sales_unit = sl.get("salesUnit")
             sales_block = sales_block or bool(sl.get("salesBlock"))
             avail_date = parse_date(sl.get("availableDate"))
             raw_amt = sl.get("availableAmount")
-            amount = float(raw_amt) if raw_amt is not None else None
-            if logistic == "Terminal" and amount is not None and amount >= TERMINAL_SENTINEL:
+            if raw_amt is not None:
+                if isinstance(raw_amt, bool):
+                    invalid_amt = True
+                else:
+                    try:
+                        fv = float(raw_amt)
+                        if not math.isfinite(fv) or fv < 0.0:
+                            invalid_amt = True
+                        else:
+                            amount = 0.0 if fv == 0.0 else fv
+                    except (TypeError, ValueError, OverflowError):
+                        invalid_amt = True
+            if invalid_amt:
+                amount = 0.0
+                available = False
+                issues.append("availability_error")
+            elif logistic == "Terminal" and amount is not None and amount >= TERMINAL_SENTINEL:
                 amount = None
                 issues.append("terminal_unknown_qty")
+        elif lines:
+            amount = 0.0
+            available = False
+            issues.append("availability_error")
         else:
             available = False
             issues.append("no_schedule")
@@ -456,18 +546,24 @@ def merge_offer(
         if avail_date is not None and avail_date > requested_date:
             available = False
             issues.append("late_delivery")
-        if amount is not None and amount <= 0:
+        if not invalid_amt and amount is not None and amount <= 0:
             available = False
             issues.append("out_of_stock")
-        elif amount is not None and amount < LIMITED_STOCK_BELOW:
+        elif not invalid_amt and amount is not None and amount < LIMITED_STOCK_BELOW:
             issues.append("limited_stock")
-            if qty is not None and amount < qty:
+            if (
+                qty is not None
+                and not isinstance(qty, bool)
+                and isinstance(qty, (int, float))
+                and math.isfinite(qty)
+                and amount < qty
+            ):
                 issues.append("partial_stock")
 
     unit_price = gross = listp = comp = tax = None
     comp_unit = None
     valid_to = None
-    if not price_item or price_item.get("error") or not price_item.get("catalogPrice"):
+    if not isinstance(price_item, dict) or price_item.get("error") or not isinstance(price_item.get("catalogPrice"), dict):
         available = False
         issues.append("price_error")
     else:
@@ -477,7 +573,7 @@ def merge_offer(
         listp = _price_val(price_item.get("listPrice"))
         comp = _price_val(price_item.get("comparisonPrice"))
         comp_unit = price_item.get("comparisonUnit")
-        tax = _price_val(price_item.get("tax"), "taxRate")
+        tax = _price_val(price_item.get("tax"), "taxRate", allow_zero=True)
         valid_to = parse_dt(cp.get("validTo"))
         if unit_price is None:
             available = False
@@ -517,20 +613,39 @@ def apply_faults(offers: dict[str, Offer], faults: Faults, quantities: dict[str,
             o.issues = [i for i in o.issues if i not in ("limited_stock", "partial_stock")]
             o.issues += ["out_of_stock", "injected:stockout"]
         pv = faults._val(faults.partial, pid)
-        if pv is not None:
-            o.available_amount = pv
+        if pv is not None and not isinstance(pv, bool) and math.isfinite(pv) and pv >= 0.0:
+            pv_clean = 0.0 if pv == 0.0 else float(pv)
+            o.available_amount = pv_clean
             o.issues += ["limited_stock", "injected:partial"]
             q = (quantities or {}).get(pid)
-            if q is not None and pv < q:
+            if (
+                q is not None
+                and not isinstance(q, bool)
+                and isinstance(q, (int, float))
+                and math.isfinite(q)
+                and pv_clean < q
+            ):
                 o.issues.append("partial_stock")
-            if pv <= 0:
+            if pv_clean <= 0:
                 o.available = False
         f = faults._val(faults.price_shock, pid)
-        if f is not None and o.unit_price is not None:
-            o.unit_price = round(o.unit_price * f, 4)
-            o.unit_price_gross = round(o.unit_price_gross * f, 4) if o.unit_price_gross is not None else None
-            o.comparison_price = round(o.comparison_price * f, 4) if o.comparison_price is not None else None
-            o.issues.append(f"injected:price_shock:{f:g}")
+        if (
+            f is not None
+            and not isinstance(f, bool)
+            and math.isfinite(f)
+            and f > 0.0
+            and o.unit_price is not None
+        ):
+            scaled = _scale_price(o.unit_price, f)
+            if scaled is None:
+                o.unit_price = o.unit_price_gross = o.comparison_price = None
+                o.available = False
+                o.issues += ["price_error", f"injected:price_shock:{f:g}"]
+            else:
+                o.unit_price = scaled
+                o.unit_price_gross = _scale_price(o.unit_price_gross, f)
+                o.comparison_price = _scale_price(o.comparison_price, f)
+                o.issues.append(f"injected:price_shock:{f:g}")
         if faults._hit(faults.price_error, pid):
             o.unit_price = o.unit_price_gross = o.comparison_price = None
             o.available = False
@@ -556,8 +671,13 @@ def get_offers_with_meta(
     """Like get_offers, plus provenance meta {source, upstream, fetched_at, faults, ...}.
     fresh=True bypasses the 5-minute cache (used for quotes and order placement)."""
     faults = current_faults()
-    if faults.latency_ms:
-        time.sleep(faults.latency_ms / 1000.0)
+    if (
+        isinstance(faults.latency_ms, (int, float))
+        and not isinstance(faults.latency_ms, bool)
+        and math.isfinite(faults.latency_ms)
+        and faults.latency_ms > 0
+    ):
+        time.sleep(min(5000.0, float(faults.latency_ms)) / 1000.0)
     if faults.rate_limit and random.random() < faults.rate_limit:
         raise UpstreamError("injected: upstream rate limit (429)", 429, retry_after=1.0, injected=True)
     if faults.error_rate and random.random() < faults.error_rate:
@@ -589,8 +709,7 @@ def get_offers_with_meta(
     offers = apply_faults(offers, faults, quantities)
     after = dict(getattr(client, "stats", {}) or {})
     calls = after.get("upstream_calls", 0) - before.get("upstream_calls", 0)
-    oldest = [x for x in (price.get("_oldest_fetch"), avail.get("_oldest_fetch")) if x]
-    fetched_at = datetime.fromtimestamp(min(oldest), tz=timezone.utc) if oldest else datetime.now(timezone.utc)
+    fetched_at = _from_ts((price.get("_oldest_fetch"), avail.get("_oldest_fetch")))
     replayed = bool(price.get("_replay") or avail.get("_replay"))
     meta = {
         "source": "valio-aimo-mock-api",
