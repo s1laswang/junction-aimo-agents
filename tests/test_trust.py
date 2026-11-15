@@ -418,7 +418,8 @@ def test_one_row_per_rule_per_line():
     ids = [h.rule_id for h in d.hits]
     assert len(ids) == len(set(ids))
     sub = by_rule(d, "substitution")
-    assert len(sub) == 1 and sub[0].outcome == "needs_approval" and "Allowed automatically" not in sub[0].message
+    # 464306 is the hotel's pre-approved pack swap: the "outside preference" flag no longer escalates it (one row, allow)
+    assert len(sub) == 1 and sub[0].outcome == "allow" and "outside your standing preferences" not in sub[0].message
     # hero (no flags): best tier verified and allowed, only spend + drift need a human
     d = _dec(signing.sign_quote(make_quote()), products={"464306": product()})
     assert by_rule(d, "substitution")[0].outcome == "allow"

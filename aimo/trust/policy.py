@@ -312,7 +312,8 @@ def _history(c: Ctx, days: int) -> list[dict]:
                  "qty": float(x.get("qty_sales_units") or x.get("qty") or 0), "unit_price": x.get("unit_price"),
                  "line_total": float(x.get("line_total") or 0)} for x in raw]
             order = d.get("order") or {}
-            auto = not d.get("approver") and not order.get("approved_by")
+            by = str(d.get("approver") or order.get("approved_by") or "")
+            auto = not by or by.startswith("policy:")  # placed by policy alone, no human decision
             out.append({"ts": _aware(e.ts), "total": float(d.get("total_net", qd.get("total_net")) or 0), "auto": auto,
                         "lines": lines, "query": ((qd.get("need") or {}).get("product_query") or None)})
     except Exception:  # noqa: BLE001  no log: no history (other rules still apply)
@@ -672,7 +673,11 @@ def r_substitution(c: Ctx, r: dict) -> None:
                 over = ("Agent-supplied tier could not be verified; treating as substitution. "
                         if rank.get(claimed, 0) < rank.get(eff, 0) else "")
                 parts.append((out, f"{over}{_line_name(ln)} is a substitute: {TIER_TEXT[eff]}, verified as {how}."))
-        if "outside_preference" in ln.flags and learned is None:
+        # "outside preference" (brand, pack or spec differs from the usual product) adds nothing when the customer
+        # already settled the question: a swap listed in their profile, or a verified best-tier alternative (same
+        # brand and spec, other pack) under a policy whose tiers allow best.
+        settled = profile_alt or (eff == "best" and tiers.get("best") == "allow")
+        if "outside_preference" in ln.flags and learned is None and not settled:
             parts.append((r.get("outside_preference", "needs_approval"),
                           "It is flagged as outside your standing preferences (brand, pack or spec)."))
         if "allergen_safe_alternative" in ln.flags or named_excluded:
@@ -831,8 +836,12 @@ def r_quantity_drift(c: Ctx, r: dict) -> None:
             continue
         any_match = True
         # rolling window: earlier orders of the same standing-order product count too (split orders)
+        # Only orders placed WITHOUT a human count: volume a person already approved is sanctioned, so a small
+        # top-up after an approved bulk order is not "drift". Split orders (all auto) still add up.
         prior = 0.0
         for h in _history(c, int(r.get("window_days", 7))):
+            if not h["auto"]:
+                continue
             for x in h["lines"] or []:
                 p = c.product(x["product_id"])
                 if not (_matches(x["product_name"], kws) or (p and _matches(p.name_fi or "", kws))):

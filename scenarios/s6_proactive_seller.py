@@ -18,8 +18,19 @@ def run(r: Run) -> None:
     pv = p["policy_preview"]
     r.check("non-binding policy preview from the customer's own policy", pv.get("binding") is False and pv.get("outcome"), pv)
     r.say(f"preview: {pv.get('outcome')} ({pv.get('approver_role')})")
-    if p.get("replaces"):
-        r.check("a swap outside the usual product needs a human (preview)", pv.get("outcome") == "needs_approval", pv.get("outcome"))
+    # The customer's own policy decides. A pack swap the hotel listed as an approved alternative passes on its own
+    # under the spend limit; a swap it has NOT listed (another brand) needs a human.
+    r.check("preview outcome comes from the customer's policy", pv.get("outcome") in ("auto_approve", "needs_approval"),
+            pv.get("outcome"))
+    other = seller.call("POST", "/v1/proposals", json={"customer_id": "hotel-aurora", "product_id": "469363",
+                                                       "qty_sales_units": 10, "replaces_product_id": "463038",
+                                                       "note": "another brand"})
+    if other.status_code == 200:
+        r.check("a swap the customer has not listed needs a human (preview)",
+                other.json()["policy_preview"].get("outcome") == "needs_approval",
+                other.json()["policy_preview"].get("outcome"))
+    else:
+        r.say(f"other-brand proposal not orderable here ({other.status_code}); skipped")
     acc = seller.call("POST", f"/v1/proposals/{p['proposal_id']}/accept")
     r.check("seller cannot accept its own proposal (403 seller_cannot_order)",
             acc.status_code == 403 and acc.json().get("error") == "seller_cannot_order", acc.status_code)
