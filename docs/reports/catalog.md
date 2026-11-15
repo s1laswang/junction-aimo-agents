@@ -182,3 +182,7 @@ I ran `plan_need(need, offers_fn=<team/gateway aimo/backend/client.get_offers>)`
 
 ## Needs Silas / CEO
 Nothing blocking.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- On `fr8/valio/main` (`43e841c` / `7990fa3`) and `fr8/valio/docs` (`ed09d11` / `d89db12`, `4,286` collected pytest checks in `tests/`), `plan_need` enforces customer policy excluded allergens even when omitted from the request (`470889` Oatly Oat Drink Whole 1 L for `school-tampere`), rejects `quantity <= 0` with 422 before planning, returns structured 503 `catalog_missing` when `AIMO_REPLAY=0` without a catalog, and surfaces `PlanLine.injection_screen` and `Candidate.injection_screen`.
+- Judges can inspect the cut-off substitution (`463038` -> `464306`), allergen hard-blocks, 403 `agent_cannot_approve`, 409 `requote_needed`, Peppol `AP`, and WebCrypto Ed25519 verification with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).
