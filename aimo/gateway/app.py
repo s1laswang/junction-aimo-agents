@@ -19,7 +19,17 @@ from aimo import config
 from aimo.backend.client import reset_request_faults, set_request_faults
 from aimo.backend import clock
 from aimo.gateway import auth, human_auth, service
-from aimo.gateway.schemas import DecisionRequest, OffersRequest, OrderRequest, QuoteRequest
+from aimo.gateway.schemas import (
+    DecisionRequest,
+    OffersRequest,
+    OrderRequest,
+    QuoteRequest,
+    _has_control_char,
+    _has_unsafe_text_char,
+    _safe_str,
+    json_clean_payload,
+    validate_preferences,
+)
 from aimo.models import Need, Offer, Order, Plan, Product, ProductSummary, Quote
 
 log = logging.getLogger("aimo.gateway")
@@ -196,9 +206,15 @@ def _upstream_state() -> dict[str, Any]:
     from aimo.backend.client import get_client
 
     c = get_client()
-    down = getattr(c, "down_until", 0.0) or 0.0
-    return {"client": type(c).__name__, "circuit_open": down > _t.time(),
-            "retry_in_s": max(0, round(down - _t.time())), "last_error": getattr(c, "last_error", None)}
+    raw_down = getattr(c, "down_until", 0.0)
+    down = float(raw_down) if isinstance(raw_down, (int, float)) and not isinstance(raw_down, bool) and math.isfinite(raw_down) else 0.0
+    now_ts = _t.time()
+    rem = down - now_ts
+    retry_in = max(0, min(86400, round(rem))) if math.isfinite(rem) and rem > 0 else 0
+    raw_err = getattr(c, "last_error", None)
+    last_err = _safe_str(raw_err, 500) if raw_err is not None else None
+    return {"client": type(c).__name__, "circuit_open": down > now_ts,
+            "retry_in_s": retry_in, "last_error": last_err}
 
 
 def _require_catalog() -> None:
@@ -214,11 +230,34 @@ def _require_catalog() -> None:
                                    {"fix": "uv run aimo fetch-data", "needs": "AIMO_API_KEY"})
 
 
+def _header_safe(val: Any, max_len: int = 512) -> str:
+    s = _safe_str(val, max_len)
+    chars: list[str] = []
+    for c in s:
+        code = ord(c)
+        if code < 32 or code == 127:
+            chars.append(" ")
+        elif code > 127:
+            chars.append("?")
+        else:
+            chars.append(c)
+    return "".join(chars).strip()[:max_len]
+
+
+def _audit_token(val: Optional[str], fallback: str = "?", max_len: int = 128) -> str:
+    raw = (val or "").strip()
+    if not raw:
+        return fallback
+    cleaned = "".join("?" if (ord(c) < 32 or 127 <= ord(c) <= 159 or 0xD800 <= ord(c) <= 0xDFFF) else c for c in raw)
+    return cleaned[:max_len]
+
+
 def _prov_headers(meta: dict[str, Any]) -> dict[str, str]:
-    h = {"X-Aimo-Source": str(meta.get("source")), "X-Aimo-Served-From": str(meta.get("served_from")),
-         "X-Aimo-Fetched-At": str(meta.get("fetched_at")), "X-Aimo-Valid-For": str(meta.get("valid_for_s"))}
-    if meta.get("faults"):
-        h["X-Aimo-Faults-Applied"] = str(meta["faults"])
+    m = meta if isinstance(meta, dict) else {}
+    h = {"X-Aimo-Source": _header_safe(m.get("source")), "X-Aimo-Served-From": _header_safe(m.get("served_from")),
+         "X-Aimo-Fetched-At": _header_safe(m.get("fetched_at")), "X-Aimo-Valid-For": _header_safe(m.get("valid_for_s"))}
+    if m.get("faults"):
+        h["X-Aimo-Faults-Applied"] = _header_safe(m["faults"])
     return h
 
 
@@ -255,8 +294,8 @@ def build_router() -> APIRouter:
         auth.resolve_customer_identity(x_customer_id=x_customer_id, body_customer_id=customer_id, x_agent_key=x_agent_key)
         if not q.strip():
             raise service.ServiceError(422, "empty_query", "q must not be blank")
-        if any("\x00" in x for x in (q, claims or "", category or "", content_unit or "")):
-            raise service.ServiceError(422, "invalid_query", "query parameters must not contain null bytes")
+        if _has_unsafe_text_char(q) or any(_has_control_char(x) for x in (claims or "", category or "", content_unit or "")):
+            raise service.ServiceError(422, "invalid_query", "query parameters must not contain control characters or null bytes")
         _require_catalog()
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
@@ -272,7 +311,10 @@ def build_router() -> APIRouter:
         if x_customer_id and x_customer_id.strip():
             cid = auth.require_known_customer(x_customer_id)
             auth.check_agent_key(cid, x_agent_key)
-        return service.get_product(product_id)
+        pid = product_id.strip()
+        if not pid or len(pid) > 64 or any(c.isspace() for c in pid) or _has_control_char(pid):
+            raise service.ServiceError(404, "product_not_found", f"product {_safe_str(pid, 64)!r} not found in catalog")
+        return service.get_product(pid)
 
     @r.post("/v1/offers", tags=["offers"], summary="Live price + availability", response_model=list[Offer], responses=ERR)
     def offers(
@@ -320,12 +362,29 @@ def build_router() -> APIRouter:
             raise service.ServiceError(422, "empty_need", "product_query must be a non-empty string")
         if len(need.raw_text or "") > 4000:
             raise service.ServiceError(422, "invalid_need", "raw_text exceeds 4,000 characters")
-        if (
-            "\x00" in need.product_query
-            or "\x00" in (need.raw_text or "")
-            or any(not isinstance(p, str) or "\x00" in p or len(p) > 64 for p in (need.preferred_product_ids or []))
-        ):
-            raise service.ServiceError(422, "invalid_need", "need contains invalid product identifiers or null bytes")
+        if _has_unsafe_text_char(need.product_query) or _has_unsafe_text_char(need.raw_text or ""):
+            raise service.ServiceError(422, "invalid_need", "need contains control characters or invalid Unicode")
+        prefs = need.preferred_product_ids
+        if prefs is not None:
+            if not isinstance(prefs, (list, tuple)) or len(prefs) > 200:
+                raise service.ServiceError(422, "invalid_need", "preferred_product_ids must contain at most 200 product IDs")
+            for p in prefs:
+                if not isinstance(p, str):
+                    raise service.ServiceError(422, "invalid_need", "preferred_product_ids entries must be strings")
+                sp = p.strip()
+                if not sp or len(sp) > 64 or any(c.isspace() for c in sp) or _has_control_char(sp):
+                    raise service.ServiceError(422, "invalid_need", "need contains invalid product identifiers or null bytes")
+        for list_field in ("required_claims", "excluded_allergens"):
+            seq = getattr(need, list_field, None)
+            if seq is not None:
+                if not isinstance(seq, (list, tuple)) or len(seq) > 50:
+                    raise service.ServiceError(422, "invalid_need", f"{list_field} must contain at most 50 entries")
+                if any(not isinstance(item, str) or len(item) > 100 or _has_control_char(item) for item in seq):
+                    raise service.ServiceError(422, "invalid_need", f"{list_field} contains invalid characters or oversized entries")
+        try:
+            validate_preferences(need.preferences if need.preferences is not None else {})
+        except ValueError as exc:
+            raise service.ServiceError(422, "invalid_need", str(exc)) from exc
         try:
             _require_catalog()
         except service.ServiceError:
@@ -356,7 +415,7 @@ def build_router() -> APIRouter:
 
     @r.get("/v1/quotes/{quote_id}", tags=["quotes"], summary="Get a quote", response_model=Quote, responses=ERR)
     def get_quote(quote_id: str):
-        if not quote_id.strip() or len(quote_id) > 128 or "\x00" in quote_id:
+        if not quote_id.strip() or len(quote_id) > 128 or _has_control_char(quote_id):
             raise service.ServiceError(404, "quote_not_found", "quote not found")
         return service.get_quote(quote_id)
 
@@ -382,7 +441,7 @@ def build_router() -> APIRouter:
 
     @r.get("/v1/orders/{order_id}", tags=["orders"], summary="Order status", response_model=Order, responses=ERR)
     def get_order(order_id: str):
-        if not order_id.strip() or len(order_id) > 128 or "\x00" in order_id:
+        if not order_id.strip() or len(order_id) > 128 or _has_control_char(order_id):
             raise service.ServiceError(404, "order_not_found", "order not found")
         return service.get_order(order_id)
 
@@ -392,7 +451,7 @@ def build_router() -> APIRouter:
     def get_order_peppol(order_id: str):
         """AP/CA/RE from placement; AB while the order waits for approval. Party ids are placeholders.
         Checked against the UBL 2.3 XSD and the PEPPOL-T116 rules in tests, not the full Peppol schematron."""
-        if not order_id.strip() or len(order_id) > 128 or "\x00" in order_id:
+        if not order_id.strip() or len(order_id) > 128 or _has_control_char(order_id):
             raise service.ServiceError(404, "order_not_found", "order not found")
         from aimo.backend.peppol import order_response_xml
         o = service.get_order(order_id)
@@ -415,7 +474,10 @@ def build_router() -> APIRouter:
                     "bad_status",
                     "status must be one of pending, pending_approval, approved, placed, rejected, expired, failed, all",
                 )
-            return service.list_approvals(status, customer_id)
+            if customer_id is not None and (len(customer_id) > 128 or _has_control_char(customer_id)):
+                raise service.ServiceError(422, "invalid_customer_id", "customer_id contains invalid characters or exceeds 128 characters")
+            clean_cid = customer_id.strip() if customer_id is not None else None
+            return service.list_approvals(status, clean_cid or None)
         if not x_customer_id or not x_customer_id.strip():
             raise service.ServiceError(401, "identity_required",
                                        "Send X-Customer-Id (agents) or X-Approver-Pin (human approvers).")
@@ -441,15 +503,16 @@ def build_router() -> APIRouter:
         and the approver must be a human in the order customer's directory with an allowed role.
         `quote_hash` must match the order's quote (409 otherwise); an expired quote returns 409 "re-quote needed".
         Approve places the order and returns the order response."""
+        safe_oid = _audit_token(order_id, "order:invalid")
         if x_agent_id and x_agent_id.strip():
-            service.audit_refusal(order_id, f"agent:{x_agent_id.strip()}", "agent identity on the approval endpoint")
+            service.audit_refusal(safe_oid, f"agent:{_audit_token(x_agent_id)}", "agent identity on the approval endpoint")
             raise service.ServiceError(403, "agent_cannot_approve",
                                        "Agents can never approve orders; a human approver must decide in the inbox.")
         approver = body.approver
         bound = human_auth.session_approver(cred.session)
         if bound:
-            if approver and service.directory_approver_id(approver) != bound:
-                service.audit_refusal(order_id, f"human:{bound}", f"session of {bound} tried to decide as {approver}")
+            if approver and approver.strip() and service.directory_approver_id(approver) != bound:
+                service.audit_refusal(safe_oid, f"human:{bound}", f"session of {bound} tried to decide as {_audit_token(approver)}")
                 raise service.ServiceError(403, "approver_mismatch",
                                            f"This session belongs to {bound}; it cannot decide as {approver}.")
             approver = bound
@@ -457,11 +520,11 @@ def build_router() -> APIRouter:
             target = service.directory_approver_id(approver) if approver else None
             if not target and approver and approver.strip():
                 target = approver.strip().lower()
-            _require_human(cred, order_id, f"human:{body.approver}", approver_id=target)
-            if not approver:
+            _require_human(cred, safe_oid, f"human:{_audit_token(body.approver)}", approver_id=target)
+            if not approver or not approver.strip():
                 raise service.ServiceError(422, "approver_required", "Name the approver, or sign in with "
                                            "POST /v1/auth/approver-session to bind decisions to you.")
-        if not order_id.strip() or len(order_id) > 128 or "\x00" in order_id:
+        if not order_id.strip() or len(order_id) > 128 or _has_control_char(order_id):
             raise service.ServiceError(404, "order_not_found", "order not found")
         return service.decide(order_id, body.decision, approver, body.quote_hash, body.note, body.approver_role,
                               remember=body.remember, remember_scope=body.remember_scope)
@@ -469,8 +532,8 @@ def build_router() -> APIRouter:
     # ---------------------------------------------------------- audit
     @r.get("/v1/audit", tags=["audit"], summary="Audit events")
     def audit(subject_id: Optional[str] = Query(None, max_length=200, description="quote_id or order_id")) -> list[dict[str, Any]]:
-        if subject_id is not None and "\x00" in subject_id:
-            raise service.ServiceError(422, "invalid_subject_id", "subject_id must not contain null bytes")
+        if subject_id is not None and _has_control_char(subject_id):
+            raise service.ServiceError(422, "invalid_subject_id", "subject_id must not contain control characters or null bytes")
         return service.audit_events(subject_id)
 
     @r.get("/v1/audit/verify", tags=["audit"], summary="Verify the audit hash chain and signatures")
@@ -480,7 +543,7 @@ def build_router() -> APIRouter:
     @r.get("/v1/audit/report/{subject_id}", tags=["audit"], summary="Human-readable audit trail (markdown)",
            response_class=PlainTextResponse)
     def audit_report(subject_id: str):
-        if not subject_id.strip() or len(subject_id) > 200 or "\x00" in subject_id:
+        if not subject_id.strip() or len(subject_id) > 200 or _has_control_char(subject_id):
             raise service.ServiceError(422, "invalid_subject_id", "subject_id is invalid")
         return PlainTextResponse(service.audit_report(subject_id), media_type="text/markdown")
 
@@ -495,18 +558,18 @@ def build_router() -> APIRouter:
         AIMO_ENV=production."""
         seq_tag = f"audit:{seq}" if -10**9 <= seq <= 10**9 else "audit:out_of_range"
         if x_agent_id and x_agent_id.strip():
-            service.audit_refusal(seq_tag, f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            service.audit_refusal(seq_tag, f"agent:{_audit_token(x_agent_id)}", "agent identity on demo tamper endpoint")
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, seq_tag, "human:demo-tamper")
-        if service._demo_enabled() and summary is not None and "\x00" in summary:
-            raise service.ServiceError(422, "invalid_summary", "summary must not contain null bytes")
+        if service._demo_enabled() and summary is not None and _has_unsafe_text_char(summary):
+            raise service.ServiceError(422, "invalid_summary", "summary must not contain control characters or null bytes")
         return service.demo_tamper(seq, summary)
 
     @r.post("/v1/demo/untamper/{seq}", tags=["demo"], summary="DEMO ONLY: restore a tampered audit event", responses=ERR)
     def demo_untamper(seq: int, x_agent_id: Optional[str] = Header(None), cred: HumanCred = Depends(human_cred)):
         seq_tag = f"audit:{seq}" if -10**9 <= seq <= 10**9 else "audit:out_of_range"
         if x_agent_id and x_agent_id.strip():
-            service.audit_refusal(seq_tag, f"agent:{x_agent_id.strip()}", "agent identity on demo tamper endpoint")
+            service.audit_refusal(seq_tag, f"agent:{_audit_token(x_agent_id)}", "agent identity on demo tamper endpoint")
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot tamper with or restore audit events.")
         _require_human(cred, seq_tag, "human:demo-untamper")
         return service.demo_untamper(seq)
@@ -520,7 +583,7 @@ def build_router() -> APIRouter:
         it are recorded under that approver only. Agents are refused. A session keeps working even if someone else
         triggers a brute-force lock."""
         if x_agent_id and x_agent_id.strip():
-            service.audit_refusal("auth:approver-session", f"agent:{x_agent_id.strip()}",
+            service.audit_refusal("auth:approver-session", f"agent:{_audit_token(x_agent_id)}",
                                   "agent identity on approver sign-in endpoint")
             raise service.ServiceError(403, "agent_cannot_approve", "Agents cannot sign in as approvers.")
         if not isinstance(body, dict):
@@ -528,7 +591,7 @@ def build_router() -> APIRouter:
         raw_approver = body.get("approver")
         if raw_approver is not None and not isinstance(raw_approver, str):
             raise service.ServiceError(422, "invalid_approver", "approver must be a string")
-        if raw_approver and any(ord(c) < 32 or 127 <= ord(c) <= 159 or 0xD800 <= ord(c) <= 0xDFFF for c in raw_approver):
+        if raw_approver and _has_control_char(raw_approver):
             raise service.ServiceError(422, "invalid_approver", "approver contains control characters")
         who = (raw_approver or "").strip()[:200]
         canonical = service.directory_approver_id(who) if who else None
@@ -565,8 +628,14 @@ def build_router() -> APIRouter:
             return out
         masked = []
         for c in out:
+            if not isinstance(c, dict):
+                continue
             c = dict(c)
-            c["approvers"] = [{"name": a.get("name"), "role": a.get("role")} for a in (c.get("approvers") or [])]
+            c["approvers"] = [
+                {"name": a.get("name"), "role": a.get("role")}
+                for a in (c.get("approvers") or [])
+                if isinstance(a, dict)
+            ]
             masked.append(c)
         return masked
 
@@ -606,10 +675,13 @@ def create_app(with_mcp: bool = True) -> FastAPI:
 
     @app.exception_handler(service.ServiceError)
     async def _svc_err(_: Request, e: service.ServiceError):
-        headers = {}
-        if e.status == 503 and isinstance(e.detail, dict) and e.detail.get("retry_after"):
-            headers["Retry-After"] = str(int(e.detail["retry_after"]))
-        return JSONResponse(e.to_dict(), status_code=e.status, headers=headers)
+        status = e.status if isinstance(e.status, int) and not isinstance(e.status, bool) and 400 <= e.status <= 599 else 500
+        headers: dict[str, str] = {}
+        if status == 503 and isinstance(e.detail, dict):
+            ra = e.detail.get("retry_after")
+            if isinstance(ra, (int, float)) and not isinstance(ra, bool) and math.isfinite(ra) and ra > 0:
+                headers["Retry-After"] = str(max(1, min(86400, int(ra))))
+        return JSONResponse(json_clean_payload(e.to_dict()), status_code=status, headers=headers)
 
     app.include_router(build_router())
     try: from aimo.voice.routes import router as _voice; app.include_router(_voice)  # noqa: E702 S5 voice approval
@@ -632,10 +704,11 @@ def create_app(with_mcp: bool = True) -> FastAPI:
         allowed = os.environ.get("AIMO_MCP_ALLOWED_HOSTS")
         ts = None
         if allowed:
-            from mcp.server.transport_security import TransportSecuritySettings
+            hosts = [h.strip() for h in allowed.split(",") if h.strip() and not _has_control_char(h.strip())]
+            if hosts:
+                from mcp.server.transport_security import TransportSecuritySettings
 
-            ts = TransportSecuritySettings(enable_dns_rebinding_protection=True,
-                                           allowed_hosts=[h.strip() for h in allowed.split(",")])
+                ts = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts)
         mcp_app = mcp_server.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0", transport_security=ts)
         for route in mcp_app.routes:
             if isinstance(route, Route):
