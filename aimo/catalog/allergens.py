@@ -20,15 +20,14 @@ from typing import Any, Iterable, Optional
 
 from aimo.models import EU14
 
-# group -> (head codes that alone can prove FREE_FROM, all member codes)
 GS1_GROUPS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    "gluten": (("AW",), ("AW", "UW", "GB", "GO", "NR", "GS", "GK")),  # cereals containing gluten
+    "gluten": (("AW",), ("AW", "UW", "GB", "GO", "NR", "GS", "GK")),
     "crustaceans": (("AC",), ("AC",)),
     "eggs": (("AE",), ("AE",)),
     "fish": (("AF",), ("AF",)),
     "peanuts": (("AP",), ("AP",)),
     "soy": (("AY",), ("AY",)),
-    "milk": (("AM",), ("AM", "ML")),                                     # ML = lactose
+    "milk": (("AM",), ("AM", "ML")),
     "nuts": (("AN",), ("AN", "SA", "SH", "ST", "SW", "SC", "SP", "SM", "SR", "SQ")),
     "celery": (("BC",), ("BC",)),
     "mustard": (("BM",), ("BM",)),
@@ -48,11 +47,8 @@ GS1_CODE_NAMES = {
     "AS": "sesame", "AU": "sulphur dioxide / sulphites", "NL": "lupin", "UM": "molluscs",
 }
 
-# nutritionalClaim ids that prove a whole EU14 group free (when nothing says CONTAINS / MAY_CONTAIN)
 CLAIM_FREE = {"FREE_FROM_GLUTEN": "gluten", "FREE_FROM_EGGS": "eggs", "FREE_FROM_SOY": "soy"}
 
-# rough English/Finnish/Swedish keyword hints for each group (used only for the *inferred* path
-# and for tests; never for structured status)
 GROUP_KEYWORDS = {
     "milk": ["milk", "maito", "mjölk", "cream", "kerma", "butter", "voi", "cheese", "juusto", "whey", "hera", "lactose", "laktoosi"],
     "gluten": ["wheat", "vehnä", "rye", "ruis", "barley", "ohra", "oat", "kaura", "spelt", "gluten"],
@@ -60,7 +56,7 @@ GROUP_KEYWORDS = {
 }
 
 
-def derive(classifications: Iterable[dict]) -> tuple[dict[str, str], dict[str, str], dict[str, list[str]]]:
+def derive(classifications: Any) -> tuple[dict[str, str], dict[str, str], dict[str, list[str]]]:
     """Return (allergens {group: status}, allergen_source {group: source}, raw {CODE: [units]}).
 
     Every EU14 key is present in the result: groups without data are "unknown" with source "none".
@@ -70,10 +66,25 @@ def derive(classifications: Iterable[dict]) -> tuple[dict[str, str], dict[str, s
     free_codes: set[str] = set()
     claims: set[str] = set()
     raw: dict[str, list[str]] = {}
-    for c in classifications or []:
+    items = (
+        classifications
+        if isinstance(classifications, Iterable) and not isinstance(classifications, (str, bytes, bytearray, dict))
+        else ()
+    )
+    for c in items:
+        if not isinstance(c, dict):
+            continue
         name = c.get("name")
-        for v in c.get("values") or []:
-            code, unit = v.get("id"), (v.get("unit") or "").upper()
+        vals = c.get("values")
+        if not isinstance(vals, Iterable) or isinstance(vals, (str, bytes, bytearray, dict)):
+            continue
+        for v in vals:
+            if not isinstance(v, dict):
+                continue
+            raw_code = v.get("id")
+            code = raw_code.strip().upper() if isinstance(raw_code, str) else ""
+            raw_unit = v.get("unit")
+            unit = raw_unit.strip().upper() if isinstance(raw_unit, str) else ""
             if name in ("allergen", "nonAllergen") and code:
                 raw.setdefault(code, []).append(unit or "?")
                 g = CODE_TO_GROUP.get(code)
@@ -83,7 +94,6 @@ def derive(classifications: Iterable[dict]) -> tuple[dict[str, str], dict[str, s
                     may.setdefault(g, set()).add(code)
                 elif unit == "FREE_FROM":
                     free_codes.add(code)
-                # UNDECLARED -> no information
             elif name == "nutritionalClaim" and code:
                 claims.add(code)
 
@@ -104,8 +114,10 @@ def derive(classifications: Iterable[dict]) -> tuple[dict[str, str], dict[str, s
     return status, source, raw
 
 
-def has_structured_data(source: dict[str, str]) -> bool:
-    return any(s.startswith("structured") for s in source.values())
+def has_structured_data(source: Any) -> bool:
+    if not isinstance(source, dict):
+        return False
+    return any(isinstance(s, str) and s.strip().lower().startswith("structured") for s in source.values())
 
 
 ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
@@ -117,8 +129,10 @@ ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
     "cows milk": ("milk",),
     "cow milk": ("milk",),
     "milk protein": ("milk",),
+    "milk proteins": ("milk",),
     "cow's milk protein": ("milk",),
     "maito": ("milk",),
+    "maitoa": ("milk",),
     "mjölk": ("milk",),
     "nut": ("nuts",),
     "nuts": ("nuts",),
@@ -128,6 +142,8 @@ ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
     "tree_nuts": ("nuts",),
     "pähkinä": ("nuts",),
     "pähkinät": ("nuts",),
+    "pähkinää": ("nuts",),
+    "pähkinöitä": ("nuts",),
     "nöt": ("nuts",),
     "nötter": ("nuts",),
     "almond": ("nuts",),
@@ -138,15 +154,23 @@ ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
     "hasselpähkinä": ("nuts",),
     "pistachio": ("nuts",),
     "pistachios": ("nuts",),
+    "pistachio nut": ("nuts",),
+    "pistachio nuts": ("nuts",),
     "walnut": ("nuts",),
     "walnuts": ("nuts",),
     "saksanpähkinä": ("nuts",),
     "cashew": ("nuts",),
     "cashews": ("nuts",),
+    "cashew nut": ("nuts",),
+    "cashew nuts": ("nuts",),
     "cashewpähkinä": ("nuts",),
     "pecan": ("nuts",),
     "pecans": ("nuts",),
+    "pecan nut": ("nuts",),
+    "pecan nuts": ("nuts",),
     "macadamia": ("nuts",),
+    "macadamia nut": ("nuts",),
+    "macadamia nuts": ("nuts",),
     "brazil nut": ("nuts",),
     "brazil nuts": ("nuts",),
     "queensland nut": ("nuts",),
@@ -156,47 +180,58 @@ ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
     "groundnuts": ("peanuts",),
     "maapähkinä": ("peanuts",),
     "maapähkinät": ("peanuts",),
+    "maapähkinää": ("peanuts",),
     "jordnöt": ("peanuts",),
     "jordnötter": ("peanuts",),
     "egg": ("eggs",),
     "eggs": ("eggs",),
     "kananmuna": ("eggs",),
+    "kananmunaa": ("eggs",),
     "kanamuna": ("eggs",),
     "muna": ("eggs",),
     "munat": ("eggs",),
+    "munia": ("eggs",),
     "ägg": ("eggs",),
     "wheat": ("gluten",),
     "vehnä": ("gluten",),
+    "vehnää": ("gluten",),
     "vete": ("gluten",),
     "rye": ("gluten",),
     "ruis": ("gluten",),
+    "ruista": ("gluten",),
     "råg": ("gluten",),
     "barley": ("gluten",),
     "ohra": ("gluten",),
+    "ohraa": ("gluten",),
     "korn": ("gluten",),
     "spelt": ("gluten",),
     "speltti": ("gluten",),
     "kamut": ("gluten",),
     "gluteeni": ("gluten",),
+    "gluteenia": ("gluten",),
     "cereals containing gluten": ("gluten",),
     "soya": ("soy",),
     "soija": ("soy",),
+    "soijaa": ("soy",),
     "soja": ("soy",),
     "soybean": ("soy",),
     "soybeans": ("soy",),
     "soya bean": ("soy",),
     "soya beans": ("soy",),
     "kala": ("fish",),
+    "kalaa": ("fish",),
     "fisk": ("fish",),
     "crustacean": ("crustaceans",),
     "äyriäiset": ("crustaceans",),
     "äyriäinen": ("crustaceans",),
+    "äyriäisiä": ("crustaceans",),
     "kräftdjur": ("crustaceans",),
     "mollusc": ("molluscs",),
     "mollusk": ("molluscs",),
     "mollusks": ("molluscs",),
     "nilviäiset": ("molluscs",),
     "nilviäinen": ("molluscs",),
+    "nilviäisiä": ("molluscs",),
     "blötdjur": ("molluscs",),
     "shellfish": ("crustaceans", "molluscs"),
     "sulfite": ("sulphites",),
@@ -207,28 +242,39 @@ ALLERGEN_ALIASES: dict[str, tuple[str, ...]] = {
     "sulphur dioxide / sulphites": ("sulphites",),
     "sulfiitit": ("sulphites",),
     "sulfiitti": ("sulphites",),
+    "sulfiitteja": ("sulphites",),
     "rikkidioksidi": ("sulphites",),
     "sulfit": ("sulphites",),
     "sulfiter": ("sulphites",),
     "sesame seeds": ("sesame",),
     "sesame seed": ("sesame",),
     "seesami": ("sesame",),
+    "seesamia": ("sesame",),
     "seesaminsiemenet": ("sesame",),
     "sesam": ("sesame",),
     "selleri": ("celery",),
+    "selleriä": ("celery",),
     "sinappi": ("mustard",),
+    "sinappia": ("mustard",),
     "senap": ("mustard",),
     "lupins": ("lupin",),
     "lupine": ("lupin",),
     "lupiini": ("lupin",),
+    "lupiinia": ("lupin",),
 }
 
 _POLICY_SEVERITY = {"allow": 0, "needs_approval": 1, "reject": 2}
 _last_policy_dir: Any = None
 
 
-def normalize_allergen(name: str) -> tuple[str, ...]:
-    s = re.sub(r"\s+", " ", str(name or "").replace("\u2019", "'")).strip()
+def normalize_allergen(name: Any) -> tuple[str, ...]:
+    if name is None or isinstance(name, bool):
+        return ()
+    if hasattr(name, "value") and not isinstance(name, str):
+        name = name.value
+    if not isinstance(name, str):
+        return ()
+    s = re.sub(r"\s+", " ", name.replace("\u2019", "'")).strip()
     if not s:
         return ()
     low = s.lower()
@@ -240,11 +286,20 @@ def normalize_allergen(name: str) -> tuple[str, ...]:
     return (low,)
 
 
-def normalize_allergens(excluded: Iterable[str]) -> list[str]:
-    items = [excluded] if isinstance(excluded, str) else (excluded or ())
+def normalize_allergens(excluded: Any) -> list[str]:
+    if excluded is None or isinstance(excluded, (bool, bytes, bytearray, dict)):
+        return []
+    if isinstance(excluded, str):
+        items: Iterable[Any] = [excluded]
+    elif isinstance(excluded, Iterable):
+        items = excluded
+    else:
+        return []
     out: list[str] = []
     seen: set[str] = set()
     for raw in items:
+        if raw is None or isinstance(raw, bool):
+            continue
         for g in normalize_allergen(raw):
             if g and g not in seen:
                 seen.add(g)
@@ -271,7 +326,7 @@ def _strictest(outcomes: list[str], default: str = "reject") -> str:
 
 def policy_allergen_block(customer_id: Optional[str]) -> PolicyAllergenBlock:
     global _last_policy_dir
-    cid = (customer_id or "").strip()
+    cid = customer_id.strip() if isinstance(customer_id, str) else ""
     if not cid:
         return PolicyAllergenBlock(customer_id="")
     try:
@@ -290,13 +345,18 @@ def policy_allergen_block(customer_id: Optional[str]) -> PolicyAllergenBlock:
     pid = str(pol.get("policy_id") or cid)
     if not rules:
         return PolicyAllergenBlock(customer_id=cid, policy_id=pid)
-    raw_excl: list[str] = []
+    raw_excl: list[Any] = []
     reasons: list[str] = []
     for r in rules:
-        raw_excl.extend(r.get("excluded") or [])
-        why = str(r.get("reason") or "").strip()
-        if why and why not in reasons:
-            reasons.append(why)
+        rx = r.get("excluded")
+        if isinstance(rx, str):
+            raw_excl.append(rx)
+        elif isinstance(rx, Iterable) and not isinstance(rx, (bool, bytes, bytearray, dict)):
+            raw_excl.extend(rx)
+        why = r.get("reason")
+        why_s = "" if (why is None or isinstance(why, bool)) else str(why).strip()
+        if why_s and why_s not in reasons:
+            reasons.append(why_s)
     return PolicyAllergenBlock(
         customer_id=cid,
         excluded=tuple(normalize_allergens(raw_excl)),
@@ -316,7 +376,7 @@ def policy_allergens(customer_id: Optional[str]) -> tuple[list[str], Optional[st
     pb = policy_allergen_block(customer_id)
     if pb.policy_id is not None or pb.excluded:
         return list(pb.excluded), pb.reason, pb.policy_id
-    cid = (customer_id or "").strip()
+    cid = customer_id.strip() if isinstance(customer_id, str) else ""
     if not cid:
         return [], None, None
     try:
@@ -326,7 +386,7 @@ def policy_allergens(customer_id: Optional[str]) -> tuple[list[str], Optional[st
             prof = trust_policy.planning_profile(cid) or {}
             if prof:
                 return (
-                    normalize_allergens(prof.get("excluded_allergens") or []),
+                    normalize_allergens(prof.get("excluded_allergens")),
                     prof.get("allergen_reason"),
                     prof.get("policy_id") or cid,
                 )
@@ -336,17 +396,25 @@ def policy_allergens(customer_id: Optional[str]) -> tuple[list[str], Optional[st
 
 
 def with_policy_allergens(need: Any) -> tuple[Any, list[str]]:
-    own = normalize_allergens(need.excluded_allergens)
-    pol, _why, _pid = policy_allergens(need.customer_id)
+    if need is None:
+        return need, []
+    raw_own = getattr(need, "excluded_allergens", ())
+    own = normalize_allergens(raw_own)
+    pol, _why, _pid = policy_allergens(getattr(need, "customer_id", None))
     merged = list(dict.fromkeys([*own, *pol]))
     added = [a for a in merged if a not in own]
-    if merged != list(need.excluded_allergens):
+    cur_list = (
+        list(raw_own)
+        if isinstance(raw_own, Iterable) and not isinstance(raw_own, (str, bytes, bytearray, dict))
+        else []
+    )
+    if merged != cur_list and hasattr(need, "model_copy"):
         need = need.model_copy(update={"excluded_allergens": merged})
     return need, added
 
 
-def effective_excluded_allergens(customer_id: Optional[str], excluded: Iterable[str] = ()) -> list[str]:
-    extra = [excluded] if isinstance(excluded, str) else (excluded or ())
+def effective_excluded_allergens(customer_id: Optional[str], excluded: Any = ()) -> list[str]:
+    extra = normalize_allergens(excluded)
     pol_excl, _why, _pid = policy_allergens(customer_id)
     return normalize_allergens([*extra, *pol_excl])
 
@@ -357,15 +425,24 @@ def blocking(
     *,
     allergen_source: Optional[dict[str, str]] = None,
 ) -> list[tuple[str, str]]:
-    amap = allergens or {}
+    amap = allergens if isinstance(allergens, dict) else {}
     out: list[tuple[str, str]] = []
     for g in normalize_allergens(excluded):
         st = amap.get(g, "unknown")
         if hasattr(st, "value"):
             st = st.value
+        if isinstance(st, str):
+            st = st.strip().lower()
+        else:
+            st = ""
         if not st:
             st = "unknown"
-        if allergen_source is not None and (allergen_source.get(g) or "").startswith("inferred") and st == "free":
+        if (
+            isinstance(allergen_source, dict)
+            and g in allergen_source
+            and str(allergen_source[g] or "").strip().lower().startswith(("inferred", "none", "contradiction"))
+            and st == "free"
+        ):
             st = "unknown"
         if st != "free":
             out.append((g, st))
