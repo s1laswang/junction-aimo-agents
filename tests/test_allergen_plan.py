@@ -292,8 +292,9 @@ def test_direct_fill_blocks_real_catalog_unsafe_products_even_if_marked_preferre
         unit="L",
         delivery_by=DELIVERY,
     )
+    unk_pid = "472833" if get_product("472833") is not None else "467244"
     tampered = []
-    for pid in ("476644", "464306", "472833"):
+    for pid in ("476644", "464306", unk_pid):
         p = get_product(pid)
         assert p is not None
         tampered.append(
@@ -352,9 +353,11 @@ def test_school_tampere_plan_need_never_returns_milk_nuts_or_unknown(offline_pla
 @pytest.mark.skipif(not _have_data(), reason="product data not present")
 @pytest.mark.parametrize("pref_id", ["476644", "464306", "472833"])
 def test_school_tampere_rejects_unsafe_or_unverified_preferred_products(offline_plan, pref_id):
+    if pref_id == "472833" and get_product("472833") is None:
+        pref_id = "467244"
     need = Need(
         customer_id="school-tampere",
-        product_query="oat drink" if pref_id == "472833" else "milk",
+        product_query="oat drink" if pref_id in ("472833", "467244") else "milk",
         excluded_allergens=[],
         preferred_product_ids=[pref_id],
         quantity=60,
