@@ -74,10 +74,37 @@ def test_build_walkthrough_script_syntax_hygiene_and_referenced_frames():
         assert narration.strip(), f"Empty narration for frame {png_name}"
 
 
-def test_reports_plan_and_sessions_contain_zero_em_dashes():
+EXPECTED_REPORTS = {
+    "buyer.md",
+    "catalog.md",
+    "frontend.md",
+    "gateway.md",
+    "harden.md",
+    "live.md",
+    "need.md",
+    "pitch.md",
+    "port.md",
+    "replay.md",
+    "submit.md",
+    "tests.md",
+    "trust.md",
+    "ui.md",
+    "windtunnel.md",
+}
+
+
+def test_reports_plan_sessions_and_team_non_empty_and_zero_em_dashes():
     report_files = sorted((ROOT / "docs" / "reports").glob("*.md"))
-    assert len(report_files) >= 10, "Expected markdown reports under docs/reports/"
-    targets = [*report_files, ROOT / "docs" / "PLAN.md", ROOT / "docs" / "SESSIONS.md"]
+    assert len(report_files) >= 14, f"Expected >= 14 markdown reports, got {len(report_files)}"
+    found_names = {p.name for p in report_files}
+    missing_reports = sorted(EXPECTED_REPORTS - found_names)
+    assert missing_reports == [], f"Missing expected report files: {missing_reports}"
+    targets = [
+        *report_files,
+        ROOT / "docs" / "TEAM.md",
+        ROOT / "docs" / "PLAN.md",
+        ROOT / "docs" / "SESSIONS.md",
+    ]
     offenders: list[str] = []
     for path in targets:
         assert path.is_file(), f"Missing markdown file: {path.relative_to(ROOT)}"
@@ -86,7 +113,36 @@ def test_reports_plan_and_sessions_contain_zero_em_dashes():
         if EM_DASH in text:
             bad_lines = [idx for idx, ln in enumerate(text.splitlines(), start=1) if EM_DASH in ln]
             offenders.append(f"{path.relative_to(ROOT)}:{bad_lines}")
-    assert offenders == [], f"Em dashes found in reports/PLAN/SESSIONS: {offenders}"
+    assert offenders == [], f"Em dashes found in reports/TEAM/PLAN/SESSIONS: {offenders}"
+
+
+def test_all_frontend_report_pngs_have_valid_header_and_size():
+    frontend_dir = ROOT / "docs" / "reports" / "frontend"
+    assert frontend_dir.is_dir(), "Missing docs/reports/frontend directory"
+    png_files = sorted(frontend_dir.rglob("*.png"))
+    assert len(png_files) >= 20, f"Expected >= 20 frontend PNGs, found {len(png_files)}"
+    for png_path in png_files:
+        size = png_path.stat().st_size
+        assert size > 1000, f"PNG size <= 1000 bytes ({size}): {png_path.relative_to(ROOT)}"
+        with png_path.open("rb") as fh:
+            sig = fh.read(8)
+        assert sig == PNG_SIG, f"Invalid PNG magic header in {png_path.relative_to(ROOT)}: {sig!r}"
+
+
+def test_team_doc_interfaces_and_fr8_fleet_squads():
+    team_path = ROOT / "docs" / "TEAM.md"
+    assert team_path.is_file(), "Missing docs/TEAM.md"
+    team = team_path.read_text(encoding="utf-8")
+    assert team.strip(), "Empty docs/TEAM.md"
+    assert EM_DASH not in team, "Em dash found in docs/TEAM.md"
+    assert "13 tools" in team
+    assert "no approval tool" in team.lower()
+    assert "/v1/agent/runs" in team
+    assert "X-Approver-Session" in team
+    assert "X-Approver-Pin" in team
+    assert "signed-in human" in team.lower()
+    for squad in ("inputs", "buyer", "allergen", "auth", "docs"):
+        assert f"fr8/valio/{squad}" in team, f"docs/TEAM.md missing credit for fr8/valio/{squad}"
 
 
 def test_submit_report_plan_and_sessions_cite_4ccc1fb_walkthrough_and_0f0ece1():
@@ -113,6 +169,33 @@ def test_submit_report_plan_and_sessions_cite_4ccc1fb_walkthrough_and_0f0ece1():
     assert "Sun 15 Nov 05:22-05:33" in submit
     assert "keyless 270 passed / 0 failed" in submit
     assert "sign-in-before-run" in submit
+
+
+def test_submit_report_plan_and_sessions_cite_62e8384_policy_and_live_run_evidence():
+    synced_docs = (
+        "docs/reports/submit.md",
+        "docs/PLAN.md",
+        "docs/SESSIONS.md",
+    )
+    for rel in synced_docs:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for required in (
+            "7225d06",
+            "f3c5996",
+            "02575d8",
+            "62e8384",
+            "470d2f3",
+            "docs/evidence/live-run/",
+            "verify_quote.py",
+            "375 passed, 7 skipped, 1 xfailed, 1 xpassed",
+            "69.5%",
+        ):
+            assert required in text, f"{rel} missing {required!r}"
+
+    submit = (ROOT / "docs" / "reports" / "submit.md").read_text(encoding="utf-8")
+    assert "Sun 15 Nov 05:36-05:40" in submit
+    assert "Sun 15 Nov 05:42-05:44" in submit
+    assert "AIMO_GEMINI_TRACE" in submit
 
 
 def test_self_zero_comments_and_zero_em_dashes():
