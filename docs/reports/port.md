@@ -121,3 +121,7 @@ Command: `uv run python -m scenarios.run_all`. See docs/SCENARIOS.md.
 ## Decisions for Silas / CEO
 1. Apply the 2-line hook and append the interface rows above (CEO).
 2. Optional: add the drift and proposal cards to the UI. The frontend can call `/v1/drift/{customer}` and `/v1/proposals?customer_id=`.
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- Both port hooks are live on `main` and `fr8/valio`: `aimo serve` exposes all 13 MCP tools (9 core `otap/0.1` + 4 port extensions, 0 approval tools), `conformance` runs **44/44** on both Valio Aimo and Nordic Bakery Supply, and `scenarios.run_all` passes **8/8** (92 checks) in keyless replay.
+- Judges can also verify the OTAP quote/audit signatures, 403 `agent_cannot_approve` refusal, 409 requote, and Peppol `AP` flow offline with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).

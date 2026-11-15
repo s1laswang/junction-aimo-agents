@@ -68,3 +68,7 @@ voice card and decision bar fit, voice card survives the inbox refresh.
 - S4 (docs): DEMO.md beat "a human signs in, agents never can" now uses the header chip "Sign in as approver";
   voice beat: Approvals → "Decide by voice" → say "approve" → Confirm.
 - Contracts: no change to `aimo/models.py`. Appended a "Voice approval" section to `docs/interfaces.md` (`/v1/voice/*`).
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- `aimo/trust/learned.py` landed on `main`, enabling the "Learned swaps" panel in `/ui`, and `POST /v1/agent/runs` requires a signed-in human (`X-Approver-Session` or `X-Approver-Pin`).
+- Alongside `/ui`, judges can inspect the same Ed25519 JWS verification, 403 `agent_cannot_approve` refusal, 409 `requote_needed` diff, Peppol `AP` export, and audit tamper check with zero setup in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).
