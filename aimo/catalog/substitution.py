@@ -29,6 +29,7 @@ from aimo.catalog import units as U
 from aimo.catalog.allergens import (
     blocking,
     effective_excluded_allergens,
+    normalize_allergen,
     normalize_allergens,
     policy_allergens,
     with_policy_allergens,
@@ -156,17 +157,71 @@ def spec_preferences(need: Need) -> dict[str, Any]:
     return {k: prefs[k] for k in SPEC_PREF_KEYS if prefs.get(k) not in (None, "", [])}
 
 
+def _effective_excluded(
+    need: Need,
+    rows: dict[str, dict[str, Any]] | None,
+    fallback_row: Optional[dict] = None,
+) -> list[str]:
+    caller_excl = normalize_allergens(need.excluded_allergens)
+    eff_excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
+    all_rows = [*(rows.values() if rows else ()), *([fallback_row] if fallback_row is not None else [])]
+    if all_rows and caller_excl and all("allergen_source" not in d for d in all_rows):
+        eff_excl = [a for a in eff_excl if a in caller_excl or any(a in (d.get("allergens") or {}) for d in all_rows)]
+    return eff_excl
+
+
+def _conflict_map(d: dict[str, Any]) -> dict[str, Any]:
+    raw = d.get("allergen_conflicts") or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        for g in normalize_allergen(k):
+            out[g] = v
+    return out
+
+
+def _source_map(d: dict[str, Any]) -> Optional[dict[str, str]]:
+    raw = d.get("allergen_source")
+    if raw is None or not isinstance(raw, dict):
+        return None
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        sv = str(v or "")
+        for g in normalize_allergen(k):
+            out[g] = sv
+    return out
+
+
+def _row_blocking(d: dict[str, Any], excluded: list[str]) -> list[tuple[str, str]]:
+    amap: dict[str, Any] = {}
+    for k, v in (d.get("allergens") or {}).items():
+        for g in normalize_allergen(k):
+            amap[g] = v
+    smap = _source_map(d)
+    cfl = _conflict_map(d)
+    for g in cfl:
+        amap[g] = "unknown"
+    if smap:
+        for g, src in smap.items():
+            st = amap.get(g)
+            st_val = st.value if hasattr(st, "value") else st
+            if src == "contradiction" and st_val == "free":
+                amap[g] = "unknown"
+    return blocking(amap, excluded, allergen_source=smap)
+
+
 def reference_spec(need: Need, rows: dict[str, dict[str, Any]], fallback_row: Optional[dict] = None) -> Spec:
     sp = spec_preferences(need)
     shaping = {k: v for k, v in sp.items() if k in ("brand", "fat_pct", "organic")}
+    eff_excl = _effective_excluded(need, rows, fallback_row)
     ref = None
     for pid in need.preferred_product_ids:
-        if pid in rows and not blocking(rows[pid].get("allergens") or {}, need.excluded_allergens,
-                                        allergen_source=rows[pid].get("allergen_source")):
+        if pid in rows and not _row_blocking(rows[pid], eff_excl):
             ref = rows[pid]
             break
     src = "preferred" if ref else "none"
-    if ref is None and fallback_row is not None:
+    if ref is None and fallback_row is not None and not _row_blocking(fallback_row, eff_excl):
         # the closest match is ALWAYS the product-type reference when there is no usual product,
         # whatever the preferences say (preferences can only add brand / fat / organic)
         ref, src = fallback_row, "top_hit"
@@ -313,10 +368,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                      inferred_allergens: dict[str, dict[str, str]] | None = None) -> list[Candidate]:
     """Rank candidate rows for `need`. If `rows` is not given, candidates come from find_candidates()."""
     validate_need(need)
-    caller_excl = normalize_allergens(need.excluded_allergens)
-    excl = effective_excluded_allergens(need.customer_id, need.excluded_allergens)
-    if rows is not None and rows and caller_excl and all("allergen_source" not in d for d in rows.values()):
-        excl = [a for a in excl if a in caller_excl or any(a in (d.get("allergens") or {}) for d in rows.values())]
+    excl = _effective_excluded(need, rows)
     if excl != list(need.excluded_allergens):
         need = need.model_copy(update={"excluded_allergens": excl})
     if rows is None:
@@ -332,13 +384,13 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
     # milk, not "Cafè milk"; "oat drink" -> plant-based).
     q_types = product_types({"name_en": " " + (need.product_query or "") + " "})
     for level in (2, 1, 0):
-        for pid, _s in sorted(relevance.items(), key=lambda x: -x[1]):
+        for pid, _s in sorted(relevance.items(), key=lambda x: (-(_finite(x[1]) or 0.0), x[0])):
             d0 = rows.get(pid)
             if d0 is None or not set(need.required_claims) <= set(d0.get("claims") or []):
                 continue
-            if level >= 1 and (blocking(d0.get("allergens") or {}, need.excluded_allergens,
-                                        allergen_source=d0.get("allergen_source"))
-                               or d0.get("content_unit") != need.unit
+            if _row_blocking(d0, need.excluded_allergens):
+                continue
+            if level >= 1 and (d0.get("content_unit") != need.unit
                                or missing_query_concepts(need.product_query, d0)):
                 continue
             if level == 2 and product_types(d0) != q_types:
@@ -380,27 +432,48 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         if missing:
             have_low = "LOW_LACTOSE" in (d.get("claims") or []) and "FREE_FROM_LACTOSE" in missing
             reject.append(f"missing required claim {', '.join(missing)}" + (" (only LOW_LACTOSE)" if have_low else ""))
-        conflicts = d.get("allergen_conflicts") or {}
-        if conflicts:
+        conflicts = _conflict_map(d)
+        smap = _source_map(d) or {}
+        if conflicts or any(v == "contradiction" for v in smap.values()):
             flags.append("allergen_data_conflict")
-        blk = blocking(d.get("allergens") or {}, need.excluded_allergens, allergen_source=d.get("allergen_source"))
+        blk = _row_blocking(d, need.excluded_allergens)
+        has_allergen_block = bool(blk)
         for g, st in blk:
-            if st == "unknown" and g in conflicts:
+            if g in conflicts or smap.get(g) == "contradiction":
                 flags.append("allergen_unknown")
-                reject.append(f"{g}: supplier data says free from {g} but the ingredients say "
-                              f"'{conflicts[g].get('evidence', '')[:60]}' (data conflict; treated as unknown)")
+                cval = conflicts.get(g)
+                if isinstance(cval, dict):
+                    ev = str(cval.get("evidence") or "")[:60]
+                elif isinstance(cval, str):
+                    ev = cval[:60]
+                else:
+                    ev = ""
+                if ev:
+                    reject.append(f"{g}: supplier data says free from {g} but the ingredients say "
+                                  f"'{ev}' (data conflict; treated as unknown)")
+                else:
+                    reject.append(f"{g}: supplier allergen data conflicts with ingredients (data conflict; treated as unknown)")
                 continue
             if st == "unknown":
                 flags.append("allergen_unknown")
-                hint = (inferred_allergens.get(pid) or {}).get(g)
+                raw_hints = inferred_allergens.get(pid) or {}
+                hint = raw_hints.get(g)
+                if hint is None and isinstance(raw_hints, dict):
+                    for hk, hv in raw_hints.items():
+                        if g in normalize_allergen(hk):
+                            hint = hv
+                            break
                 hint_txt = {"contains": f"Gemini reads the ingredients as containing {g}",
                             "may_contain": f"Gemini reads the ingredients as possibly containing {g}",
-                            "not_found": f"Gemini found no {g} in the ingredients"}.get(hint or "", "")
+                            "not_found": f"Gemini found no {g} in the ingredients",
+                            "free": f"Gemini found no {g} in the ingredients"}.get(hint or "", "")
                 reject.append(f"{g}: no structured allergen data (unknown is never treated as safe)"
                               + (f"; hint: {hint_txt} (inferred:gemini, needs human confirmation)" if hint_txt else ""))
                 if hint:
                     flags.append("allergen_inferred_hint")
             else:
+                if st in ("contains", "may_contain"):
+                    flags.append(f"{st}:{g}")
                 reject.append(f"{g}: {st.replace('_', ' ')} per supplier data")
         if cunit != need.unit:
             reject.append(f"sold by {cunit or 'unknown unit'}, need is in {need.unit}")
@@ -476,6 +549,7 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
                             flags=flags, reject=reject, tier=tier, tier_if_ok=tier_if_ok, summary=summary,
                             same_brand=same_brand, same_fat=same_fat, same_org=same_org, same_cat=same_cat,
                             coverage=coverage, spec_source=spec.source, type_note=type_note,
+                            has_allergen_block=has_allergen_block,
                             injection_screen=screen_out, screen_raw=sc))
 
     # ---- scores (relative within the eligible set)
@@ -545,14 +619,18 @@ def rank_substitutes(need: Need, offers: dict[str, Offer] | None = None, limit: 
         x["reasons"].extend(_reasons(x, spec, need))
 
     scratch.sort(key=lambda x: (TIER_ORDER[x["tier"]], 0 if x["pid"] in prefs else 1, -x["score"],
-                                -(_finite(relevance.get(x["pid"])) or 0.0)))
+                                -(_finite(relevance.get(x["pid"])) or 0.0), x["pid"]))
+    excl_set = set(normalize_allergens(need.excluded_allergens))
     out: list[Candidate] = []
     n_rej = 0
     for x in scratch:
         if x["tier"] == "rejected":
             # keep relevant rejections only: preferred, same-family products, or orderability problems
             type_mismatch = any(r.startswith("different product type") for r in x["reject"])
-            allergen_hit = any(r.split(":")[0] in need.excluded_allergens for r in x["reject"])
+            allergen_hit = any(
+                ":" in r and bool(set(normalize_allergen(r.split(":", 1)[0])) & excl_set)
+                for r in x["reject"]
+            )
             useful = (x["pid"] in prefs or allergen_hit
                       or (x["cunit"] == need.unit and not type_mismatch))
             if not useful or n_rej >= max(6, limit // 2):
@@ -623,8 +701,10 @@ def _reasons(x: dict[str, Any], spec: Spec, need: Need) -> list[str]:
         r.append(f"CO2 {co2_r:.2f} kg CO2e/kg (category average)")
     if need.required_claims and not any(m.startswith("missing required claim") for m in x["reject"]):
         r.append("has " + ", ".join(need.required_claims))
-    if need.excluded_allergens and not any("allergen" in m or ":" in m for m in x["reject"]):
-        r.append("free from " + ", ".join(need.excluded_allergens) + " per structured supplier data")
+    excl_norm = normalize_allergens(need.excluded_allergens)
+    has_blk = bool(x["has_allergen_block"]) if "has_allergen_block" in x else bool(_row_blocking(d, excl_norm))
+    if excl_norm and not has_blk:
+        r.append("free from " + ", ".join(excl_norm) + " per structured supplier data")
     if offer is not None:
         if offer.logistic_model:
             r.append(f"{offer.logistic_model} item" + (f", order by {_d(offer.closing_time)}" if offer.closing_time and not offer.cutoff_passed else ""))
