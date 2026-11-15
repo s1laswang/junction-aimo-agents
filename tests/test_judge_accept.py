@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "judge_accept.sh"
 KEY_VARS = (
@@ -21,6 +23,8 @@ KEY_VARS = (
     "AIMO_KEY_DIR",
     "AIMO_APPROVER_PIN",
     "AIMO_ACCEPT_LOG_PREFIX",
+    "AIMO_CATALOG_FIXTURE",
+    "AIMO_DEMO_FAULTS",
 )
 
 
@@ -43,13 +47,19 @@ def _run_helper(cwd: Path, body: str, extra_env: dict[str, str] | None = None) -
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    run_tmp = tmp_path / "tmpdir"
+    run_tmp.mkdir(exist_ok=True)
+    monkeypatch.setenv("TMPDIR", str(run_tmp))
+    return run_tmp
+
+
 def _setup_stub_repo(tmp_path: Path) -> tuple[Path, Path]:
     fake_root = tmp_path / "repo"
     (fake_root / "scripts").mkdir(parents=True)
-    log_prefix = str(tmp_path / "accept-log-")
-    patched = SCRIPT.read_text(encoding="utf-8").replace("/tmp/aimo-accept-", log_prefix)
     target_script = fake_root / "scripts" / "judge_accept.sh"
-    target_script.write_text(patched, encoding="utf-8")
+    shutil.copyfile(SCRIPT, target_script)
     target_script.chmod(target_script.stat().st_mode | stat.S_IXUSR)
     (fake_root / ".env.example").write_text("AIMO_API_KEY=\nGEMINI_API_KEY=\n", encoding="utf-8")
 
@@ -67,7 +77,7 @@ def _setup_stub_repo(tmp_path: Path) -> tuple[Path, Path]:
         "    print('uv 0.5.0')\n"
         "    sys.exit(0)\n"
         "if 'pytest' in args:\n"
-        "    print('4 passed in 0.05s')\n"
+        "    print(os.environ.get('STUB_PYTEST_OUTPUT', '4 passed in 0.05s'))\n"
         "    sys.exit(0)\n"
         "if args[:3] == ['run', 'python', '-m'] and 'scenarios.run_all' in args:\n"
         "    (out_dir / 'scenarios.json').write_text(json.dumps({\n"
@@ -175,6 +185,9 @@ def test_judge_accept_no_em_dashes_no_comments_and_updated_demo_checks() -> None
     assert 'AIMO_STATE_DB="$TMP_ACCEPT/state.sqlite"' in text
     assert 'AIMO_KEY_DIR="$TMP_ACCEPT/keys"' in text
     assert '--json "$TMP_ACCEPT/conformance.json"' in text
+    assert 'ACCEPT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/aimo-accept.XXXXXX")"' in text
+    assert 'say "logs=$ACCEPT_TMP"' in text
+    assert 'LOG_PREFIX="${AIMO_ACCEPT_LOG_PREFIX:-$ACCEPT_TMP/aimo-accept-}"' in text
     assert "mktemp -d" in text
     assert "trap cleanup" in text
 
@@ -564,6 +577,94 @@ def test_main_keyless_without_replay_records_skip_for_requote_beat(tmp_path: Pat
     )
     assert not (out_dir / "requote.json").exists()
     assert "RESULT: PASS" in res.stdout
+
+
+def test_parallel_runs_without_log_prefix_emit_distinct_log_dirs_without_colliding(tmp_path: Path) -> None:
+    before_sys_tmp = set(Path("/tmp").glob("aimo-accept*"))
+    target_script, fake_bin = _setup_stub_repo(tmp_path)
+
+    out_a = tmp_path / "out-a"
+    out_b = tmp_path / "out-b"
+    out_a.mkdir()
+    out_b.mkdir()
+
+    env_a = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_a),
+        "STUB_PYTEST_OUTPUT": "11 passed in 0.05s",
+        "STUB_DEMO_OUTPUT": "  run=alpha status=placed  latency=0.10 s",
+    })
+    env_b = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_b),
+        "STUB_PYTEST_OUTPUT": "22 passed in 0.05s",
+        "STUB_DEMO_OUTPUT": "  run=bravo status=placed  latency=0.12 s",
+    })
+    assert "AIMO_ACCEPT_LOG_PREFIX" not in env_a
+    assert "AIMO_ACCEPT_LOG_PREFIX" not in env_b
+
+    proc_a = subprocess.Popen(
+        ["bash", str(target_script)],
+        env=env_a,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    proc_b = subprocess.Popen(
+        ["bash", str(target_script)],
+        env=env_b,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout_a, stderr_a = proc_a.communicate(timeout=30)
+    stdout_b, stderr_b = proc_b.communicate(timeout=30)
+
+    assert proc_a.returncode == 0, stdout_a + stderr_a
+    assert proc_b.returncode == 0, stdout_b + stderr_b
+    assert "RESULT: PASS" in stdout_a
+    assert "RESULT: PASS" in stdout_b
+
+    logs_lines_a = [ln for ln in stdout_a.splitlines() if ln.startswith("logs=")]
+    logs_lines_b = [ln for ln in stdout_b.splitlines() if ln.startswith("logs=")]
+    assert len(logs_lines_a) == 1
+    assert len(logs_lines_b) == 1
+
+    logs_dir_a = Path(logs_lines_a[0].removeprefix("logs="))
+    logs_dir_b = Path(logs_lines_b[0].removeprefix("logs="))
+    assert logs_dir_a != logs_dir_b
+    assert logs_dir_a.is_dir()
+    assert logs_dir_b.is_dir()
+    assert logs_dir_a.parent == tmp_path / "tmpdir"
+    assert logs_dir_b.parent == tmp_path / "tmpdir"
+
+    pytest_log_a = (logs_dir_a / "aimo-accept-pytest.txt").read_text(encoding="utf-8")
+    pytest_log_b = (logs_dir_b / "aimo-accept-pytest.txt").read_text(encoding="utf-8")
+    assert "11 passed in 0.05s" in pytest_log_a and "22 passed in 0.05s" not in pytest_log_a
+    assert "22 passed in 0.05s" in pytest_log_b and "11 passed in 0.05s" not in pytest_log_b
+
+    demo_log_a = (logs_dir_a / "aimo-accept-demo.txt").read_text(encoding="utf-8")
+    demo_log_b = (logs_dir_b / "aimo-accept-demo.txt").read_text(encoding="utf-8")
+    assert "run=alpha" in demo_log_a and "run=bravo" not in demo_log_a
+    assert "run=bravo" in demo_log_b and "run=alpha" not in demo_log_b
+    assert (logs_dir_a / "aimo-accept-serve.txt").is_file()
+    assert (logs_dir_b / "aimo-accept-serve.txt").is_file()
+
+    out_c = tmp_path / "out-c"
+    out_c.mkdir()
+    custom_prefix = tmp_path / "custom-prefix-"
+    env_c = _clean_env({
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "STUB_OUT_DIR": str(out_c),
+        "STUB_PYTEST_OUTPUT": "33 passed in 0.05s",
+        "AIMO_ACCEPT_LOG_PREFIX": str(custom_prefix),
+    })
+    res_c = subprocess.run(["bash", str(target_script)], env=env_c, capture_output=True, text=True, check=False)
+    assert res_c.returncode == 0, res_c.stdout + res_c.stderr
+    assert "33 passed in 0.05s" in (tmp_path / "custom-prefix-pytest.txt").read_text(encoding="utf-8")
+    assert (tmp_path / "custom-prefix-demo.txt").is_file()
+
+    assert set(Path("/tmp").glob("aimo-accept*")) == before_sys_tmp
 
 
 def test_judge_accept_real_keyless_stack_end_to_end(tmp_path: Path) -> None:

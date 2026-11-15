@@ -19,7 +19,6 @@ from typing import Any
 
 HEL = timezone(timedelta(hours=2))
 
-# id: (name, sales_unit, content_amount, content_unit, claims, allergens(EU14 -> status), brand)
 PRODUCTS: dict[str, dict[str, Any]] = {
     "463038": dict(name="Valio Eila semi skimmed milk drink 10 l novobox lactose free", sales_unit="KI",
                    content_amount=10.0, content_unit="L", claims=["FREE_FROM_LACTOSE"], brand="Valio",
@@ -54,7 +53,6 @@ PRODUCTS: dict[str, dict[str, Any]] = {
                    brand="Schar", category="bakery", allergens={"gluten": "free", "milk": "free", "nuts": "free"}),
 }
 
-# id: (unit_price, available_amount (None = Terminal/unknown), logistic_model, closing_time)
 OFFERS: dict[str, tuple] = {
     "463038": (10.90, None, "Terminal", datetime(2026, 11, 12, 15, 0, tzinfo=HEL)),
     "464306": (1.01, 5000, "Stock", datetime(2026, 11, 15, 17, 0, tzinfo=HEL)),
@@ -103,10 +101,9 @@ class FakeGateway:
         self.orders: dict[str, dict] = {}
         self.audit: list[dict] = []
         self.calls: list[tuple[str, dict]] = []
-        self.fail_next: dict[str, int] = {}  # tool -> number of failures to inject
+        self.fail_next: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    # -- helpers
     def _summary(self, pid: str) -> dict:
         p = PRODUCTS[pid]
         return {"id": pid, "name": p["name"], "brand": p["brand"], "sales_unit": p["sales_unit"],
@@ -137,7 +134,6 @@ class FakeGateway:
             raise RuntimeError(f"503 UNAVAILABLE (injected fault in fake {name})")
         return getattr(self, name)(**args)
 
-    # -- tools
     def search_products(self, query: str, claims: list[str] | None = None, limit: int = 20) -> list[dict]:
         q = query.lower()
         words = [w for w in q.replace("-", " ").split() if w not in ("lactose", "free", "drink")]
@@ -205,10 +201,16 @@ class FakeGateway:
     def plan_need(self, need: dict) -> dict:
         from aimo.catalog.allergens import effective_excluded_allergens, normalize_allergens, policy_allergen_block
         from aimo.catalog.plan import _excluded_groups_named, _profile_usual_products
-        raw_qty = need["quantity"]
-        if isinstance(raw_qty, bool):
+        from aimo.trust.screening import screen_text
+        if not isinstance(need, dict):
+            raise ValueError("need must be a dict")
+        raw_qty = need.get("quantity")
+        if raw_qty is None or isinstance(raw_qty, bool):
             raise ValueError("quantity must be > 0")
-        qty = float(raw_qty)
+        try:
+            qty = float(raw_qty)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("quantity must be > 0") from exc
         if not math.isfinite(qty) or qty <= 0:
             raise ValueError("quantity must be > 0")
         cust = (need.get("customer_id") or self.customer_id or "").strip()
@@ -299,6 +301,14 @@ class FakeGateway:
             remaining = round(remaining - units * ca, 6)
         covered = round(sum(l["covered_amount"] for l in lines), 4)
         notes: list[str] = []
+        req_text = " \n".join(str(t) for t in (need.get("raw_text"), need.get("product_query")) if t)
+        if req_text:
+            s = screen_text(req_text, use_gemini=False)
+            if s.get("suspicious"):
+                reasons_txt = ", ".join(
+                    dict.fromkeys(s.get("strong_reasons") or s.get("reasons") or ["suspicious_instruction"])
+                )[:200]
+                notes.append("Warning: the request contains instructions aimed at AI agents (" + reasons_txt + ").")
         if policy_added:
             pid_label = pb.policy_id or cust
             why = f" ({pb.reason})" if pb.reason else ""
@@ -334,6 +344,32 @@ class FakeGateway:
         from aimo.catalog.allergens import effective_excluded_allergens
         from aimo.catalog.plan import _excluded_groups_named
         from aimo.catalog.screening_bridge import screen_product_row
+        if not isinstance(lines, (list, tuple)) or isinstance(lines, (str, bytes)) or not lines:
+            raise ValueError("lines must not be empty")
+        if isinstance(need, dict) and "quantity" in need and need["quantity"] is not None:
+            raw_need_qty = need["quantity"]
+            if isinstance(raw_need_qty, bool):
+                raise ValueError("quantity must be > 0")
+            try:
+                need_qty = float(raw_need_qty)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("quantity must be > 0") from exc
+            if not math.isfinite(need_qty) or need_qty <= 0:
+                raise ValueError("quantity must be > 0")
+        parsed_lines: list[tuple[dict, float | int]] = []
+        for l in lines:
+            if not isinstance(l, dict):
+                raise ValueError("each line must be a dict")
+            raw_qty = l.get("qty_sales_units")
+            if raw_qty is None or isinstance(raw_qty, bool):
+                raise ValueError("qty_sales_units must be > 0")
+            try:
+                qty_val = float(raw_qty)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("qty_sales_units must be > 0") from exc
+            if not math.isfinite(qty_val) or qty_val <= 0:
+                raise ValueError("qty_sales_units must be > 0")
+            parsed_lines.append((l, raw_qty if isinstance(raw_qty, (int, float)) else qty_val))
         cust = (self.customer_id or (need or {}).get("customer_id") or "").strip()
         raw_excl = list((need or {}).get("excluded_allergens") or [])
         eff_excl = effective_excluded_allergens(cust, raw_excl)
@@ -347,7 +383,7 @@ class FakeGateway:
             lit, imp = _excluded_groups_named(str(need.get("product_query") or ""), eff_excl)
             named_excl = lit + imp
         qlines = []
-        for l in lines:
+        for l, line_qty in parsed_lines:
             pid = l["product_id"]
             p = PRODUCTS[pid]
             o = self._offer(pid, delivery_date)
@@ -363,9 +399,9 @@ class FakeGateway:
             safe_for_excl = all((amap.get(a) or "unknown") == "free" for a in eff_excl)
             if "allergen_safe_alternative" in in_flags or (named_excl and safe_for_excl):
                 qflags.append("allergen_safe_alternative")
-            qlines.append({"product_id": pid, "product_name": p["name"], "qty_sales_units": l["qty_sales_units"],
+            qlines.append({"product_id": pid, "product_name": p["name"], "qty_sales_units": line_qty,
                            "sales_unit": p["sales_unit"], "unit_price": o["unit_price"],
-                           "line_total": round(l["qty_sales_units"] * o["unit_price"], 2), "tier": l.get("tier", "preferred"), "flags": qflags})
+                           "line_total": round(float(line_qty) * o["unit_price"], 2), "tier": l.get("tier", "preferred"), "flags": qflags})
         qid = "Q-" + uuid.uuid4().hex[:8]
         q = {"quote_id": qid, "customer_id": self.customer_id, "agent_id": self.agent_id, "delivery_date": delivery_date,
              "lines": qlines, "total_net": round(sum(l["line_total"] for l in qlines), 2), "currency": "EUR",
@@ -380,6 +416,7 @@ class FakeGateway:
     def place_order(self, quote_id: str, quote_hash: str) -> dict:
         from aimo.catalog.allergens import effective_excluded_allergens, policy_allergen_block
         from aimo.catalog.plan import _excluded_groups_named
+        from aimo.trust.screening import screen_text
         q = self.quotes.get(quote_id)
         if not q or q["quote_hash"] != quote_hash:
             raise ValueError("unknown quote or quote_hash mismatch")
@@ -462,6 +499,27 @@ class FakeGateway:
             })
             if outcome != "reject":
                 outcome = "needs_approval"
+        req_text = " \n".join(
+            str(t) for t in ((q_need.get("raw_text"), q_need.get("product_query")) if q_need else ()) if t
+        )
+        if req_text:
+            req_screen = screen_text(req_text, use_gemini=False)
+            if req_screen.get("suspicious"):
+                req_reasons = ", ".join(
+                    dict.fromkeys(
+                        req_screen.get("strong_reasons") or req_screen.get("reasons") or ["suspicious_instruction"]
+                    )
+                )[:200]
+                hits.append({
+                    "rule_id": "security.prompt_injection:request",
+                    "outcome": "needs_approval",
+                    "message": (
+                        f"The buyer request contains instructions aimed at AI agents ({req_reasons}); "
+                        f"human approval required."
+                    ),
+                })
+                if outcome != "reject":
+                    outcome = "needs_approval"
         if (((q.get("need") or {}).get("preferences") or {}).get("injection_flags")
                 or any("supplier_text_injection_suspected" in (l.get("flags") or []) for l in q.get("lines", []))):
             hits.append({"rule_id": "security.prompt_injection", "outcome": "needs_approval",
@@ -507,7 +565,6 @@ class FakeGateway:
             )
         return {"customer_id": self.customer_id, "policy_id": self.customer_id, "_fake": True, "rules": rules}
 
-    # -- human side (the UI does this through POST /v1/approvals/{id}/decision)
     def pending(self) -> list[dict]:
         return [o for o in self.orders.values() if o["status"] == "pending_approval"]
 
