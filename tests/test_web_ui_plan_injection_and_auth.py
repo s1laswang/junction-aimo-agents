@@ -660,6 +660,7 @@ def test_s5_responsive_topbar_chip_styles_and_requote_reason_headings(ui_server:
         page.locator("#signin-pin").fill(APPROVER_PIN)
         page.locator("#signin-dialog button[type='submit']").click()
         expect(page.locator("#approver-chip .approver-chip.on")).to_be_visible(timeout=10000)
+        expect(page.locator("#approver-chip .approver-chip.on .role")).to_be_attached(timeout=10000)
 
         role_display = page.evaluate(
             "() => getComputedStyle(document.querySelector('.approver-chip.on .role')).display"
