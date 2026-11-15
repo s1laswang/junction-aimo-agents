@@ -155,9 +155,10 @@ EXPECTED_REPORTS = {
 
 
 def test_reports_plan_sessions_and_team_non_empty_and_zero_em_dashes():
-    report_files = sorted((ROOT / "docs" / "reports").glob("*.md"))
-    assert len(report_files) >= 14, f"Expected >= 14 markdown reports, got {len(report_files)}"
-    found_names = {p.name for p in report_files}
+    report_files = sorted((ROOT / "docs" / "reports").rglob("*.md"))
+    top_reports = sorted((ROOT / "docs" / "reports").glob("*.md"))
+    assert len(top_reports) >= 14, f"Expected >= 14 markdown reports, got {len(top_reports)}"
+    found_names = {p.name for p in top_reports}
     missing_reports = sorted(EXPECTED_REPORTS - found_names)
     assert missing_reports == [], f"Missing expected report files: {missing_reports}"
     targets = [
@@ -175,6 +176,40 @@ def test_reports_plan_sessions_and_team_non_empty_and_zero_em_dashes():
             bad_lines = [idx for idx, ln in enumerate(text.splitlines(), start=1) if EM_DASH in ln]
             offenders.append(f"{path.relative_to(ROOT)}:{bad_lines}")
     assert offenders == [], f"Em dashes found in reports/TEAM/PLAN/SESSIONS: {offenders}"
+
+
+def test_reports_relative_links_all_resolve_to_non_empty_repo_targets():
+    link_re = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+    report_files = sorted((ROOT / "docs" / "reports").rglob("*.md"))
+    targets = [
+        *report_files,
+        ROOT / "docs" / "TEAM.md",
+        ROOT / "docs" / "PLAN.md",
+        ROOT / "docs" / "SESSIONS.md",
+    ]
+    broken: list[str] = []
+    for doc in targets:
+        raw_text = doc.read_text(encoding="utf-8")
+        stripped = re.sub(r"```.*?```", "", raw_text, flags=re.DOTALL)
+        for raw_target in link_re.findall(stripped):
+            target = raw_target.strip().split()[0]
+            if target.startswith(("http://", "https://", "mailto:", HASH)):
+                continue
+            rel = target.split(HASH, 1)[0].split("?", 1)[0]
+            if not rel:
+                continue
+            resolved = (doc.parent / rel).resolve()
+            if not resolved.exists():
+                broken.append(f"{doc.relative_to(ROOT)} -> {raw_target}")
+                continue
+            assert ROOT in (resolved, *resolved.parents), (
+                f"Relative link escapes repo root: {doc.relative_to(ROOT)} -> {raw_target}"
+            )
+            if resolved.is_file():
+                assert resolved.stat().st_size > 0, (
+                    f"Empty linked target: {doc.relative_to(ROOT)} -> {resolved.relative_to(ROOT)}"
+                )
+    assert broken == [], f"Broken relative links in reports/TEAM/PLAN/SESSIONS: {broken}"
 
 
 def test_all_frontend_report_pngs_have_valid_header_and_size():
@@ -285,6 +320,138 @@ def test_submit_report_plan_and_sessions_cite_f3c5996_walkthrough_and_450743d_ga
     assert "Sun 15 Nov 04:15 (UTC)" in submit
     assert "1280x720" in submit
     assert "70 passed in 11.95s" in submit
+
+
+def test_pitch_report_reconciled_with_62e8384_final_policy_walkthrough_and_live_run():
+    pitch = (ROOT / "docs" / "reports" / "pitch.md").read_text(encoding="utf-8")
+    for stale in (
+        "03:20 Helsinki",
+        "Q1-Q22",
+        "425 chars",
+        "short version (425",
+        "across 88 checks",
+    ):
+        assert stale not in pitch, f"docs/reports/pitch.md still contains stale {stale!r}"
+
+    for required in (
+        "62e8384",
+        "02575d8",
+        "f3c5996",
+        "7225d06",
+        "2fe8975",
+        "4ccc1fb",
+        "1d0b238",
+        "69.5%",
+        "99.7%",
+        "74.8%",
+        "331",
+        "145",
+        "spend",
+        "quantity_drift",
+        "substitution:464306",
+        "demo-walkthrough.mp4",
+        "build_walkthrough.sh",
+        "110 s",
+        "109.72 s",
+        "2,251,113",
+        "1280x720",
+        "demo-backup.mp4",
+        "docs/evidence/live-run/",
+        "run-b9690772fe",
+        "Q-20261115-964294b6",
+        "ORD-20261115-06eda13d",
+        "24.53 s",
+        "AIMO_GEMINI_TRACE",
+        "verify_quote.py",
+        "/v1/agent/runs",
+        "X-Approver-Session",
+        "X-Approver-Pin",
+        "AIMO_DEMO_FAULTS=1",
+        "441",
+        "(441 characters)",
+        "Q1-Q23",
+        "92 checks",
+        "92",
+        "8/8",
+        "44/44",
+        "375 passed",
+        "274 passed",
+        "2,448",
+    ):
+        assert required in pitch, f"docs/reports/pitch.md missing {required!r}"
+
+    submission = (ROOT / "docs" / "SUBMISSION.md").read_text(encoding="utf-8")
+    short_re = re.compile(
+        rf"{HASH}{HASH} Short version[^\n]*\n+((?:>[^\n]*\n?)+)\n*\((\d+)\s+characters\)"
+    )
+    short_match = short_re.search(submission)
+    assert short_match is not None, "Missing Short version character count in docs/SUBMISSION.md"
+    short_lines = [ln.lstrip("> ").strip() for ln in short_match.group(1).strip().splitlines()]
+    short_text = " ".join(ln for ln in short_lines if ln)
+    assert len(short_text) == 441
+    assert int(short_match.group(2)) == 441
+
+    qa = (ROOT / "docs" / "pitch" / "QA.md").read_text(encoding="utf-8")
+    qa_nums = [int(n) for n in re.findall(r"^\*\*(\d+)\.\s+", qa, flags=re.MULTILINE)]
+    assert qa_nums == list(range(1, 24)), f"Expected QA questions 1..23, got {qa_nums}"
+
+
+def test_live_need_replay_and_tests_reports_alignment_contracts():
+    live = (ROOT / "docs" / "reports" / "live.md").read_text(encoding="utf-8")
+    for required in (
+        "02575d8",
+        "62e8384",
+        "7225d06",
+        "f3c5996",
+        "docs/evidence/live-run/",
+        "run-b9690772fe",
+        "Q-20261115-964294b6",
+        "ORD-20261115-06eda13d",
+        "AIMO_GEMINI_TRACE",
+        "verify_quote.py",
+    ):
+        assert required in live, f"docs/reports/live.md missing {required!r}"
+
+    need = (ROOT / "docs" / "reports" / "need.md").read_text(encoding="utf-8")
+    for required in (
+        "7225d06",
+        "f3c5996",
+        "69.5%",
+        "145",
+        "74.8%",
+        "331",
+        "99.7%",
+        "substitution:464306",
+        "quantity_drift",
+    ):
+        assert required in need, f"docs/reports/need.md missing {required!r}"
+
+    replay = (ROOT / "docs" / "reports" / "replay.md").read_text(encoding="utf-8")
+    for required in (
+        "62e8384",
+        "1d0b238",
+        "92 checks",
+        "92",
+        "s5_allergen_safe",
+        "Dockerfile",
+        "tests/fixtures/snapshot",
+        "2,448",
+    ):
+        assert required in replay, f"docs/reports/replay.md missing {required!r}"
+
+    tests_report = (ROOT / "docs" / "reports" / "tests.md").read_text(encoding="utf-8")
+    for required in (
+        "02575d8",
+        "62e8384",
+        "1d0b238",
+        "judge_accept.sh",
+        "375 passed",
+        "274 passed",
+        "92 checks",
+        "92",
+        "2,448",
+    ):
+        assert required in tests_report, f"docs/reports/tests.md missing {required!r}"
 
 
 def test_self_zero_comments_and_zero_em_dashes():
