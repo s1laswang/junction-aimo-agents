@@ -9,6 +9,7 @@ Tests may point `DB_PATH` at a temp file.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -59,7 +60,22 @@ CREATE TABLE IF NOT EXISTS gw_audit_fallback (
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    try:
+        from aimo.backend import clock
+        return clock.now()
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def close_all() -> None:
+    with _lock:
+        conns = list(_conns.values())
+        _conns.clear()
+        for c in conns:
+            try:
+                c.close()
+            except Exception:
+                pass
 
 
 def conn() -> sqlite3.Connection:
@@ -110,6 +126,18 @@ def get_order(order_id: str) -> Order | None:
 
 
 def list_orders(status: str | None = None, customer_id: str | None = None, limit: int = 200) -> list[Order]:
+    if status is not None and not isinstance(status, str):
+        return []
+    if customer_id is not None and not isinstance(customer_id, str):
+        return []
+    if isinstance(limit, bool):
+        lim = 200
+    elif isinstance(limit, int):
+        lim = max(1, min(1000, limit))
+    elif isinstance(limit, float) and math.isinf(limit):
+        lim = 1000 if limit > 0 else 1
+    else:
+        lim = 200
     sql, args = "SELECT body FROM gw_orders WHERE 1=1", []
     if status:
         sql += " AND status=?"
@@ -118,7 +146,7 @@ def list_orders(status: str | None = None, customer_id: str | None = None, limit
         sql += " AND customer_id=?"
         args.append(customer_id)
     sql += " ORDER BY created_at DESC LIMIT ?"
-    args.append(limit)
+    args.append(lim)
     with _lock:
         rows = conn().execute(sql, args).fetchall()
     return [Order.model_validate_json(r[0]) for r in rows]
@@ -164,23 +192,50 @@ def confirm_lines(quote: Quote, offers: dict[str, Offer]) -> tuple[str, list[Ord
     Prices are NOT re-checked: the signed quote fixed them until expires_at.
     """
     lines: list[OrderResponseLine] = []
+    offer_map = offers if isinstance(offers, dict) else {}
     for ql in quote.lines:
-        o = offers.get(ql.product_id)
+        o = offer_map.get(ql.product_id)
         if o is None:
             lines.append(OrderResponseLine(product_id=ql.product_id, code="RE", qty_confirmed=0,
                                            note="product not returned by availability re-check"))
             continue
-        blocking = [i for i in o.issues if i in ("cutoff_passed", "sales_block", "out_of_stock",
-                                                 "late_delivery", "availability_not_found", "no_schedule")]
-        if blocking or (o.available_amount is not None and o.available_amount <= 0):
+        blocking = [i for i in (o.issues or []) if i in ("cutoff_passed", "sales_block", "out_of_stock",
+                                                         "late_delivery", "availability_not_found", "no_schedule")]
+        if blocking:
             lines.append(OrderResponseLine(product_id=ql.product_id, code="RE", qty_confirmed=0,
-                                           note="not deliverable at placement: " + ", ".join(blocking or ["no stock"])))
-        elif o.available_amount is not None and o.available_amount < ql.qty_sales_units:
+                                           note="not deliverable at placement: " + ", ".join(blocking)))
+            continue
+        req_raw = ql.qty_sales_units
+        if isinstance(req_raw, bool) or not isinstance(req_raw, (int, float)) or not math.isfinite(float(req_raw)) or float(req_raw) <= 0:
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="RE", qty_confirmed=0,
+                                           note="not deliverable at placement: availability_error"))
+            continue
+        req_qty = float(req_raw)
+        avail = o.available_amount
+        if avail is None:
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="AP", qty_confirmed=req_qty,
+                                           note="confirmed"))
+            continue
+        if isinstance(avail, bool) or not isinstance(avail, (int, float)):
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="RE", qty_confirmed=0,
+                                           note="not deliverable at placement: availability_error"))
+            continue
+        av = float(avail)
+        if math.isnan(av) or av < 0:
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="RE", qty_confirmed=0,
+                                           note="not deliverable at placement: availability_error"))
+        elif not math.isfinite(av):
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="AP", qty_confirmed=req_qty,
+                                           note="confirmed"))
+        elif av == 0:
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="RE", qty_confirmed=0,
+                                           note="not deliverable at placement: no stock"))
+        elif av < req_qty:
             lines.append(OrderResponseLine(
-                product_id=ql.product_id, code="CA", qty_confirmed=float(o.available_amount),
-                note=f"partial stock at placement: {o.available_amount:g} of {ql.qty_sales_units:g} {ql.sales_unit} confirmed"))
+                product_id=ql.product_id, code="CA", qty_confirmed=av,
+                note=f"partial stock at placement: {av:g} of {req_qty:g} {ql.sales_unit} confirmed"))
         else:
-            lines.append(OrderResponseLine(product_id=ql.product_id, code="AP", qty_confirmed=ql.qty_sales_units,
+            lines.append(OrderResponseLine(product_id=ql.product_id, code="AP", qty_confirmed=req_qty,
                                            note="confirmed"))
     codes = {ln.code for ln in lines}
     header = "AP" if codes == {"AP"} else "RE" if codes == {"RE"} or not codes else "CA"
