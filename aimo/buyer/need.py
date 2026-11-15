@@ -11,6 +11,7 @@ Claim codes are the nutritionalClaim ids that occur in the product data
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Literal, Optional
@@ -63,7 +64,46 @@ def now_helsinki() -> datetime:
         return datetime.now(HELSINKI)
 
 
-# ---------------------------------------------------------------- Gemini output schema
+def _as_text(text: Any) -> str:
+    if isinstance(text, str):
+        return text
+    if text is None or isinstance(text, bool):
+        return ""
+    try:
+        return str(text or "")
+    except Exception:
+        return ""
+
+
+def _coerce_now(now: Any) -> datetime:
+    if isinstance(now, datetime):
+        if now.tzinfo is None:
+            return now.replace(tzinfo=HELSINKI)
+        return now.astimezone(HELSINKI)
+    if isinstance(now, date):
+        return datetime(now.year, now.month, now.day, 12, 0, tzinfo=HELSINKI)
+    return now_helsinki()
+
+
+def _clean_customer_id(val: Any, fallback: str = "unknown") -> str:
+    if isinstance(val, str):
+        s = val.strip()
+        return s if s else fallback
+    if val is None or isinstance(val, bool):
+        return fallback
+    s = _as_text(val).strip()
+    return s if s else fallback
+
+
+def _normalize_excl_list(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        return [s] if s else []
+    if isinstance(raw, (list, tuple, set)):
+        return [a.strip().lower() for a in raw if isinstance(a, str) and a.strip()]
+    return []
+
+
 class ParsedNeed(BaseModel):
     """What Gemini fills in. Kept flat and enum-heavy so structured output is reliable."""
     product_query: str = Field(description="Short catalog search phrase, English, e.g. 'lactose-free milk'. No quantities, dates or site names.")
@@ -90,7 +130,6 @@ def _gemini_schema() -> dict[str, Any]:
     return s
 
 
-# ---------------------------------------------------------------- deterministic pieces
 _QTY_RE = re.compile(
     r"(?P<num>(?<!\S)-?(?:\d{1,3}(?:[ ,.\u00a0]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?))\s*(?P<unit>"
     r"decilitres?|deciliters?|desilitraa?|millilitres?|milliliters?|millilitraa?|"
@@ -105,19 +144,30 @@ _QTY_RE = re.compile(
 
 
 def _to_number(s: str) -> float:
-    s = s.replace("\u00a0", " ").strip()
-    sign = -1.0 if s.startswith("-") else 1.0
-    if s.startswith("-"):
-        s = s[1:].strip()
-    if re.fullmatch(r"\d{1,3}(?:[ ,.]\d{3})+", s):
-        return sign * float(re.sub(r"[ ,.]", "", s))
-    m = re.fullmatch(r"(\d{1,3}(?:[ ,]\d{3})+)\.(\d+)", s)
-    if m:
-        return sign * float(re.sub(r"[ ,]", "", m.group(1)) + "." + m.group(2))
-    m = re.fullmatch(r"(\d{1,3}(?:[ .]\d{3})+),(\d+)", s)
-    if m:
-        return sign * float(re.sub(r"[ .]", "", m.group(1)) + "." + m.group(2))
-    return sign * float(s.replace(",", "."))
+    if isinstance(s, bool):
+        return math.nan
+    raw = _as_text(s).replace("\u00a0", " ").strip()
+    if not raw:
+        return math.nan
+    sign = -1.0 if raw.startswith("-") else 1.0
+    if raw[0] in "-+":
+        raw = raw[1:].strip()
+    if not raw:
+        return math.nan
+    try:
+        if re.fullmatch(r"\d{1,3}(?:[ ,.]\d{3})+", raw):
+            val = sign * float(re.sub(r"[ ,.]", "", raw))
+        elif m := re.fullmatch(r"(\d{1,3}(?:[ ,]\d{3})+)\.(\d+)", raw):
+            val = sign * float(re.sub(r"[ ,]", "", m.group(1)) + "." + m.group(2))
+        elif m := re.fullmatch(r"(\d{1,3}(?:[ .]\d{3})+),(\d+)", raw):
+            val = sign * float(re.sub(r"[ .]", "", m.group(1)) + "." + m.group(2))
+        else:
+            val = sign * float(raw.replace(",", "."))
+    except (ValueError, OverflowError):
+        return math.nan
+    if not math.isfinite(val):
+        return math.nan
+    return 0.0 if val == 0.0 else val
 
 
 _DL_UNITS = {"dl", "desilitra", "desilitraa", "decilitre", "decilitres", "deciliter", "deciliters"}
@@ -128,22 +178,33 @@ _KG_UNITS = {"kg", "kgs", "kilo", "kilos", "kiloa", "kilogram", "kilograms", "ki
 
 
 def parse_quantity(text: str) -> tuple[float, str] | None:
-    m = _QTY_RE.search(text)
-    if not m:
+    text = _as_text(text)
+    if not text:
         return None
-    q = _to_number(m.group("num"))
-    u = m.group("unit").lower()
-    if u in _DL_UNITS:
-        return q / 10, "L"
-    if u in _ML_UNITS:
-        return q / 1000, "L"
-    if u in _L_UNITS:
-        return q, "L"
-    if u in _G_UNITS:
-        return q / 1000, "KG"
-    if u in _KG_UNITS:
-        return q, "KG"
-    return q, "PCS"
+    for m in _QTY_RE.finditer(text):
+        try:
+            q = _to_number(m.group("num"))
+        except (ValueError, OverflowError):
+            continue
+        if not math.isfinite(q):
+            continue
+        u = m.group("unit").lower()
+        if u in _DL_UNITS:
+            out, unit = q / 10, "L"
+        elif u in _ML_UNITS:
+            out, unit = q / 1000, "L"
+        elif u in _L_UNITS:
+            out, unit = q, "L"
+        elif u in _G_UNITS:
+            out, unit = q / 1000, "KG"
+        elif u in _KG_UNITS:
+            out, unit = q, "KG"
+        else:
+            out, unit = q, "PCS"
+        if not math.isfinite(out):
+            continue
+        return (0.0 if out == 0.0 else out), unit
+    return None
 
 
 _WEEKDAY_SEARCH_RE = re.compile(
@@ -159,14 +220,18 @@ _WEEKDAY_SEARCH_RE = re.compile(
 def resolve_date(text: str, now: datetime | None = None) -> tuple[date, str] | None:
     """Resolve the delivery date mentioned in text relative to now (Europe/Helsinki).
     Weekday names mean the next such day strictly after today."""
-    now = (now or now_helsinki()).astimezone(HELSINKI)
-    today = now.date()
+    text = _as_text(text)
+    if not text.strip():
+        return None
+    ref_now = _coerce_now(now)
+    today = ref_now.date()
     t = text.lower()
-    m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", t)
-    if m:
-        return date(int(m[1]), int(m[2]), int(m[3])), m[0]
-    m = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})?(?!\d)", t)
-    if m:
+    for m in re.finditer(r"\b(\d{4})-(\d{2})-(\d{2})\b", t):
+        try:
+            return date(int(m[1]), int(m[2]), int(m[3])), m[0]
+        except ValueError:
+            pass
+    for m in re.finditer(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})?(?!\d)", t):
         y = int(m[3]) if m[3] else today.year
         y = y + 2000 if y < 100 else y
         try:
@@ -182,35 +247,32 @@ def resolve_date(text: str, now: datetime | None = None) -> tuple[date, str] | N
         r"kappale|styck|pack|purkki|tölkki|tolkki|laatikko|rasia|pullo|"
         r"bottle|carton|box|unit|piece|portion)\b)"
     )
-    m = (
-        re.search(
-            r"\b(\d{1,2})(?:(?:st|nd|rd|th|:a|:e)\b\s*|\.\s*|\s+)(?:of\s+)?("
-            + month_pat
-            + r")\b(?:,?\s+(20\d{2})\b"
-            + not_unit
-            + r")?",
-            t,
-        )
-        or re.search(
-            r"\b("
-            + month_pat
-            + r")\s+(\d{1,2})(?:(?:st|nd|rd|th|:a|:e)\b|\.(?!\d)|\b)(?:,?\s+(20\d{2})\b"
-            + not_unit
-            + r")?",
-            t,
-        )
+    day_mon_pat = (
+        r"\b(\d{1,2})(?:(?:st|nd|rd|th|:a|:e)\b\s*|\.\s*|\s+)(?:of\s+)?("
+        + month_pat
+        + r")\b(?:,?\s+(20\d{2})\b"
+        + not_unit
+        + r")?"
     )
-    if m:
-        a, b, yr = m.group(1), m.group(2), m.group(3)
-        day, mon = (int(a), MONTHS[b]) if a.isdigit() else (int(b), MONTHS[a])
-        y = int(yr) if yr else today.year
-        try:
-            d = date(y, mon, day)
-            if not yr and d < today:
-                d = date(y + 1, mon, day)
-            return d, m[0]
-        except ValueError:
-            pass
+    mon_day_pat = (
+        r"\b("
+        + month_pat
+        + r")\s+(\d{1,2})(?:(?:st|nd|rd|th|:a|:e)\b|\.(?!\d)|\b)(?:,?\s+(20\d{2})\b"
+        + not_unit
+        + r")?"
+    )
+    for pat in (day_mon_pat, mon_day_pat):
+        for m in re.finditer(pat, t):
+            a, b, yr = m.group(1), m.group(2), m.group(3)
+            day, mon = (int(a), MONTHS[b]) if a.isdigit() else (int(b), MONTHS[a])
+            y = int(yr) if yr else today.year
+            try:
+                d = date(y, mon, day)
+                if not yr and d < today:
+                    d = date(y + 1, mon, day)
+                return d, m[0]
+            except ValueError:
+                pass
     if re.search(r"\bday after tomorrow\b|\bylihuomenna\b|\bylihuomiseksi\b|\bi\s+övermorgon\b|\bövermorgon\b", t):
         return today + timedelta(days=2), "day after tomorrow"
     if re.search(r"\btomorrow\b|\bhuomenna\b|\bhuomiseksi\b|\bimorgon\b|\bi\s+morgon\b", t):
@@ -312,11 +374,17 @@ _ALLERGY_LIST_RE = re.compile(
 
 
 def detect_claims(text: str) -> list[str]:
+    text = _as_text(text)
+    if not text.strip():
+        return []
     t = text.lower()
     return list(dict.fromkeys(c for p, c in _CLAIM_PATTERNS if re.search(p, t)))
 
 
 def detect_allergens(text: str) -> list[str]:
+    text = _as_text(text)
+    if not text.strip():
+        return []
     t = text.lower()
     hits: list[tuple[int, str]] = []
     for m in _ALLERGY_LIST_RE.finditer(t):
@@ -368,7 +436,7 @@ _DATE_PHRASE = re.compile(
 )
 _LEADING_DATE_RE = re.compile(r"^(?:" + _DATE_PHRASE.pattern + r")\s*", re.I)
 _CLAUSE_SPLIT_RE = re.compile(
-    r"[;:!?\n](?!\d)|,(?!\d)|(?<!\d)\.(?!\d)|(?<=\d)\.(?!\d)(?!\s*(?:" + _MONTH_PAT + r"|mennessä|päivä)\b)",
+    r"[;!?\n]|:(?!\d)|,(?!\d)|(?<!\d)\.(?!\d)|(?<=\d)\.(?!\d)(?!\s*(?:" + _MONTH_PAT + r"|mennessä|päivä)\b)",
     re.I,
 )
 _ALLERGY_CLAUSE = re.compile(r"allerg\w*|intoleran\w*|coeliac|celiac|kelia\w*|yliherk\w*|cannot eat|can't eat", re.I)
@@ -451,20 +519,22 @@ _PRODUCT_NORMALIZATIONS: list[tuple[re.Pattern[str], str]] = [
 
 
 def _normalize_product_query(q: str) -> str:
-    s = q
+    s = _as_text(q)
     for pat, repl in _PRODUCT_NORMALIZATIONS:
         s = pat.sub(repl, s)
     return re.sub(r"\s+", " ", s).strip(" -'\"")
 
 
 def _clauses(text: str) -> list[str]:
+    text = _as_text(text)
     return [c.strip() for c in _CLAUSE_SPLIT_RE.split(text) if c.strip()]
 
 
 def _residual(clause: str) -> str:
     """The product noun phrase of a clause: quantities, date phrases, filler and trailing
     'for/at/by ...' tails removed. '120 l oat drink for Wednesday lunch' -> 'oat drink'."""
-    words = re.sub(r"\s+", " ", _QTY_RE.sub(" ", clause)).strip().split(" ")
+    clause = _as_text(clause)
+    words = [w for w in re.sub(r"\s+", " ", _QTY_RE.sub(" ", clause)).strip().split(" ") if w]
     while words and words[0].lower() in _LEAD_FILLER:
         words.pop(0)
     s = _LEADING_DATE_RE.sub("", " ".join(words)).strip()
@@ -479,13 +549,17 @@ def _residual(clause: str) -> str:
         words.pop(0)
     while words and words[-1].lower() in _LEAD_FILLER:
         words.pop()
-    return _normalize_product_query(" ".join(words).strip(" -'\""))
+    out = _normalize_product_query(" ".join(words).strip(" -'\""))[:500].strip()
+    return out if re.search(r"\w", out) else ""
 
 
 def split_items(text: str) -> list[dict[str, Any]]:
     """Deterministic multi-item split: one item per quantity, named by its noun phrase. A quantity
     without a name ('200 L by Wednesday') takes the next unused product phrase from a clause
     without a quantity ('Oat drink for a school'). Allergy clauses never name a product."""
+    text = _as_text(text)
+    if not text.strip():
+        return []
     items: list[dict[str, Any]] = []
     names: list[str] = []
     for clause in _clauses(text):
@@ -500,7 +574,7 @@ def split_items(text: str) -> list[dict[str, Any]]:
         parts = re.split(r"\s+(?:and|plus|ja|och|&|\+)\s+", clause, flags=re.I) if n_qty > 1 else [clause]
         for p in parts:
             q = parse_quantity(p)
-            if q:
+            if q is not None:
                 items.append({"quantity": q[0], "unit": q[1], "query": _residual(p), "clause": p})
     for it in items:
         if not it["query"] and names:
@@ -509,19 +583,22 @@ def split_items(text: str) -> list[dict[str, Any]]:
 
 
 def guess_query(text: str) -> str:
+    text = _as_text(text)
     items = split_items(text)
     if items and items[0]["query"]:
-        return items[0]["query"]
+        return items[0]["query"][:500].strip() or "unknown"
     for clause in _clauses(text):
         if not _ALLERGY_CLAUSE.search(clause) and not _META_CLAUSE.search(clause):
             r = _residual(clause)
             if r:
-                return r
-    return re.sub(r"\s+", " ", text.strip())[:60]
+                return r[:500].strip() or "unknown"
+    fallback = re.sub(r"\s+", " ", text.strip()).strip(" -'\"")[:60].strip()
+    return fallback if re.search(r"\w", fallback) else "unknown"
 
 
 def _global_claims(text: str) -> list[str]:
     """Claims stated in clauses without a quantity apply to every item ('..., lactose-free')."""
+    text = _as_text(text)
     out: list[str] = []
     for clause in _clauses(text):
         if not _QTY_RE.search(clause):
@@ -531,8 +608,18 @@ def _global_claims(text: str) -> list[str]:
 
 def fallback_parse_items(text: str, customer_id: str, now: datetime | None = None,
                          profile: dict | None = None) -> list[Need]:
-    d = resolve_date(text, now)
-    today = (now or now_helsinki()).astimezone(HELSINKI).date()
+    text = _as_text(text)
+    raw_cid: Any = customer_id
+    if (
+        raw_cid is None
+        or isinstance(raw_cid, bool)
+        or (isinstance(raw_cid, str) and not raw_cid.strip())
+    ) and isinstance(profile, dict):
+        raw_cid = profile.get("customer_id") or profile.get("policy_id") or profile.get("id")
+    cid = _clean_customer_id(raw_cid, fallback="unknown")
+    ref_now = _coerce_now(now)
+    d = resolve_date(text, ref_now)
+    today = ref_now.date()
     prefs: dict[str, Any] = {"parsed_by": "regex"}
     if d is None:
         prefs["delivery_date_assumed"] = True
@@ -540,7 +627,11 @@ def fallback_parse_items(text: str, customer_id: str, now: datetime | None = Non
     raw_items = split_items(text)
     items = [it for it in raw_items if it["query"] or it["quantity"] <= 0]
     if len(items) <= 1:
-        qty = (items[0]["quantity"], items[0]["unit"]) if items else (parse_quantity(text) or (1.0, "PCS"))
+        if items:
+            qty = (items[0]["quantity"], items[0]["unit"])
+        else:
+            pq = parse_quantity(text)
+            qty = pq if pq is not None else (1.0, "PCS")
         specs = [(qty, guess_query(text), detect_claims(text))]
     else:
         g = _global_claims(text)
@@ -548,15 +639,25 @@ def fallback_parse_items(text: str, customer_id: str, now: datetime | None = Non
         specs = [
             (
                 (it["quantity"], it["unit"]),
-                it["query"] or fallback_q,
+                (it["query"] or fallback_q)[:500].strip() or "unknown",
                 list(dict.fromkeys([*detect_claims(it["clause"]), *g])),
             )
             for it in items
         ]
-    needs = [Need(raw_text=text, customer_id=customer_id, product_query=q, required_claims=claims,
-                  excluded_allergens=allergens, quantity=qty[0], unit=qty[1],
-                  delivery_by=d[0] if d else today + timedelta(days=2), preferences=dict(prefs))
-             for qty, q, claims in specs]
+    needs = [
+        Need(
+            raw_text=text,
+            customer_id=cid,
+            product_query=(q or "").strip()[:500] or "unknown",
+            required_claims=claims,
+            excluded_allergens=allergens,
+            quantity=qty[0],
+            unit=qty[1],
+            delivery_by=d[0] if d else today + timedelta(days=2),
+            preferences=dict(prefs),
+        )
+        for qty, q, claims in specs
+    ]
     return [apply_profile(n, profile) for n in needs]
 
 
@@ -584,23 +685,59 @@ _NAMED_BRAND_RE = re.compile(
 def apply_profile(need: Need, profile: dict | None) -> Need:
     """Merge customer standing preferences into the need. Profile allergens are ADDED (never
     removed); preferred products are only attached if they plausibly match the request."""
-    if not profile:
+    if not isinstance(profile, dict) or not profile:
         return need
-    allergens = list(dict.fromkeys([*need.excluded_allergens, *profile.get("excluded_allergens", [])]))
-    prefs = dict(need.preferences)
-    preferred = list(need.preferred_product_ids)
-    std = profile.get("standing_order") or {}
-    match = profile.get("usual_match")
-    if profile.get("preferred_product_ids") and match and re.search(match, need.product_query, re.I):
-        # The usual product (and its pack/brand preferences) only applies to matching requests,
-        # e.g. the hotel's dispenser milk applies to milk requests, not to butter.
-        preferred = list(dict.fromkeys([*preferred, *profile["preferred_product_ids"]]))
-        prefs = {**profile.get("preferences", {}), **prefs}
-        if std.get("qty_per_week") and need.unit == std.get("unit"):
-            prefs["standing_order_qty_per_week"] = std["qty_per_week"]
-            prefs["standing_order_ratio"] = round(need.quantity / float(std["qty_per_week"]), 2)
+    prof_excl = _normalize_excl_list(profile.get("excluded_allergens"))
+    allergens = list(dict.fromkeys([*(need.excluded_allergens or []), *prof_excl]))
+    prefs = dict(need.preferences or {})
+    preferred = list(need.preferred_product_ids or [])
+    raw_pref_ids = profile.get("preferred_product_ids")
+    if isinstance(raw_pref_ids, str):
+        prof_pref_ids = [raw_pref_ids.strip()] if raw_pref_ids.strip() else []
+    elif isinstance(raw_pref_ids, (list, tuple, set)):
+        prof_pref_ids = [
+            str(pid).strip()
+            for pid in raw_pref_ids
+            if pid is not None and not isinstance(pid, bool) and str(pid).strip()
+        ]
     else:
-        prof_brand = (profile.get("preferences") or {}).get("brand")
+        prof_pref_ids = []
+    raw_prof_prefs = profile.get("preferences")
+    prof_prefs = dict(raw_prof_prefs) if isinstance(raw_prof_prefs, dict) else {}
+    raw_std = profile.get("standing_order")
+    std = raw_std if isinstance(raw_std, dict) else {}
+    match = profile.get("usual_match")
+    matched_usual = False
+    if prof_pref_ids and isinstance(match, str) and match.strip():
+        try:
+            matched_usual = bool(re.search(match, need.product_query or "", re.I))
+        except re.error:
+            matched_usual = False
+    if matched_usual:
+        preferred = list(dict.fromkeys([*preferred, *prof_pref_ids]))
+        prefs = {**prof_prefs, **prefs}
+        raw_qpw = std.get("qty_per_week")
+        qpw: float | None = None
+        if raw_qpw is not None and not isinstance(raw_qpw, bool):
+            try:
+                qpw_val = float(raw_qpw)
+                if math.isfinite(qpw_val) and qpw_val > 0:
+                    qpw = qpw_val
+            except (TypeError, ValueError, OverflowError):
+                qpw = None
+        if qpw is not None and need.unit == std.get("unit"):
+            try:
+                ratio = round(need.quantity / qpw, 2)
+            except (OverflowError, ZeroDivisionError):
+                ratio = None
+            if ratio is not None and math.isfinite(ratio):
+                prefs["standing_order_qty_per_week"] = (
+                    raw_qpw if isinstance(raw_qpw, (int, float)) and not isinstance(raw_qpw, bool) else qpw
+                )
+                prefs["standing_order_ratio"] = ratio
+    else:
+        raw_brand = prof_prefs.get("brand")
+        prof_brand = raw_brand.strip() if isinstance(raw_brand, str) else ""
         q = need.product_query or ""
         if (
             prof_brand
@@ -614,7 +751,6 @@ def apply_profile(need: Need, profile: dict | None) -> Need:
                                    "preferred_product_ids": preferred})
 
 
-# ---------------------------------------------------------------- main entry
 PARSE_PROMPT = """You turn a B2B food-service purchasing request into structured JSON for Valio Aimo.
 Today is {today_long} (Europe/Helsinki). Resolve relative dates against today: a weekday name
 means the next such day after today; "tomorrow" is {tomorrow}.
@@ -639,50 +775,58 @@ def parse_request(text: str, customer: str | dict, now: datetime | None = None, 
                   use_gemini: bool = True, run_id: str = "", model: str | None = None) -> list[Need]:
     """Parse free text into one Need per product. `customer` is a customer_id or a profile dict."""
     from aimo.buyer.profiles import get_profile
-    profile = customer if isinstance(customer, dict) else get_profile(customer)
-    customer_id = profile["customer_id"]
-    now = (now or now_helsinki()).astimezone(HELSINKI)
-    fallback = fallback_parse_items(text, customer_id, now, profile)
+    text = _as_text(text)
+    if isinstance(customer, dict):
+        profile: dict[str, Any] = customer
+        raw_cid = profile.get("customer_id") or profile.get("policy_id") or profile.get("id")
+        customer_id = _clean_customer_id(raw_cid, fallback="unknown")
+    else:
+        prof_obj = get_profile(customer)
+        profile = prof_obj if isinstance(prof_obj, dict) else {}
+        raw_cid = profile.get("customer_id") if profile else customer
+        customer_id = _clean_customer_id(raw_cid, fallback="unknown")
+    ref_now = _coerce_now(now)
+    fallback = fallback_parse_items(text, customer_id, ref_now, profile)
     if not use_gemini:
         return fallback
     try:
-        parsed = _gemini_parse(text, profile, now, run_id=run_id, model=model).items
+        parsed = _gemini_parse(text, profile, ref_now, run_id=run_id, model=model).items
         if not parsed:
             raise ValueError("no items")
-    except Exception as e:  # noqa: BLE001  network, quota, schema: fall back deterministically
+    except Exception as e:
         for n in fallback:
             n.preferences["gemini_error"] = type(e).__name__
         return fallback
-    det = resolve_date(text, now)
+    det = resolve_date(text, ref_now)
     det_items = [it for it in split_items(text) if it["query"]] or split_items(text)
     aligned = len(det_items) == len(parsed)
     single = len(parsed) == 1
     global_claims = detect_claims(text) if single else _global_claims(text)
-    allergens_text = detect_allergens(text)  # allergies always apply to the whole order
+    allergens_text = detect_allergens(text)
     needs = []
     for i, p in enumerate(parsed):
         try:
-            d_model = date.fromisoformat(p.delivery_by[:10])
-        except ValueError:
+            d_model = date.fromisoformat((p.delivery_by or "")[:10])
+        except (ValueError, TypeError):
             d_model = fallback[0].delivery_by
         prefs: dict[str, Any] = {"parsed_by": "gemini"}
         if det and det[0] != d_model:
             prefs["date_note"] = f"date corrected from {d_model} to {det[0]} (deterministic '{det[1]}')"
             d_model = det[0]
         item_claims = detect_claims(det_items[i]["clause"]) if aligned and not single else []
-        # Hard constraints are a union: the deterministic detector can only add, never remove.
-        claims = list(dict.fromkeys([*(c for c in p.required_claims if c in CLAIMS), *global_claims, *item_claims]))
-        allergens = list(dict.fromkeys([*(a for a in p.excluded_allergens if a in EU14), *allergens_text]))
+        claims = list(dict.fromkeys([*(c for c in (p.required_claims or []) if c in CLAIMS), *global_claims, *item_claims]))
+        allergens = list(dict.fromkeys([*(a for a in (p.excluded_allergens or []) if a in EU14), *allergens_text]))
         if p.notes:
             prefs["notes"] = p.notes
         if p.site:
             prefs["site"] = p.site
         qty, unit = p.quantity, p.unit
         det_q = (det_items[i]["quantity"], det_items[i]["unit"]) if aligned else (parse_quantity(text) if single else None)
-        if det_q and (abs(det_q[0] - qty) > 1e-6 or det_q[1] != unit):
+        if det_q is not None and (abs(det_q[0] - qty) > 1e-6 or det_q[1] != unit):
             prefs["quantity_note"] = f"model said {qty} {unit}, text says {det_q[0]} {det_q[1]}"
             qty, unit = det_q
-        query = p.product_query.strip() or (fallback[min(i, len(fallback) - 1)].product_query)
+        fallback_q = fallback[min(i, len(fallback) - 1)].product_query
+        query = (p.product_query or "").strip()[:500] or fallback_q or "unknown"
         needs.append(apply_profile(Need(raw_text=text, customer_id=customer_id, product_query=query,
                                         required_claims=claims, excluded_allergens=allergens, quantity=qty,
                                         unit=unit, delivery_by=d_model, preferences=prefs), profile))
@@ -695,19 +839,25 @@ def _gemini_parse(text: str, profile: dict, now: datetime, run_id: str = "",
 
     from aimo import gemini
     from aimo.config import GEMINI_AGENT_MODEL
+    text = _as_text(text)
+    prof = profile if isinstance(profile, dict) else {}
+    excl = _normalize_excl_list(prof.get("excluded_allergens"))
     prompt = PARSE_PROMPT.format(
         today_long=now.strftime("%A %d %B %Y"), tomorrow=(now.date() + timedelta(days=1)).isoformat(),
-        customer_name=profile.get("name"), segment=profile.get("segment"),
-        allergens=", ".join(profile.get("excluded_allergens") or []) or "none", text=text)
+        customer_name=prof.get("name") or "unknown", segment=prof.get("segment") or "unknown",
+        allergens=", ".join(excl) or "none", text=text)
     cfg = types.GenerateContentConfig(
         response_mime_type="application/json", response_json_schema=_gemini_schema(),
         thinking_config=types.ThinkingConfig(thinking_level="LOW"), max_output_tokens=4096,
-        http_options=types.HttpOptions(timeout=45_000))  # ms
+        http_options=types.HttpOptions(timeout=45_000))
     last: Exception | None = None
-    for _ in range(2):  # one retry on empty / invalid JSON
+    for _ in range(2):
         r = gemini.generate("buyer.parse_need", model or GEMINI_AGENT_MODEL, prompt, cfg, run_id=run_id)
         try:
-            return ParsedRequest.model_validate(json.loads(r.text or ""))
+            raw_txt = getattr(r, "text", None)
+            return ParsedRequest.model_validate(json.loads(raw_txt if isinstance(raw_txt, str) else ""))
         except (ValidationError, json.JSONDecodeError, TypeError) as e:
             last = e
-    raise last  # type: ignore[misc]
+    if last is not None:
+        raise last
+    raise ValueError("gemini parse failed")
