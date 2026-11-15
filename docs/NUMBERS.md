@@ -51,21 +51,21 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 ## Gemini buyer agent (live montage)
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
-| 6/6 scenarios PASS (happy, stockout, school-allergen, injection, drift, event) | DEMO, SUBMISSION, deck, GEMINI | `uv run aimo demo --montage --base-url http://localhost:8000 --montage-out /tmp/montage.md` (**live**, about 3 min, places orders: use a scratch `AIMO_DATA_DIR`) | 6/6 | R buyer, Sat 18:21 ([demo-montage.md](demo-montage.md)) |
-| 22–37 s per scenario; 176 s total; 50 Gemini calls | DEMO, SUBMISSION | same | 22.13–36.85 s | R buyer, Sat 18:21 |
-| Cost per placed order $0.0339 (after trim) vs $0.0822 (before), −59% | GEMINI, SUBMISSION, deck, DEMO | offline from the committed ledgers: `uv run python docs/evidence/montage_stats.py`. Live: the montage command with `--baseline-pid <pid of an earlier montage>`; formula in `aimo/buyer/costs.py` | $0.0339 / $0.0822 | R submit from [evidence/](evidence/README.md), Sat 23:00 |
+| 6/6 scenarios PASS (happy, stockout, school-allergen, injection, drift, event) | DEMO, SUBMISSION, deck, GEMINI | `uv run aimo demo --montage --base-url http://localhost:8031 --montage-out /tmp/montage.md` against a gateway with a scratch `AIMO_DATA_DIR` (**live**, about 3 min, places orders) | 6/6 | R buyer, Sat 18:21; R live, Sun 02:54 on final code ([demo-montage.md](demo-montage.md), docs/reports/live.md) |
+| 20–37 s per scenario; 174 s total; 53 Gemini calls | DEMO, SUBMISSION | same | 20.22–37.03 s | R live, Sun 02:54 (Sat: 22–37 s, 50 calls) |
+| Cost per placed order: $0.0822 before the trim, $0.0339 after (Sat), $0.0352 on the final code (Sun, −57% vs before) | GEMINI, SUBMISSION, deck, DEMO, QA | offline from the committed ledgers: `uv run python docs/evidence/montage_stats.py`. Live: the montage command with `--baseline-pid <pid of an earlier montage>`; formula in `aimo/buyer/costs.py` | $0.0822 / $0.0339 / $0.0352 | R submit from [evidence/](evidence/README.md), Sat 23:00 and Sun 03:10 (rows before-trim, after-trim, sun) |
 | Hero run input 87,184 → 27,403 tokens | GEMINI, deck | `uv run python docs/evidence/montage_stats.py` ("Hero input" column) | 87,184 / 27,403 | R submit, Sat 23:00 |
-| 31% of montage input from implicit cache (57,661 of 183,196) | GEMINI, SUBMISSION, deck | `uv run python docs/evidence/montage_stats.py` (per-scenario cached column sums to 57,661) | 31% | R submit, Sat 23:00 |
-| Escalation to gemini-4-hydrogen HIGH on 6/6 runs, 6 of 31 agent steps (19%); 6 of 36 before the trim | GEMINI, deck, DECISIONS | `uv run python docs/evidence/montage_stats.py` | 19% / 17% | R submit, Sat 23:00 |
+| Implicit cache: 38% of montage input on Sunday (86,792 of 225,503), 31% on Saturday (57,661 of 183,196) | GEMINI, SUBMISSION, deck | `uv run python docs/evidence/montage_stats.py` (per-scenario cached column sums to 57,661) | 38% / 31% | R submit, Sun 03:10 |
+| Escalation to gemini-4-hydrogen HIGH: Sunday 5/6 runs, 5 of 34 agent steps (15%); Saturday 6/6 runs, 6 of 31 (19%); 6 of 36 before the trim | GEMINI, deck, DECISIONS, QA | `uv run python docs/evidence/montage_stats.py` | 15% / 19% / 17% | R submit, Sun 03:10 |
 | Single hero run 38 s with escalation | README | `uv run aimo demo --base-url http://localhost:8000 --auto-approve-as anna@hotel-aurora.example` (**live**) | 38 s | R pitch, Sat 15:00 |
 
 ## Acceptance scenarios and tests
 | Number | Claimed in | Command | Value | Status |
 |---|---|---|---|---|
 | s0–s7: 8/8 PASS | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 | R submit, see docs/reports/pitch.md "Gate runs" for the latest |
-| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **344 passed, 7 skipped, 1 xfailed, 1 xpassed** in 34 s | R submit, Sun 00:29, 89bc3db. Re-run at the freeze. |
+| Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **349 passed, 7 skipped, 1 xfailed, 1 xpassed** in 37 s; keyless 250 passed, 0 failed | R submit, Sun 03:12, b301d5a. Re-run at the freeze. |
 | `make accept`, keyed | README | `make accept` | RESULT: PASS (19 PASS, 1 SKIP since the S1 merge) | R submit, every gate run in docs/reports/submit.md |
-| `make accept`, keyless (fresh clone, empty `.env`, no key variables) | README, SUBMISSION | `git clone … && cd … && : > .env && uv sync --extra dev && make accept` | RESULT: PASS (PASS=16 FAIL=0 SKIP=4); scenarios 8/8 in replay, conformance 44/44, MILK FLOW OK, Peppol AP | R submit, Sun 02:31 (order ORD-20261114-e59bebe2); also S1 (docs/reports/replay.md). Keyless pytest inside it: 245 passed, 8 failed (tests needing the full catalog, not marked `needs_data`), reported as SKIP |
+| `make accept`, keyless (fresh clone, empty `.env`, no key variables) | README, SUBMISSION | `git clone … && cd … && : > .env && uv sync --extra dev && make accept` | RESULT: PASS (PASS=17 FAIL=0 SKIP=3); keyless pytest 250 passed / 0 failed, scenarios 8/8 in replay, conformance 44/44, MILK FLOW OK, Peppol AP | R submit, Sun 03:15 on a `git archive` of b301d5a (order ORD-20261114-2058a197); earlier 16/0/4 before the tests session marked catalog tests `needs_data` |
 
 ## Input hardening
 | Number | Claimed in | Command | Value | Status |

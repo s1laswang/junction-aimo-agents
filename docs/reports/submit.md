@@ -25,6 +25,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 | Sun 15 Nov 00:28–00:31 | rebased on 89bc3db (S2 harden, S3 need v1+v2, S5 ui round 2 merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (34 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov 02:29–02:31 | rebased on 2a68792 (S1 replay merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | keyed RESULT: PASS (19 PASS, 1 SKIP); keyless fresh clone RESULT: PASS (16 PASS, 4 SKIP) → pushed to main |
 | Sun 15 Nov 02:41–02:44 | d13a07b on 738c93a (one-page README, RUN.md, CONNECT.md, re-score) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | RESULT: PASS (19 PASS, 1 SKIP) → pushed to main |
+| Sun 15 Nov 03:08–03:15 | rebased on b301d5a (tests + live merged) | 349 passed, 7 skipped, 1 xfailed, 1 xpassed (37 s) | 8/8 PASS (live) | keyed RESULT: PASS (19/0/1); keyless `git archive` of b301d5a RESULT: PASS (17/0/3, keyless pytest 250/0) → pushed to main |
 
 ## Done (hourly re-check 1, Sun 15 Nov 00:28)
 - S3 need: wind-tunnel headline now 0 policy / 0 allergen violations for the gateway, recall 99.7%, precision 68.2% (from 54.0%; 90% target not met). Naive column stays Sat 18:24 and is labelled as against the earlier policy. Updated SUBMISSION, GEMINI row 8, DEMO 2:45 line, deck slide 5, QA 15–16, DECISIONS D5, ASSUMPTIONS, NUMBERS, README pillar 3.
@@ -36,6 +37,10 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 ## Done (hourly re-check 3, Sun 15 Nov 02:28)
 - S1 replay merged: README env table, keyless vs keyed table, quickstart and `make accept` description rewritten (automatic replay, 669-product snapshot and catalog subset, 503 `catalog_missing`, bundled live fallback); DEMO step 1 and the Wi-Fi row drop `AIMO_REPLAY_FALLBACK`; NUMBERS, ASSUMPTIONS, OPENNESS, QA 13 and SUBMISSION updated.
 - Own keyless check (fresh clone, empty `.env`, key variables unset): RESULT: PASS, 16 PASS / 4 SKIP. Keyless pytest has 8 failures from S2/S3 tests that need the full catalog but are not marked `needs_data`; documented in README and NUMBERS (request below).
+
+## Done (Sun 15 Nov 03:15): V3 live montage and V2 tests reflected
+- New montage (Sun 02:54, final code; verified by `montage_stats.py`): 6/6, $0.0352 per order (−57% vs $0.0822 before trim), 38% cached, 5/34 escalated steps, school-allergen auto-approved by policy at €280, injection 6 texts, event €266.49. Updated SUBMISSION, GEMINI, DEMO, NUMBERS, deck, QA 9/20, DECISIONS D6.
+- Test counts 349 keyed / 250 keyless with 0 failures; keyless `make accept` 17/0/3. The "8 keyless failures" caveat is removed everywhere.
 
 ## Keyless re-score before `aimo-v1` (Sun 15 Nov 02:37–02:55, handed over by the bake-off review session)
 On two `git archive` exports of main 738c93a, no `.env`, every key variable unset. Probe scripts from `~/junction-aimo-team/review-probes/aimo/`, retargeted to local ports; `session_probe.py` was rewritten as `session_v2.py` because sessions now need `{"approver": ...}`.
@@ -64,7 +69,7 @@ On two `git archive` exports of main 738c93a, no `.env`, every key variable unse
 - At the freeze: re-run pytest and the ledger snapshot; paste the video URL and public URL (or the "runs locally" sentence) into SUBMISSION.
 
 ## Requests to other sessions
-- **S2 harden / S3 need:** mark the 8 catalog-dependent tests (`tests/test_harden.py` ×7, `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit`) `needs_data`, so keyless pytest is clean instead of 8 failures.
+- ~~**S2 harden / S3 need:** mark the 8 catalog-dependent tests~~ done by the tests session (0f51cf0); (`tests/test_harden.py` ×7, `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit`) `needs_data`, so keyless pytest is clean instead of 8 failures.
 - ~~**S1 replay:** automatic live fallback~~ resolved: `fallback_dir()` now ends at the bundled snapshot (merged Sun ~02:00); DEMO step 1 no longer sets `AIMO_REPLAY_FALLBACK`.
 - ~~**S5 ui:** plain-text PIN prompt~~ resolved by S5's sign-in panel (masked PIN field), merged Sat 23:18; DEMO and README updated.
 - **Gateway owner (no session owns it):** agent identity is header-only. Known and documented (ASSUMPTIONS A8, QA Q4); no change requested before the freeze.

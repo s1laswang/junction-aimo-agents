@@ -62,7 +62,7 @@ Status: **Accepted** (built and on main), **In progress** (decided, being built)
 - **Context:** the agent must be fast enough for a live conversation, careful on the decision a human will later defend, and cheap per order.
 - **Decision:** `gemini-3.8-flash` with LOW thinking for routine agent steps and need parsing; escalate only the quote-decision turn to `gemini-4-hydrogen` with HIGH thinking when the plan contains a substitution, flag or shortfall; `gemini-3.1-flash-lite` for bulk classification (allergen inference, injection screen, recipe check); `gemini-embedding-2` for search. Structured output everywhere with deterministic fallbacks.
 - **Rejected:** the strongest model for every step (the playbook measured 23 s per call for gemini-4-carbon at high thinking; a montage run makes 8–9 Gemini calls); flash only (no extra care on the substitution decision; measured in the wind tunnel: flash LOW is 93.8% accurate on the substitution task vs 100% for hydrogen HIGH, and flash HIGH reaches similar accuracy only with a 15–70 s p95; docs/windtunnel-results.md "Thinking level"); an open-weights model hosted by us (GPU ops we can't run at a hackathon, and no embeddings, batch and structured output from one API).
-- **Evidence:** montage 6/6 PASS, escalation on 6 of 31 agent steps (19%), $0.0339 per placed order, down from $0.0822 after a token trim (docs/demo-montage.md).
+- **Evidence:** final-code montage (Sun 02:54) 6/6 PASS, escalation on 5 of 34 agent steps (15%), $0.0352 per placed order, down from $0.0822 before a token trim (docs/demo-montage.md, docs/evidence/).
 
 ## D9. Embeddings plus full-text search instead of long-context catalog prompts
 - **Status:** Accepted.

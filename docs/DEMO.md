@@ -36,7 +36,7 @@ UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes
 | **2:00–2:20** | **The sign-in moment.** Click **Sign in as approver** on the human-only card. The panel preselects **Anna Virtanen · Procurement Manager**; type the stage PIN (masked), **Sign in**. The header shows Anna signed in. Point at **Needs approval by Procurement Manager** and the three NEEDS APPROVAL rows (spend > €500, substitution outside standing preferences, 3.3× usual weekly volume), then "Deciding as Anna Virtanen" and "Your decision is bound to quote hash …". Click **Approve €1,010.00**. | "A human signs in; agents never can. The hotel's own policy says three things need her: over the €500 limit, a pack outside their usual preference, 3.3 times their normal weekly milk. Her session is bound to her alone, and she approves *this exact* signed quote: if the price changed, her approval would not apply." | [CTRL] [E2E] |
 | **2:20–2:30** | Order response card: **Placed**, **AP** Accepted, 1,000 confirmed. | "Order placed, with a Peppol-style order response: accepted." | [E2E] [OPEN] |
 | **2:30–2:45** | Click **View audit trail →**. Point at the refused agent attempt, then Anna's approval bound to the hash. Click **Verify chain** → green. (In replay or with `AIMO_NOW`, the report header says "simulated clock" and keeps the real wall time per event: say so if asked.) | "Afterwards anyone can check what happened, including the refused attempt: every event is hash-chained and signed, and verify recomputes all of it. The evidence pack lets an auditor check it offline." | [CTRL] |
-| **2:45–2:55** | Switch to the montage terminal. Scroll to **== Montage verdicts ==**: six green **PASS** lines. | "Six more, run live by the same agent while we talked: a stock-out split, school allergies, prompt injection in supplier text, a standing order 13 times too big, a last-minute event. Six of six, about three cents of Gemini per order. And across 640 Gemini-written customers: zero policy violations for the gateway, 372 for a naive agent with direct API access." | [ROB] [GEM] |
+| **2:45–2:55** | Switch to the montage terminal. Scroll to **== Montage verdicts ==**: six green **PASS** lines. | "Six more, run live by the same agent while we talked: a stock-out split, school allergies, prompt injection in supplier text, a standing order 13 times too big, a last-minute event. Six of six, about three and a half cents of Gemini per order. And across 640 Gemini-written customers: zero policy violations for the gateway, 372 for a naive agent with direct API access." | [ROB] [GEM] |
 | **2:55–3:00** | Click **Connect your agent** in the header, or open `/.well-known/otap.json`. | "All open: MCP, OpenAPI, JWS, Peppol semantics. Swap the mock for SAP behind one interface and this goes to production. Trusted Trade Agents." | [OPEN] |
 
 If the agent run is slow, drop the montage beat (2:45–2:55) first. Never drop the attack or the sign-in.
@@ -64,18 +64,18 @@ It exits 0 only if the attempt was refused and audited. Verified Sat 14 Nov 23:1
 
 ## Robustness montage (`uv run aimo demo --montage`)
 
-`uv run aimo demo --montage` runs the six live scenarios in sequence with the Gemini agent over MCP against the live mock API and approves as each policy's named approver (drift is left held for confirmation by design). It prints one verdict per scenario plus Gemini calls and tokens, and writes a results table.
+`uv run aimo demo --montage` runs the six live scenarios in sequence with the Gemini agent over MCP against the live mock API and approves each pending order as the policy's named approver through the real decision endpoint with the human approver credential (drift is left held for confirmation by design; an order the policy auto-approves needs no one). It prints one verdict per scenario plus Gemini calls and tokens, and writes a results table.
 
-Measured result to quote ([demo-montage.md](demo-montage.md), Sat 14 Nov 18:21): **6/6 PASS**, 22–37 s per scenario, 176 s wall clock in total, 50 Gemini calls, **$0.0339 per placed order** (was $0.0822 before the token trim, −59%), escalation to gemini-4-hydrogen HIGH on 6/6 runs but only on the quote-decision turn (19% of agent steps).
+Measured result to quote ([demo-montage.md](demo-montage.md), Sun 15 Nov 02:54, final code): **6/6 PASS**, 20–37 s per scenario, 174 s wall clock in total, 53 Gemini calls, **$0.0352 per placed order** (was $0.0822 before the token trim, −57%), escalation to gemini-4-hydrogen HIGH only on the quote-decision turn (15% of agent steps).
 
 | Scenario | What the audience sees in the verdict line |
 |---|---|
 | happy | placed, EUR 1,010.00, approved by anna@hotel-aurora.example |
 | stockout | placed, split into 4 lines, EUR 2,544.80, shortfall 0 |
-| school-allergen | placed, Oatly Oat Drink Semi 1L, 2 candidates rejected, approved by liisa@school-tampere.example |
-| injection | placed, 4 supplier texts flagged and redacted, policy cites injection, largest line 300 units |
+| school-allergen | placed, Oatly Oat Drink Whole 1L, 2 candidates rejected, approved by policy:school-tampere (EUR 280, under the school's €300 limit) |
+| injection | placed, 6 supplier texts flagged and redacted, policy cites injection, largest line 300 units |
 | drift | needs_confirmation, EUR 4,040.00 quote prepared, place_order held by the agent |
-| event | placed, 2 lines (lactose-free cream and butter), EUR 251.20 |
+| event | placed, 2 lines (Valio whipping cream 1.75 l and Valio Eila butter 500 g), EUR 266.49 |
 
 How to run it for the pitch (it takes about 3 minutes, so start it before going on stage):
 1. Run it against a **second gateway with its own state**, so its five placed orders do not count towards the hotel's weekly budget in the hero demo:
