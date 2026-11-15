@@ -1,29 +1,86 @@
 from __future__ import annotations
 
 import io
+import json
 import pathlib
 import re
+import shutil
 import subprocess
 import tokenize
+
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HASH = chr(35)
 SHEBANG = f"{HASH}!/usr/bin/env bash"
 EM_DASH = chr(0x2014)
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
+FRAME_3_NARRATION = (
+    "The hotel's own policy says a human must approve: the total is over the five hundred "
+    "euro limit, and the volume is three point three times the usual week. The agent pauses."
+)
 
 
 def test_demo_walkthrough_mp4_exists_size_and_iso_bmff_header():
     mp4 = ROOT / "docs" / "pitch" / "demo-walkthrough.mp4"
     assert mp4.is_file(), "Missing docs/pitch/demo-walkthrough.mp4"
     size = mp4.stat().st_size
-    assert 1_000_000 < size < 10_000_000, f"Unexpected demo-walkthrough.mp4 size: {size}"
+    assert size == 2_251_113, f"Expected f3c5996 demo-walkthrough.mp4 size 2251113, got {size}"
     with mp4.open("rb") as fh:
         header = fh.read(32)
     assert len(header) >= 12
     box_size = int.from_bytes(header[0:4], "big")
     assert 8 <= box_size <= 64, f"Unexpected ISO BMFF ftyp box size: {box_size}"
     assert header[4:8] == b"ftyp", f"Missing ISO BMFF ftyp header at bytes 4..8: {header[4:8]!r}"
+
+
+def test_demo_walkthrough_mp4_ffprobe_streams_and_duration():
+    ffprobe = shutil.which("ffprobe") or "/usr/bin/ffprobe"
+    if not pathlib.Path(ffprobe).is_file():
+        pytest.skip("ffprobe not installed")
+    mp4 = ROOT / "docs" / "pitch" / "demo-walkthrough.mp4"
+    proc = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_name,codec_type,pix_fmt,width,height,sample_rate,channels",
+            "-show_entries",
+            "format=duration,size",
+            "-of",
+            "json",
+            str(mp4),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    info = json.loads(proc.stdout)
+    streams = info.get("streams") or []
+    video_streams = [s for s in streams if s.get("codec_type") == "video"]
+    audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+    assert len(video_streams) == 1, f"Expected 1 video stream, got {video_streams}"
+    assert len(audio_streams) == 1, f"Expected 1 audio stream, got {audio_streams}"
+
+    vstream = video_streams[0]
+    assert vstream.get("codec_name") == "h264"
+    assert vstream.get("pix_fmt") == "yuv420p"
+    assert int(vstream.get("width") or 0) == 1280
+    assert int(vstream.get("height") or 0) == 720
+
+    astream = audio_streams[0]
+    assert astream.get("codec_name") == "aac"
+    assert int(astream.get("sample_rate") or 0) == 44100
+    assert int(astream.get("channels") or 0) == 1
+
+    fmt = info.get("format") or {}
+    assert int(fmt.get("size") or 0) == 2_251_113
+    duration = float(fmt.get("duration") or 0.0)
+    assert 109.5 <= duration <= 110.0, f"Unexpected demo-walkthrough.mp4 duration: {duration}"
+    assert round(duration, 2) == 109.72
+    assert round(duration) == 110
 
 
 def test_build_walkthrough_script_syntax_hygiene_and_referenced_frames():
@@ -53,6 +110,9 @@ def test_build_walkthrough_script_syntax_hygiene_and_referenced_frames():
     assert "F=docs/reports/frontend" in text
     assert "OUT=docs/pitch/demo-walkthrough.mp4" in text
     assert "signed in with her own passphrase before she started the run" in text
+    assert FRAME_3_NARRATION in text
+    assert "three things need a human" not in text
+    assert "the pack is a swap" not in text
 
     frames_match = re.search(r"frames=\(\s*(.*?)\s*\)", text, flags=re.DOTALL)
     assert frames_match is not None, "Missing frames=(...) array in docs/pitch/build_walkthrough.sh"
@@ -60,8 +120,9 @@ def test_build_walkthrough_script_syntax_hygiene_and_referenced_frames():
 
     all_frame_refs = re.findall(r"\$F/([A-Za-z0-9._-]+\.png)", frames_body)
     paired_entries = re.findall(r'"\$F/([A-Za-z0-9._-]+\.png)\|([^"]+)"', frames_body)
-    assert len(all_frame_refs) >= 10
+    assert len(all_frame_refs) == 13
     assert len(all_frame_refs) == len(paired_entries)
+    assert paired_entries[2] == ("live-plan.png", FRAME_3_NARRATION)
 
     frontend_dir = ROOT / "docs" / "reports" / "frontend"
     for png_name, narration in paired_entries:
@@ -196,6 +257,34 @@ def test_submit_report_plan_and_sessions_cite_62e8384_policy_and_live_run_eviden
     assert "Sun 15 Nov 05:36-05:40" in submit
     assert "Sun 15 Nov 05:42-05:44" in submit
     assert "AIMO_GEMINI_TRACE" in submit
+
+
+def test_submit_report_plan_and_sessions_cite_f3c5996_walkthrough_and_450743d_gate():
+    synced_docs = (
+        "docs/reports/submit.md",
+        "docs/PLAN.md",
+        "docs/SESSIONS.md",
+    )
+    for rel in synced_docs:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for required in (
+            "450743d",
+            "039d2fa",
+            "2,251,113",
+            "110 s",
+            "109.72 s",
+            "70 passed",
+            "2,393",
+            "92",
+            "8/8",
+            "two-reason",
+        ):
+            assert required in text, f"{rel} missing {required!r}"
+
+    submit = (ROOT / "docs" / "reports" / "submit.md").read_text(encoding="utf-8")
+    assert "Sun 15 Nov 04:15 (UTC)" in submit
+    assert "1280x720" in submit
+    assert "70 passed in 11.95s" in submit
 
 
 def test_self_zero_comments_and_zero_em_dashes():
