@@ -12,10 +12,12 @@ Evidence sources:
 Gluten conflicts are not raised when the product carries the FREE_FROM_GLUTEN claim (legally
 gluten-free products may list gluten-free oats or wheat starch).
 
-    uv run python -m aimo.catalog.data_quality report     # writes docs/data-quality.md
+    uv run python -m aimo.catalog.data_quality report
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import re
 from functools import lru_cache
 from typing import Any, Optional
@@ -50,7 +52,6 @@ LEXICON: dict[str, list[str]] = {
     "sulphites": [r"sulphites?", r"sulfites?", r"sulphur dioxide", r"sulfur dioxide", r"e ?22[0-8]",
                   r"sulfiit\w*", r"rikkidioksidi", r"disulfi\w*", r"metabisulfi\w*", r"metabisulphi\w*"],
 }
-# false friends: phrases that contain a keyword but do not mean the allergen
 FALSE_FRIENDS: dict[str, list[str]] = {
     "milk": [r"coconut ?milk", r"kookosmaito", r"kokosmjölk", r"cocoa ?butter", r"kaakaovoi", r"kakaosmör",
              r"peanut ?butter", r"maapähkinävoi", r"shea ?butter", r"oat ?milk", r"almond ?milk", r"soy ?milk",
@@ -60,7 +61,7 @@ FALSE_FRIENDS: dict[str, list[str]] = {
              r"ice ?cream ?cone", r"lactose[- ]?free", r"laktoositon\w*", r"laktosfri", r"ostronsås",
              r"buttermilk ?substitute", r"vegan ?butter", r"kasvirasva"],
     "gluten": [r"buckwheat", r"tattari\w*", r"bovete", r"gluten[- ]?free \w+", r"gluteeniton \w+",
-               r"wheat ?starch", r"vehnätärkkelys", r"ruiskauno\w*"],   # wheat starch may be gluten-free; claim decides below
+               r"wheat ?starch", r"vehnätärkkelys", r"ruiskauno\w*"],
     "eggs": [r"eggplant", r"munakoiso", r"äggplanta", r"egg[- ]?free", r"munaton"],
     "nuts": [r"coconut", r"kookos\w*", r"nutmeg", r"muskot\w*", r"butternut", r"pine ?nuts?"],
     "molluscs": [r"oyster ?mushrooms?", r"osterivinok\w*", r"ostronskivling\w*"],
@@ -70,6 +71,7 @@ FALSE_FRIENDS: dict[str, list[str]] = {
 NEG_SHORT = re.compile(r"(?<![\wåäö])(?:no|not|non|ei|without|ilman|utan|inga|ingen)\s+(?:[\wåäö-]+\s+){0,2}$", re.I)
 NEGATION = re.compile(r"(?:free from|free of|does not contain|without|no added|ei sisällä|ilman|fri från|utan)\s+"
                       r"(?:[\wåäö-]+[\s,]+){0,4}$", re.I)
+MAX_INGREDIENT_SCAN_CHARS = 16_384
 
 
 @lru_cache(maxsize=None)
@@ -83,11 +85,27 @@ def _ff(group: str) -> Optional[re.Pattern]:
     return re.compile("|".join(ffs), re.I) if ffs else None
 
 
+def _str_set(val: Any) -> set[str]:
+    if val is None or isinstance(val, (str, bytes, bytearray, dict)):
+        return set()
+    try:
+        it = iter(val)
+    except TypeError:
+        return set()
+    return {x for x in it if isinstance(x, str) and x}
+
+
 def keyword_evidence(group: str, text: str) -> Optional[str]:
     """The ingredient words naming `group`, or None. Negated mentions and false friends are ignored."""
-    if not text:
+    if isinstance(group, bool) or not isinstance(group, str) or group not in LEXICON:
         return None
-    t = text
+    if isinstance(text, bool) or not isinstance(text, str) or not text:
+        return None
+    t = text[:MAX_INGREDIENT_SCAN_CHARS]
+    if "\x00" in t:
+        t = t.replace("\x00", " ")
+    if not t.strip():
+        return None
     ff = _ff(group)
     if ff:
         t = ff.sub(" ", t)
@@ -95,30 +113,44 @@ def keyword_evidence(group: str, text: str) -> Optional[str]:
         before = t[max(0, m.start() - 60):m.start()]
         if NEGATION.search(before) or NEG_SHORT.search(before[-30:]):
             continue
-        # "may contain" traces also contradict FREE_FROM
         return t[max(0, m.start() - 25):m.end() + 25].strip()
     return None
 
 
 def _ingredients(d: dict[str, Any]) -> str:
-    return " | ".join(x for x in (d.get("ingredients_text"), d.get("ingredients_fi")) if x)
+    if not isinstance(d, dict):
+        return ""
+    parts: list[str] = []
+    for key in ("ingredients_text", "ingredients_fi"):
+        val = d.get(key)
+        if isinstance(val, str):
+            cleaned = val[:MAX_INGREDIENT_SCAN_CHARS].replace("\x00", " ").strip()
+            if cleaned:
+                parts.append(cleaned)
+    return " | ".join(parts)
 
 
 def conflicts(d: dict[str, Any], gemini_label: Optional[dict] = None) -> dict[str, dict[str, str]]:
     """{group: {"evidence": ..., "by": "lexicon"|"gemini"|"lexicon+gemini"}} for groups marked free."""
+    if not isinstance(d, dict):
+        return {}
+    raw_allergens = d.get("allergens")
+    if not isinstance(raw_allergens, dict):
+        return {}
     out: dict[str, dict[str, str]] = {}
-    allergens = d.get("allergens") or {}
-    claims = set(d.get("claims") or [])
+    claims = _str_set(d.get("claims"))
     text = _ingredients(d)
-    gem = set((gemini_label or {}).get("allergens_in_ingredients") or [])
-    for g, st in allergens.items():
-        st = getattr(st, "value", st)
-        if st != "free":
+    gem = _str_set(gemini_label.get("allergens_in_ingredients")) if isinstance(gemini_label, dict) else set()
+    for g, st in raw_allergens.items():
+        if not isinstance(g, str) or not g:
+            continue
+        st_val = getattr(st, "value", st)
+        if st_val != "free":
             continue
         if g == "gluten" and "FREE_FROM_GLUTEN" in claims:
             continue
-        ev = keyword_evidence(g, text) if g in LEXICON else None
-        by = []
+        ev = keyword_evidence(g, text)
+        by: list[str] = []
         if ev:
             by.append("lexicon")
         if g in gem and text:
@@ -131,16 +163,23 @@ def conflicts(d: dict[str, Any], gemini_label: Optional[dict] = None) -> dict[st
 
 def apply(d: dict[str, Any]) -> dict[str, Any]:
     """Mutate a product row in place: conflicting groups -> unknown / source 'contradiction'."""
+    if not isinstance(d, dict):
+        raise ValueError("product row must be a dict")
     lab = None
-    try:
-        from aimo.catalog.taxonomy import label
-        lab = label(d["id"])
-    except Exception:  # noqa: BLE001
-        lab = None
+    raw_id = d.get("id")
+    if not isinstance(raw_id, bool) and isinstance(raw_id, str) and raw_id.strip():
+        try:
+            from aimo.catalog.taxonomy import label
+            cand = label(raw_id.strip())
+            lab = cand if isinstance(cand, dict) else None
+        except Exception:
+            lab = None
     c = conflicts(d, lab)
     if c:
-        allergens = dict(d.get("allergens") or {})
-        source = dict(d.get("allergen_source") or {})
+        raw_all = d.get("allergens")
+        allergens = dict(raw_all) if isinstance(raw_all, dict) else {}
+        raw_src = d.get("allergen_source")
+        source = dict(raw_src) if isinstance(raw_src, dict) else {}
         for g in c:
             allergens[g] = "unknown"
             source[g] = "contradiction"
@@ -154,20 +193,31 @@ def sweep() -> list[dict[str, Any]]:
     con = connect()
     try:
         from aimo.catalog.taxonomy import labels_for
-        labs = labels_for()
-    except Exception:  # noqa: BLE001
+        raw_labs = labels_for()
+        labs = raw_labs if isinstance(raw_labs, dict) else {}
+    except Exception:
         labs = {}
     out = []
     for r in con.execute("select * from products where has_allergen_data = 1"):
         d = row_to_dict(r)
-        c = conflicts(d, labs.get(d["id"]))
+        pid = str(d.get("id") or "")
+        c = conflicts(d, labs.get(pid))
         if c:
-            out.append({"id": d["id"], "name": d["name"], "brand": d.get("brand"), "conflicts": c,
-                        "source": {g: d["allergen_source"].get(g) for g in c}})
+            raw_src = d.get("allergen_source")
+            src_map = raw_src if isinstance(raw_src, dict) else {}
+            name = d.get("name") if isinstance(d.get("name"), str) else pid
+            out.append({"id": pid, "name": name, "brand": d.get("brand"), "conflicts": c,
+                        "source": {g: src_map.get(g) for g in c}})
     return out
 
 
 def write_report(path=None) -> str:
+    if path is not None and (
+        isinstance(path, bool)
+        or not isinstance(path, (str, os.PathLike))
+        or not str(path).strip()
+    ):
+        raise ValueError("path must be a non-empty path or None")
     from collections import Counter
 
     from aimo.config import ROOT
@@ -211,8 +261,9 @@ def write_report(path=None) -> str:
             lines.append(f"| {r['id']} | {r['name'][:50]} | {g} | {ev} | {v['by']} |")
     lines += ["", "## All affected product ids", "", ", ".join(r["id"] for r in rows), ""]
     text = "\n".join(lines)
-    p = path or (ROOT / "docs" / "data-quality.md")
-    p.write_text(text)
+    p = Path(path) if path is not None else (ROOT / "docs" / "data-quality.md")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
     return str(p)
 
 
