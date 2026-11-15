@@ -87,7 +87,7 @@ More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (components, milk data flow, 
 
 1. **No upstream order API.** Orders go to our mock order service behind the same `BackendClient` interface a SAP adapter would implement.
 2. **Customers, policies and approvers are invented**, and thresholds (€500 auto limit, 3× drift, 15% price jump) are illustrative, not validated with Valio.
-3. **Agent identity is two headers in the demo** (OAuth 2.1 in production); human approvers share one demo PIN, but each sign-in is bound to one named person (SSO in production).
+3. **Agent identity is two headers in the demo** (OAuth 2.1 in production); each human approver has their own generated passphrase, which can only sign in or decide as that person, and each sign-in is bound to them (SSO in production).
 4. **Product categories and allergens are inferred** where the data is missing; Gemini readings can only block a product, never clear it.
 5. **Mock-API quirks** we measured (availability ignores the requested date, fixed closing times) limit multi-date splits; replay and `AIMO_NOW` keep the demo reproducible after the real cut-off.
 
