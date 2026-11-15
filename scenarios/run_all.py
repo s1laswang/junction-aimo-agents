@@ -26,7 +26,7 @@ import httpx
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from scenarios._common import Run, table  # noqa: E402
+from scenarios._common import Run, table
 
 SCENARIOS = ["s0_guardrails", "s1_milk", "s2_recipe_order", "s3_event_substitution", "s4_stockout",
              "s5_allergen_safe", "s6_proactive_seller", "s7_drift"]
@@ -36,6 +36,10 @@ LINK = ("valio_aimo_junction26_product_data.json", "valio_aimo_junction26_produc
 
 
 def free_port(start: int = 8810) -> int:
+    if start == 8810:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            return int(s.getsockname()[1])
     for p in range(start, start + 80):
         with socket.socket() as s:
             if s.connect_ex(("127.0.0.1", p)) != 0:
@@ -65,7 +69,7 @@ def boot(port: int, data_dir: str):
         try:
             if httpx.get(base + "/healthz", timeout=2).status_code == 200:
                 return srv, log, base
-        except Exception:  # noqa: BLE001
+        except Exception:
             time.sleep(0.5)
     log.seek(0)
     raise RuntimeError("server did not start:\n" + log.read()[-2000:])
@@ -75,7 +79,7 @@ def stop(srv) -> None:
     srv.terminate()
     try:
         srv.wait(10)
-    except Exception:  # noqa: BLE001
+    except Exception:
         srv.kill()
 
 
@@ -91,17 +95,16 @@ def run_all(base: str, only: str | None = None, verbose: bool = False) -> list[t
         try:
             mod = importlib.import_module(f"scenarios.{name}")
             r.guard(mod.run)
-        except Exception as e:  # noqa: BLE001  import error etc.: a FAIL row, not a crash
+        except Exception as e:
             r.check("scenario loads", False, f"{type(e).__name__}: {e}")
         rows.append((r.ok, name, f"{r.reason()} ({time.time() - t:.1f}s)"))
     return rows
 
 
 def main() -> int:
-    # One approver credential shared by the booted gateway (child env) and the scenario "humans".
     if not os.environ.get("AIMO_APPROVER_PIN"):
         import secrets
-        os.environ["AIMO_APPROVER_PIN"] = secrets.token_urlsafe(9)  # 12-char passphrase
+        os.environ["AIMO_APPROVER_PIN"] = secrets.token_urlsafe(9)
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", help="run against an already running server instead of booting one")
     ap.add_argument("--only")

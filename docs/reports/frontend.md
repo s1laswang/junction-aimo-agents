@@ -46,3 +46,7 @@ I tested on a local gateway built from team/frontend HEAD with origin/main merge
 
 ## Untested
 - Phone width, and the tamper route's 404 behaviour under `AIMO_ENV=production` (the code path exists; I didn't run the gateway in production mode).
+
+## Post-freeze FR8 sync and zero-key browser surfaces
+- The approver scoping finding above is closed on `main` and `fr8/valio`: `check_approval` enforces the customer approver directory and required role, approvals require a signed-in human (`X-Approver-Session` or per-approver passphrase), and agent identities receive HTTP 403 `agent_cannot_approve`.
+- Judges evaluating offline without starting a local server or setting API keys can also inspect the full guardrail flow in the **One-Page Judge Walkthrough** ([../demo/index.html](../demo/index.html), `docs/demo/index.html`) and red-team the agent in **"Try to Scam the Agent"** ([../arena/](../arena/), `docs/arena/index.html`; `CC0-1.0` Kenney pixel-art ledger in [../demo/ASSETS.md](../demo/ASSETS.md), `docs/demo/ASSETS.md`, and [../arena/assets/manifest.json](../arena/assets/manifest.json)).
