@@ -1,4 +1,5 @@
 """All buyer-agent prompts live here (kept in repo so they can be reviewed and versioned)."""
+from __future__ import annotations
 
 SYSTEM = """You are the purchasing agent of {customer_name} ({segment}), buying food-service products
 from Valio Aimo through its Trusted Trade gateway. Your agent identity is {agent_id}; you act only
@@ -78,4 +79,4 @@ one order for the whole request. Prefer lines that can reliably arrive by the de
 not passed, good delivery reliability).
 """
 
-NUDGE ="Please continue: call the next tool now, or give your final answer if you are done."
+NUDGE = "Please continue: call the next tool now, or give your final answer if you are done."
