@@ -343,7 +343,8 @@ def run_agent_one(sc: Scenario, base_url: str, timeout_s: float = 240.0, model: 
         body["model"] = model
     try:
         with httpx.Client(base_url=base_url, headers=headers, timeout=timeout_s) as c:
-            r = c.post("/v1/agent/runs", json=body)
+            r = c.post("/v1/agent/runs", json=body,
+                       headers={"X-Approver-Pin": os.environ.get("AIMO_APPROVER_PIN", "")})
             r.raise_for_status()
             run_id = r.json()["run_id"]
             res.extra["run_id"] = run_id

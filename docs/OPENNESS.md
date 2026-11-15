@@ -52,9 +52,9 @@ AIMO_APPROVER_PIN=<12-char-pin> uv run python -m conformance --base http://127.0
 | Valio Aimo Trusted Trade Gateway (automatic keyless replay off `tests/fixtures/snapshot/replay/`, 669 products across `2026-11-16`..`2026-11-20`, re-run automatically by keyless `make accept` on every fresh clone; `tests/fixtures/snapshot` also holds the earlier 92-product snapshot) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
 | Nordic Bakery Supply (synthetic, static backend) | **44/44 PASS** | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) |
 
-The committed Valio report is from the Sat 14 Nov 23:20 `tests/fixtures/snapshot` (92-product) run, and automatic keyless replay (`tests/fixtures/snapshot/replay/`, 669 products + 669-product catalog subset across `2026-11-16`..`2026-11-20`, no `.env`) also passes **44/44 PASS** (re-run automatically by keyless `make accept` on every fresh clone; re-verified Sun 15 Nov 02:15 Helsinki in 1.7 s), as did the earlier live mock-API run (Sat 19:10, 43 checks). Both gateways and the suite need the same `AIMO_APPROVER_PIN` in their environment, because the suite's approval checks act as a human.
+The committed Valio report is from the Sat 14 Nov 23:20 `tests/fixtures/snapshot` (92-product) run, and automatic keyless replay (`tests/fixtures/snapshot/replay/`, 669 products + 669-product catalog subset across `2026-11-16`..`2026-11-20`, no `.env`) also passes **44/44 PASS** (re-run automatically by keyless `make accept` on every fresh clone; re-verified Sun 15 Nov on `450743d` in 1.61 s alongside Nordic Bakery Supply **44/44 PASS** in 1.41 s; see [NUMBERS.md](NUMBERS.md)), as did the earlier live mock-API run (Sat 19:10, 43 checks). Both gateways and the suite need the same `AIMO_APPROVER_PIN` in their environment, because the suite's approval checks act as a human.
 
-`uv run pytest -q tests/test_openness.py` boots Nordic Bakery Supply and runs all 44 conformance checks fully offline (no network, no keys), while `tests/test_toywholesaler_scripted_buyer.py` verifies keyless MCP ordering end to end.
+`uv run pytest -q tests/test_openness.py` boots Nordic Bakery Supply and runs all 44 conformance checks fully offline (no network, no keys), `tests/test_toywholesaler_scripted_buyer.py` verifies keyless MCP ordering end to end, and `tests/test_live_run_evidence.py` verifies the committed live-run JWS signatures, hash chain and `order.json` `quote_hash` binding offline ([evidence/live-run/README.md](evidence/live-run/README.md)).
 
 ## 3. The second wholesaler: Nordic Bakery Supply (`toywholesaler/`)
 Nordic Bakery Supply has 30 synthetic bread, flour and baking products ([catalog.json](../toywholesaler/catalog.json); made up, not Valio data). It has its **own Ed25519 key, state DB and audit chain** (its own data dir), and **its own policies** ([toywholesaler/policies](../toywholesaler/policies)): Hotel Aurora auto-approves up to €300 there, while at Valio the limit is €500.
@@ -78,12 +78,14 @@ uv run python -m aimo.buyer.run_demo --base-url http://127.0.0.1:8820 --transpor
 # server-side runs: AIMO_MCP_URL=http://127.0.0.1:8820/mcp
 ```
 
-The full run log is in [docs/openness/buyer-run-nordic-bakery.log](openness/buyer-run-nordic-bakery.log). What happened:
+The full Gemini run log is in [docs/openness/buyer-run-nordic-bakery.log](openness/buyer-run-nordic-bakery.log). What happened:
 1. The agent listed the 13 MCP tools of Nordic Bakery Supply, parsed "40 KG rye bread by 2026-11-18" with Gemini, then searched, got offers and planned.
 2. The plan was 40 × Rye bread 1 kg (NB1002), tier best, €156.00. The agent escalated to gemini-4-hydrogen for the substitution decision.
 3. The signed quote led to `place_order`. **Nordic's** policy gave needs_approval: NB1002 is a customer-approved alternative to the usual NB1001, but it is outside the standing preference.
 4. anna@hotel-aurora.example approved, and the order was **placed**.
 5. The audit report URL points at Nordic's own chain.
+
+With `GEMINI_API_KEY=""`, the deterministic scripted buyer fallback runs the same MCP tool flow against `http://127.0.0.1:8820` with zero keys (re-verified on `450743d` in 2.06 s: 40 × NB1001 Rye Bread Loaf 1 kg = €192.00, approved by `anna@hotel-aurora.example`, **placed**).
 
 Any MCP client works the same way. Claude Desktop or another agent framework only needs the `mcp.url` from `otap.json`.
 
@@ -91,11 +93,15 @@ Any MCP client works the same way. Claude Desktop or another agent framework onl
 ```bash
 python -I scripts/verify_quote.py quote.json https://<gateway>/.well-known/jwks.json      # a quote
 python -I scripts/verify_quote.py events.json jwks.json                                    # GET /v1/audit or an evidence pack
+python -I scripts/verify_quote.py docs/evidence/live-run/quote.json docs/evidence/live-run/jwks.json
+python -I scripts/verify_quote.py docs/evidence/live-run/audit-events.json docs/evidence/live-run/jwks.json
 ```
-The script is about 30 lines. Keys come **only** from the JWKS you pass, never from the document being checked.
-- A Nordic quote verifies against Nordic's JWKS.
-- The same quote **fails** against Valio's JWKS (`signature BAD`): the keys are separate, so a signature from one wholesaler can't pass as another's.
+The script is about 30 lines. Keys come **only** from the JWKS you pass, never from the document being checked (committed Valio live-run cryptographic proof in [docs/evidence/live-run/](evidence/live-run/README.md) from `02575d8` / `62e8384`; offline guardrails benchmark inputs in [docs/evidence/windtunnel/](evidence/windtunnel/README.md)).
+- The committed live Valio quote (`docs/evidence/live-run/quote.json`, `Q-20261115-964294b6`, €1,010.00) and all 6 hash-chained audit events (`docs/evidence/live-run/audit-events.json`) verify offline against `docs/evidence/live-run/jwks.json` (`VERIFIED`, `02575d8` / `62e8384`), and `order.json` (`ORD-20261115-06eda13d`) binds to the same `quote_hash` (`6def7dae163f…`).
+- A Nordic quote verifies against Nordic's JWKS (`VERIFIED`).
+- The same quote **fails** against Valio's JWKS (`signature BAD` / `FAILED`): the keys are separate, so a signature from one wholesaler can't pass as another's.
 - A quote with an edited `total_net` fails (`hash MISMATCH`).
+- Keyless browser inspection of the same `otap/0.1` proofs (no backend or API keys needed): open the **One-Page Judge Walkthrough** in [docs/demo/](demo/) (`docs/demo/index.html`, step-by-step Ed25519 JWS quote verification, 403 agent-approval refusal, 409 price-change requote, Peppol `AP` response, and audit chain tamper check) or **"Try to Scam the Agent"** in [docs/arena/](arena/) (`docs/arena/index.html`, static pixel-art wholesale warehouse red-team game across 5 guardrail scam attempts + 30 s happy-path order + scoreboard over recorded gateway JWS/audit responses; `CC0-1.0` Kenney sprite ledger in [docs/demo/ASSETS.md](demo/ASSETS.md)).
 
 ## Known portability gaps (for the gateway and trust owners)
 - `aimo/backend/client.py` puts `"source": "valio-aimo-mock-api"` in offer provenance. This should come from the client, e.g. `getattr(client, "source", …)`. Nordic's offers show its `upstream` (`static://nordic-bakery-supply`) correctly, but carry that source label.
