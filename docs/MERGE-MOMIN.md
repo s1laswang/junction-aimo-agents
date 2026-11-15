@@ -44,3 +44,9 @@ What Momin's does as well or better:
 
 ## Ask to Silas
 Approve: (a) ours as the submission; (b) porting the four items above; (c) optionally retargeting the fleet's `valio` team to open `fr8/valio/*` PRs against junction-aimo-agents.
+
+## Execution status (Sun 15 Nov)
+All four planned ports from `junction26-valio` plus every judge-review gap port from `ours/` have landed on `combined` / `fr8/valio/*` (`aad9653` / `2e6ae66`; details and `team/*` branch disposition in [COMBINE.md](COMBINE.md)):
+- **13 MCP tools** advertised by `build_mcp().list_tools()` and documented in `README.md` (the 9 core `otap/0.1` tools plus recipes, drift, and `propose_offer`; 0 approval tools).
+- **Four feature ports live in `aimo/`:** menu -> recipe -> order (`aimo/recipes/`, `plan_recipe`), proactive selling agent (`aimo/agents/seller.py`, `propose_offer`), standing-order drift detector (`aimo/agents/drift.py`, `detect_drift`), and the `scenarios/s0..s7` acceptance suite (**8/8 PASS** both live and keyless in replay, 88 checks) plus `Dockerfile` and `NUMBERS.md` command discipline.
+- **Judge-gap ports closed:** customer policy allergen hard-blocks enforced inside `plan_need`, pre-planning quantity validation (`quantity <= 0` rejected with 4xx before planning), known-customer authentication across `/v1`, catalog search, MCP and buyer runs, human-only approvals with per-approver credentials (`approver_pins.json`, `X-Approver-Session`, and per-`(approver, client)` lockout), keyless scripted buyer fallback in `uv run aimo demo`, and `injection_screen` surfaced on `PlanLine` and `Candidate`.

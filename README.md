@@ -15,21 +15,21 @@ Built in 48 hours for Junction 2026: the Valio Aimo "Trusted Trade Agents" chall
 |---|---|---|
 | Python 3.11+ | runtime (`requires-python = ">=3.11"`) | system package or uv-managed |
 | [uv](https://docs.astral.sh/uv/) | one-command runner and lockfile installer | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Network | first-run download of the challenge product JSON from the Valio mock API | none |
+| Network | optional: only needed for live Valio mock API / Gemini calls or downloading the full 17,546-product JSON (`aimo fetch-data`); keyless replay runs offline from `tests/fixtures/snapshot/replay/` | none |
 
 Environment variables (names only; copy `.env.example` to `.env` and fill them in; never commit `.env`):
 
 | Variable | Required for | If missing |
 |---|---|---|
-| `AIMO_API_KEY` (alias: `VALIO_API_KEY`) | `aimo serve` / `aimo fetch-data` downloading `data/valio_aimo_junction26_product_data.json` (and the reliability / CO2 CSVs). Needed for the live catalog, catalog-backed pytest cases, `qa_milk_flow.py`, and the conformance suite's catalog-backed checks. | Download is skipped with a warning. `aimo serve` still starts (UI / docs / `/.well-known`). Tests that need the product JSON skip. |
+| `AIMO_API_KEY` (alias: `VALIO_API_KEY`) | live Valio Aimo mock API calls and `aimo fetch-data` / `aimo serve` downloading the full 17,546-product `data/valio_aimo_junction26_product_data.json` (plus reliability and CO2 CSVs), needed for the live catalog and full-catalog offline `pytest` cases. | Automatic replay mode (`served_from: replay`): `aimo serve`, `make accept`, `scenarios.run_all` (8/8 PASS, 88 checks), `conformance` (44/44), and `qa_milk_flow.py` run off the bundled snapshot and 669-product gzipped catalog subset in `tests/fixtures/snapshot/replay/`. Full-catalog offline `pytest` cases skip without `data/valio_aimo_junction26_product_data.json` (and with `AIMO_REPLAY=0` and no catalog, `/v1/products/search` and `/v1/plan` return 503 `catalog_missing`). |
 | `AIMO_PORTAL_URL` (alias: `VALIO_API_BASE`), `AIMO_PORTAL_PASSWORD` | mock API base URL (default `https://junction26.valioaimo.fi/`) and portal login to obtain a mock-API key if you do not already have `AIMO_API_KEY` | defaults to the challenge URL; leave password blank if you already have a key |
 | `GEMINI_API_KEY` (alias: `GOOGLE_API_KEY`) | live Gemini buyer in `uv run aimo demo`, embeddings / allergen hints, wind-tunnel live runs | `uv run aimo demo` still finishes end-to-end via the deterministic regex parser and scripted buyer fallback (and `make accept` runs it when keyless); `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` runs the REST milk flow; `aimo serve --no-build` skips Gemini catalog builds. |
 | `AIMO_APPROVER_PINS` / `AIMO_APPROVER_PIN` | **human approver credentials** (see [Approving as a human](#approving-as-a-human)): per-approver JSON/CSV map (`AIMO_APPROVER_PINS`), with `AIMO_APPROVER_PIN` kept as single-credential override | Distinct 12-char passphrases are generated per directory approver into `data/keys/approver_pins.json` (mode `0600`, overridable via `AIMO_APPROVER_PINS`), with Anna's primary credential (`anna@hotel-aurora.example`) mirrored into `data/keys/approver_pin` for local CLI scripts (`AIMO_APPROVER_PIN` kept as single-credential override). Brute-force lockout is per `(approver_id, client)` (`5` wrong guesses -> 429 `approver_locked` for 5 min, `30` per 10 min per-approver backstop). No API route or MCP tool ever returns any credential. |
-| `AIMO_REPLAY` | `=tests/fixtures/snapshot` serves recorded mock-API price and availability responses with no network | Unset: live mock API. `make accept` sets it automatically when `AIMO_API_KEY` is empty. Responses say `served_from: replay`. |
+| `AIMO_REPLAY` | `=1` (or `=tests/fixtures/snapshot/replay`, or `=tests/fixtures/snapshot`) serves recorded mock-API price and availability responses with no network (`AIMO_REPLAY=0` disables automatic replay) | Unset with `AIMO_API_KEY`: live mock API (with automatic fallback to `tests/fixtures/snapshot/replay` if upstream is unreachable). Unset without `AIMO_API_KEY`: automatic replay from `tests/fixtures/snapshot/replay` (669 product ids + 669-product catalog subset across `2026-11-16`..`2026-11-20`). Responses say `served_from: replay`. |
 | `ELEVENLABS_API_KEY` | optional: ElevenLabs voice for **Decide by voice** | The browser's own speech synthesis and recognition are used instead. |
-| `AIMO_NOW` | simulated clock, e.g. `AIMO_NOW=2026-11-15T10:00:00+02:00` (add `AIMO_NOW_FROZEN=1` to stop it running forward) | Real clock. Replay mode anchors the clock at the snapshot's recording time (Sat 14 Nov 14:20 Helsinki) unless `AIMO_NOW` is set. |
+| `AIMO_NOW` | simulated clock, e.g. `AIMO_NOW=2026-11-15T10:00:00+02:00` (add `AIMO_NOW_FROZEN=1` to stop it running forward) | Real clock. Replay mode anchors the clock at the active snapshot's recording time (`2026-11-14T23:50:28+0200` for `tests/fixtures/snapshot/replay`, `2026-11-14T14:20:06+0200` for `tests/fixtures/snapshot`) unless `AIMO_NOW` is set. |
 
-Do not put real values in the README. A judge machine with none of these variables set can still run `make accept`, which will SKIP key-gated steps and must not crash.
+Do not put real values in the README. A judge machine with an empty `.env` (no `AIMO_API_KEY`, no `GEMINI_API_KEY`) runs `make accept` end to end off the bundled replay snapshot (`RESULT: PASS`, placing a real order with Peppol `AP` and verified audit chain).
 
 One-command check:
 
@@ -38,28 +38,28 @@ cp .env.example .env    # fill keys if you have them
 make accept             # or: uv run bash scripts/judge_accept.sh
 ```
 
-`make accept` runs pytest, starts the gateway on a free port with a fresh approver credential, checks the discovery and docs endpoints, then (when the catalog data is present) the conformance suite and `qa_milk_flow.py` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → human approval → Peppol AP → audit verify). It prints a PASS/FAIL/SKIP table and ends in `RESULT: PASS` or `RESULT: FAIL`.
+`make accept` runs pytest, runs `scenarios.run_all` (8/8 PASS, live when keyed or off `tests/fixtures/snapshot/replay` when keyless), starts the gateway on a free port with a fresh approver credential, checks the discovery and docs endpoints, runs the conformance suite (44/44), `qa_milk_flow.py` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → human approval → Peppol AP → audit verify, printing the order id, Peppol `OrderResponseCode`, and audit verify status), and (when keyless) `uv run aimo demo` via the scripted buyer. It prints a PASS/FAIL/SKIP table and ends in `RESULT: PASS` or `RESULT: FAIL`.
 
 ### Keyless vs keyed
 
 | | Keyless (empty `.env`) | Keyed (`AIMO_API_KEY`, `GEMINI_API_KEY`) |
 |---|---|---|
-| Price and availability | Replay of recorded mock-API responses (`tests/fixtures/snapshot`: 92 product ids, delivery dates 13, 15, 16 and 17 Nov). Dates that were not recorded are refused, never invented. | Live Valio Aimo mock API with a 5-minute cache; with `AIMO_REPLAY_FALLBACK=tests/fixtures/snapshot` it falls back to the snapshot if the upstream is unreachable |
-| Clock | Anchored at the snapshot's recording time, so the story's Monday cut-offs still hold | Real time, or `AIMO_NOW` |
-| Catalog | Needs `data/valio_aimo_junction26_product_data.json` (downloaded with a key). Without it, catalog-backed tests and checks SKIP. | Downloaded on first `aimo serve` |
-| Buyer agent | `uv run aimo demo` (deterministic regex parser + scripted buyer fallback over MCP), `qa_milk_flow.py`, or `/ui?mock=1` | `uv run aimo demo` (Gemini) |
-| Search | Full-text (FTS5 trigram) | Full-text plus gemini-embedding-2 |
+| Price and availability | Automatic replay from `tests/fixtures/snapshot/replay` (`served_from: replay`: 669 product ids across delivery dates `2026-11-16`..`2026-11-20`, recorded `2026-11-14T23:50:28+0200` via `scripts/record_replay.py` in 10 upstream calls; `tests/fixtures/snapshot` also holds 92 ids across 13, 15, 16 and 17 Nov). Dates that were not recorded are refused, never invented. | Live Valio Aimo mock API with a 5-minute cache; falls back automatically to the bundled replay snapshot (`tests/fixtures/snapshot/replay`, or `AIMO_REPLAY_FALLBACK=<dir>`) if the upstream is unreachable |
+| Clock | Anchored at the snapshot's recording time (`2026-11-14T23:50:28+0200`), so the story's Monday cut-offs still hold | Real time, or `AIMO_NOW` |
+| Catalog | Bundled 669-product gzipped challenge catalog subset (`tests/fixtures/snapshot/replay/catalog/`, unpacked automatically into `<DATA_DIR>/catalog-fixture/`), so `uv run aimo serve`, `make accept`, `scenarios.run_all` (8/8 PASS, 88 checks), `conformance` (44/44), and `qa_milk_flow.py` all work with zero keys. Only full-catalog offline `pytest` cases (17,546 products) still need `data/valio_aimo_junction26_product_data.json` (and skip without it). | Full 17,546-product JSON downloaded into `data/` on first `aimo serve` or `aimo fetch-data` |
+| Buyer agent | `uv run aimo demo` (deterministic regex parser + scripted buyer fallback over MCP), `/ui` hero run, `qa_milk_flow.py`, or `/ui?mock=1` | `uv run aimo demo` (Gemini) |
+| Search | Full-text (FTS5 trigram over the 669-product replay subset, or all 17,546 products if `data/` is present) | Full-text plus gemini-embedding-2 (17,546 products) |
 
 ## Quickstart (one command)
 
 Requirements: see Prerequisites.
 
 ```bash
-cp .env.example .env    # fill AIMO_PORTAL_URL, AIMO_PORTAL_PASSWORD, AIMO_API_KEY, GEMINI_API_KEY
-uv run aimo serve       # or `make serve`: downloads the challenge data on first run (needs AIMO_API_KEY), builds the catalog, serves on :8000
+cp .env.example .env    # optional: fill AIMO_API_KEY and GEMINI_API_KEY for live upstream + Gemini, or leave empty for keyless replay
+uv run aimo serve       # or `make serve`: downloads the 17.5k catalog when AIMO_API_KEY is set, or serves the bundled 669-product replay snapshot on :8000
 ```
 
-Without `AIMO_API_KEY` the download is skipped. This checkout's `aimo serve` still binds :8000 so you can open `/ui?mock=1`, `/docs`, `/healthz` and `/.well-known/otap.json`. The live catalog, most tests and the milk-flow script need the downloaded product file.
+With an empty `.env` (no `AIMO_API_KEY`, no `GEMINI_API_KEY`), `aimo serve` automatically activates replay mode (`/healthz` shows `replay.mode: "auto"`, `clock.mode: "replay"`, and responses carry `served_from: replay`) over the bundled 669-product snapshot and catalog subset in `tests/fixtures/snapshot/replay/`, so `/ui`, `uv run python -m scenarios.run_all` (8/8 PASS, 88 checks), `conformance` (44/44), `qa_milk_flow.py`, and `uv run aimo demo` all work out of the box. Only the live Valio upstream and full-catalog offline `pytest` cases (17,546 products) need `data/valio_aimo_junction26_product_data.json` (via `AIMO_API_KEY` + `uv run aimo fetch-data`).
 
 Then open:
 
@@ -82,7 +82,7 @@ Verified Sat 14 Nov: parse → search → offers → plan (cut-off on 463038, be
 
 On first start with `GEMINI_API_KEY` set, `aimo serve` builds the gemini-embedding-2 vectors and the Gemini allergen hints in the background (about 1.5 minutes; full-text search until done). `--build-sync` waits for them, `--no-build` skips them; `uv run python -m aimo.catalog build` builds them by hand.
 
-Tests: `uv run --extra dev pytest -q` (or `make test`). Result: **743 passed, 7 skipped, 2 xfailed** with the catalog JSON (`646 passed, 105 skipped, 2 xfailed` keyless offline on `fr8/valio/docs` `ffd8e9a`, 753 tests in `tests/`; standalone `main` `89bc3db` / `81e730d`: `344 passed, 7 skipped, 1 xfailed, 1 xpassed`). Without the challenge product JSON, catalog-backed tests skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8** with the live mock API, 88 checks). Conformance suite: `uv run python -m conformance` or `make conformance` (**44/44** checks on both Valio Aimo and `toywholesaler`, and offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (or `make fetch-data`, needs `AIMO_API_KEY`) once, then re-run pytest for the catalog-backed count.
+Tests: `AIMO_OFFLINE=1 uv run --extra dev pytest -q` (or `make test`). Result: **743 passed, 7 skipped, 2 xfailed** with the full 17,546-product catalog JSON (`707 passed, 105 skipped, 1 xfailed, 1 xpassed` keyless offline on `fr8/valio/docs` `2e6ae66` across 814 collected tests in `tests/`; standalone `main` `2a68792`: `344 passed, 7 skipped` keyed). Without `data/valio_aimo_junction26_product_data.json`, full-catalog offline `pytest` cases skip instead of failing. Acceptance scenarios: `uv run python -m scenarios.run_all` (**8/8 PASS, 88 checks** both against the live mock API and keyless off `tests/fixtures/snapshot/replay/`). Conformance suite: `uv run python -m conformance` or `make conformance` (**44/44** checks on both Valio Aimo in live or keyless replay mode and `toywholesaler`, plus offline via `tests/test_openness.py`). Run `uv run aimo fetch-data` (or `make fetch-data`, needs `AIMO_API_KEY`) once, then re-run pytest for the full-catalog count.
 
 ### Approving as a human
 
@@ -287,7 +287,7 @@ Pilot KPIs:
 | `web/` | No-build approval UI served at `/ui` (approver sign-in, voice confirm, recipes, Valio ops, `?mock=1` offline mode) |
 | `windtunnel/` | Synthetic customers, snapshot replay with faults, oracle, scoring vs a naive baseline ([results](docs/windtunnel-results.md)) |
 | `aimo/gemini.py` | One Gemini client plus the usage ledger (`data/gemini/ledger/*.jsonl`) |
-| `tests/` | 753 pytest cases across gateway, catalog, trust, buyer, voice, per-approver and known-customer auth, input/quantity validation, openness and scenarios (plus `/v1` route fuzzing in `main` `81e730d`); `tests/fixtures/snapshot` is the recorded mock-API replay |
+| `tests/` | 814 collected pytest cases across gateway, catalog, trust, buyer, voice, replay, per-approver and known-customer auth, input/quantity validation, docs hygiene, openness and scenarios (plus `/v1` route fuzzing in `main` `81e730d` / `2a68792`); `tests/fixtures/snapshot/replay/` holds the 669-id replay snapshot and 669-product gzipped catalog subset (alongside the 92-id `tests/fixtures/snapshot`) |
 | `docs/evidence/` | Sanitized Gemini ledgers behind the montage cost numbers (`montage_stats.py`) |
 | `docs/` | [OPENNESS](docs/OPENNESS.md), [COMBINE](docs/COMBINE.md), [ASSUMPTIONS](docs/ASSUMPTIONS.md), [DECISIONS](docs/DECISIONS.md), [NUMBERS](docs/NUMBERS.md), [TRUST](docs/TRUST.md), [ARCHITECTURE](docs/ARCHITECTURE.md), [GEMINI](docs/GEMINI.md), [DEMO](docs/DEMO.md), [SUBMISSION](docs/SUBMISSION.md), [QA](docs/pitch/QA.md), [interfaces](docs/interfaces.md), [PLAN](docs/PLAN.md) |
 

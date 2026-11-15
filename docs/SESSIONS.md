@@ -117,3 +117,14 @@ Copy the useful parts into your worktree, then wire them to the live endpoints t
    - Mount it with a 2-line, guarded try/except hook in `aimo/gateway/app.py`; that is the only line you may add there.
 3. **Screenshots:** fresh ones into `docs/reports/frontend/` for README and deck.
 **Done when:** every new backend feature is visible and usable in `/ui` (presenter mode too), and voice approval works, with ElevenLabs if the key is present or with the browser fallback.
+
+---
+
+## Completion status (Sun 15 Nov)
+
+All five parallel sessions landed on `origin/main` (`2a68792`) and have been synced and ported onto `fr8/valio/*` (`aad9653` / `2e6ae66`):
+- **S1 `replay` (`2a68792`):** recorded replay snapshot plus a 669-product bundled catalog subset (`tests/fixtures/snapshot/replay/`), automatic keyless replay, simulated clock (`AIMO_NOW`), `503 catalog_missing` after 422 input validation, and keyless `scenarios.run_all` passing **8/8** (88 checks).
+- **S2 `harden` (`cf6534e`):** `/v1` fuzz suite (`tests/test_fuzz.py`, 0 server errors), count-unit fractional and absurd/implausible quantity rules, fail-fast agent runs on the served port, and a single audit clock.
+- **S3 `need` (`89bc3db`):** customer policy allergen hard-block inside `plan_need`, supplier-text `injection_screen` on plan lines, catalog-verified tiers, learned swaps, `auto_approve_alternatives_below_eur`, rolling 7-day `split_order` and `price_jump` rules, and wind-tunnel `wt640` updated to 0 policy / 0 allergen violations (68.2% precision at 99.7% recall).
+- **S4 `submit` (`81e730d`):** sanitized montage ledgers in `docs/evidence/`, 13 MCP tools and human approver credential docs, command-reproducible numbers in `docs/NUMBERS.md`, and judge Q&A in `docs/pitch/QA.md`.
+- **S5 `ui` (`dfe58ef`):** approver sign-in panel, ElevenLabs + Web Speech voice approval intent (`aimo/voice/`), `409 requote_needed` diff card, clarifying-question card, learned swaps, ops/recipes/blocked-attacks feed, and refreshed screenshots in `docs/reports/frontend/`.
