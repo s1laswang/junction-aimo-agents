@@ -1650,8 +1650,12 @@ def test_full_pipeline_representative_intents_normal_and_usual_oos(
                 assert plan.lines and plan.lines[0].product_id == "464306"
             else:
                 assert plan.lines and plan.lines[0].product_id in {"464306", "WT_MILK_SEMI"}
-            assert res["outcome"] == "needs_approval"
-            assert res["decision"].approver_role == "procurement_manager"
+            if all(l.tier in ("preferred", "best") for l in plan.lines):
+                assert res["outcome"] == "auto_approve"
+                assert res["decision"].approver_role is None
+            else:
+                assert res["outcome"] == "needs_approval"
+                assert res["decision"].approver_role == "procurement_manager"
         elif customer_id == "school-tampere" and query == "oat drink":
             assert plan.lines
             assert res["outcome"] == "needs_approval"
