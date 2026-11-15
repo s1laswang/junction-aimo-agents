@@ -96,8 +96,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 TOOL_NAMES = [t["name"] for t in TOOL_SCHEMAS]
 
-_DROP = {"title", "default", "examples", "$schema", "additionalProperties", "discriminator",
-         "const", "readOnly", "writeOnly", "deprecated", "prefixItems", "$defs", "definitions"}
+_DROP = {"title", "default", "examples", "$schema", "$id", "$comment", "additionalProperties",
+         "discriminator", "const", "readOnly", "writeOnly", "deprecated", "prefixItems", "$defs",
+         "definitions", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"}
 
 
 def to_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -164,6 +165,8 @@ def to_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
             types_ = [t for t in node["type"] if t != "null"]
             node = {**node, "type": types_[0] if types_ else "string"}
         prefix_items = node.get("prefixItems")
+        excl_min = node.get("exclusiveMinimum")
+        excl_max = node.get("exclusiveMaximum")
         out = {}
         for k, v in node.items():
             if k in _DROP:
@@ -174,6 +177,10 @@ def to_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 out[k] = {pk: walk(pv, depth + 1) for pk, pv in v.items()}
             else:
                 out[k] = walk(v, depth + 1)
+        if isinstance(excl_min, (int, float)) and not isinstance(excl_min, bool) and "minimum" not in out:
+            out["minimum"] = excl_min + 1 if out.get("type") == "integer" and isinstance(excl_min, int) else excl_min
+        if isinstance(excl_max, (int, float)) and not isinstance(excl_max, bool) and "maximum" not in out:
+            out["maximum"] = excl_max - 1 if out.get("type") == "integer" and isinstance(excl_max, int) else excl_max
         if isinstance(prefix_items, list) and "items" not in out:
             item_opts: list[Any] = []
             for p in prefix_items:
