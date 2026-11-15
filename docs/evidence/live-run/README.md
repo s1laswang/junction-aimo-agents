@@ -47,3 +47,7 @@ AIMO_GEMINI_TRACE=/tmp/gemini-trace.jsonl uv run aimo demo --auto-approve-as ann
 ```
 
 This needs `AIMO_API_KEY` and `GEMINI_API_KEY` in `.env` and a running gateway (`uv run aimo serve`). `AIMO_GEMINI_TRACE` is off by default.
+
+## Zero-key static browser proof surfaces
+
+To inspect the same signed-quote, policy, human-approval and hash-chained audit invariants in a browser with no server or API keys, open **"Try to Scam the Agent"** ([../../arena/](../../arena/), `docs/arena/index.html`, static pixel-art wholesale warehouse red-team game across 5 guardrail scam attempts + 30 s happy-path order + scoreboard; `CC0-1.0` Kenney asset ledger in [../../demo/ASSETS.md](../../demo/ASSETS.md) / `docs/demo/ASSETS.md` and [../../arena/assets/manifest.json](../../arena/assets/manifest.json)) or the **One-Page Judge Walkthrough** ([../../demo/](../../demo/), `docs/demo/index.html`, step-by-step Ed25519 JWS verify, 403 `agent_cannot_approve` refusal, 409 price-change requote, Peppol `AP`, and audit tamper check). Sanitized montage cost ledgers are in [../README.md](../README.md).
