@@ -15,6 +15,7 @@ from aimo.buyer.fakes import FakeGateway
 from aimo.buyer.mock_model import MOCK_LABEL, MOCK_MODEL_NAME
 from aimo.buyer.need import HELSINKI
 from aimo.buyer.tools import FakeTransport
+from aimo.gateway.human_auth import local_pin
 
 SAT = datetime(2026, 11, 14, 15, 0, tzinfo=HELSINKI)
 HERO = "We need 1,000 litres of lactose-free milk at Hotel Aurora Helsinki by Monday."
@@ -103,7 +104,7 @@ def test_keyless_ui_run_streams_steps_and_sets_mock(keyless_env, clean_registry,
         )
 
     monkeypatch.setattr(clean_registry, "start", fast_fake_start)
-    client = TestClient(_build_app())
+    client = TestClient(_build_app(), headers={"X-Approver-Pin": local_pin()})
 
     created = client.post(
         "/v1/agent/runs",
@@ -174,7 +175,7 @@ def test_keyless_ui_run_streams_steps_and_sets_mock(keyless_env, clean_registry,
 
 
 def test_sse_last_event_id_resume_and_404_unknown_run(keyless_env, clean_registry, monkeypatch):
-    client = TestClient(_build_app())
+    client = TestClient(_build_app(), headers={"X-Approver-Pin": local_pin()})
 
     missing_get = client.get("/v1/agent/runs/run-doesnotexist")
     assert missing_get.status_code == 404
@@ -225,16 +226,23 @@ def test_sse_last_event_id_resume_and_404_unknown_run(keyless_env, clean_registr
 
 
 def test_dynamic_base_url_propagates_to_mcp_url(keyless_env, clean_registry, monkeypatch):
-    seen_mcp_urls: list[str] = []
+    seen_mcp_urls: list[str | None] = []
 
     def spy_connect(kind: str, **kwargs):
-        seen_mcp_urls.append(kwargs["mcp_url"])
+        seen_mcp_urls.append(kwargs.get("mcp_url"))
         return FakeTransport(FakeGateway())
 
     monkeypatch.setattr("aimo.buyer.tools.connect", spy_connect)
     monkeypatch.delenv("AIMO_MCP_URL", raising=False)
+    monkeypatch.delenv("AIMO_SERVE_URL", raising=False)
+    if hasattr(runs, "_probe"):
+        monkeypatch.setattr(runs, "_probe", lambda url: None)
 
-    client = TestClient(_build_app(), base_url="http://gateway.internal:9456")
+    client = TestClient(
+        _build_app(),
+        base_url="http://gateway.internal:9456",
+        headers={"X-Approver-Pin": local_pin()},
+    )
     resp = client.post(
         "/v1/agent/runs",
         json={"text": SMALL, "customer_id": "hotel-aurora", "model": "gemini-3.8-flash"},
@@ -260,6 +268,8 @@ def test_dynamic_base_url_propagates_to_mcp_url(keyless_env, clean_registry, mon
     assert seen_mcp_urls[-1] == "http://custom-mcp.internal:7788/mcp"
 
     monkeypatch.delenv("AIMO_MCP_URL", raising=False)
+    if hasattr(runs, "mcp_url_for"):
+        monkeypatch.setenv("AIMO_SERVE_URL", "http://localhost:8000")
     direct_run = clean_registry.start(runs.RunRequest(text=SMALL, customer_id="hotel-aurora"))
     deadline = time.time() + 5.0
     while not direct_run.done() and time.time() < deadline:
@@ -299,7 +309,7 @@ def test_non_mock_run_preserves_requested_model(clean_registry, monkeypatch):
         )
 
     monkeypatch.setattr(clean_registry, "start", start_with_gen)
-    client = TestClient(_build_app())
+    client = TestClient(_build_app(), headers={"X-Approver-Pin": local_pin()})
     resp = client.post(
         "/v1/agent/runs",
         json={"text": SMALL, "customer_id": "hotel-aurora", "model": "gemini-3.8-flash"},
