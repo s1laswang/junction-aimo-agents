@@ -20,35 +20,84 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _port() -> int:
-    for p in range(8860, 8940):
-        with socket.socket() as s:
-            if s.connect_ex(("127.0.0.1", p)) != 0:
-                return p
-    raise RuntimeError("no free port")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
 def toy(tmp_path_factory):
     d = tmp_path_factory.mktemp("toy")
-    port = _port()
-    log = open(d / "server.log", "w+")
-    env = {**os.environ, "AIMO_DATA_DIR": str(d), "GEMINI_API_KEY": ""}
-    srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "toywholesaler.app:app", "--port", str(port)],
-                           env=env, stdout=log, stderr=log, cwd=ROOT)
-    base = f"http://127.0.0.1:{port}"
-    for _ in range(120):
-        try:
-            if httpx.get(base + "/healthz", timeout=2).status_code == 200:
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT),
+        "AIMO_DATA_DIR": str(d),
+        "GEMINI_API_KEY": "",
+        "GOOGLE_API_KEY": "",
+        "AIMO_API_KEY": "",
+    }
+    srv = None
+    log = None
+    base = ""
+    last_log = ""
+    for attempt in range(3):
+        port = _port()
+        log = open(d / f"server-{attempt}.log", "w+", encoding="utf-8")
+        srv = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "toywholesaler.app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ],
+            env=env,
+            stdout=log,
+            stderr=log,
+            cwd=ROOT,
+        )
+        base = f"http://127.0.0.1:{port}"
+        started = False
+        for _ in range(120):
+            if srv.poll() is not None:
                 break
-        except Exception:  # noqa: BLE001
+            try:
+                if (
+                    httpx.get(base + "/healthz", timeout=2).status_code == 200
+                    and httpx.get(base + "/.well-known/jwks.json", timeout=2).status_code == 200
+                    and (Path(d) / "keys").exists()
+                    and srv.poll() is None
+                ):
+                    started = True
+                    break
+            except Exception:
+                pass
             time.sleep(0.25)
-    else:
+        if started:
+            break
+        if srv.poll() is None:
+            srv.kill()
+            srv.wait(5)
         log.seek(0)
-        srv.kill()
-        pytest.fail("toy wholesaler did not start:\n" + log.read()[-2000:])
-    yield base, d
-    srv.terminate()
-    srv.wait(10)
+        last_log = log.read()[-2000:]
+        log.close()
+        srv = None
+        log = None
+    if srv is None or log is None:
+        pytest.fail("toy wholesaler did not start:\n" + last_log)
+    try:
+        yield base, d
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(10)
+        except subprocess.TimeoutExpired:
+            srv.kill()
+            srv.wait(5)
+        log.close()
 
 
 def test_conformance_passes_on_second_wholesaler(toy):
@@ -104,4 +153,4 @@ def test_independent_verifier_matches_trust_primitives():
     jwk = {"kty": "OKP", "crv": "Ed25519", "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}
     assert V.thumbprint(jwk) == signing.thumbprint(jwk)
     with pytest.raises(ValueError):
-        V.verify_jws("eyJhbGciOiJub25lIn0.e30.", {"keys": []})   # alg none refused
+        V.verify_jws("eyJhbGciOiJub25lIn0.e30.", {"keys": []})
