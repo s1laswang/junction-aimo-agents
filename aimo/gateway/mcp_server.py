@@ -104,6 +104,7 @@ def build_mcp() -> MCPServer:
         content_amount + content_unit (litres/kg per sales unit when known), claims, delivery_reliability and
         co2. Prices and stock are NOT included: call get_offers with the ids.
         """
+        _call(ctx, service.require_known_customer, _identity(ctx).customer_id)
         return _call(ctx, service.search_products, query, claims=claims, limit=limit)
 
     @mcp.tool()
@@ -128,6 +129,7 @@ def build_mcp() -> MCPServer:
         price_error, terminal_unknown_qty, injected:* for simulated faults). Items with cutoff_passed=true
         cannot be delivered on the requested date: choose a substitute.
         """
+        _call(ctx, service.require_known_customer, _identity(ctx).customer_id)
         return _call(ctx, service.get_offers, product_ids, requested_date, identity=_identity(ctx))
 
     @mcp.tool()
@@ -140,6 +142,8 @@ def build_mcp() -> MCPServer:
         candidate ranking with reasons, covered_amount, shortfall, total_net and an explanation.
         Feed plan.lines into create_quote.
         """
+        _call(ctx, service.require_known_customer, _identity(ctx).customer_id)
+        _call(ctx, service.require_known_customer, need.customer_id)
         return _dump(_call(ctx, service.plan_need, need, identity=_identity(ctx)))
 
     @mcp.tool()

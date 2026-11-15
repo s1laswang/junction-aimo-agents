@@ -857,3 +857,54 @@ def test_chaos_concurrent_duplicate_submits_make_one_order(api):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert len({r["order_id"] for r in results}) == 1 and len(store.list_orders()) == 1
+
+
+# ------------------------------------------------------------------ known customer on read routes (fleet 0a792f0)
+def test_unknown_customer_is_refused_on_plan_offers_search(api):
+    evil = {"X-Customer-Id": "evil-corp", "X-Agent-Id": "buyer-1"}
+    body = {"product_ids": ["464306"], "requested_date": "2026-11-16"}
+    r = api.post("/v1/offers", headers=evil, json=body)
+    assert r.status_code == 403 and r.json()["error"] == "unknown_customer"
+    r = api.post("/v1/offers", json={**body, "customer_id": "evil-corp"})
+    assert r.status_code == 403 and r.json()["error"] == "unknown_customer"
+    need = {"customer_id": "evil-corp", "product_query": "lactose-free milk", "quantity": 10, "unit": "L",
+            "delivery_by": "2026-11-16"}
+    r = api.post("/v1/plan", json=need)
+    assert r.status_code == 403 and r.json()["error"] == "unknown_customer"
+    r = api.post("/v1/plan", headers=H, json=need)
+    assert r.status_code == 403  # header and need disagree
+    r = api.get("/v1/products/search", params={"q": "milk"}, headers=evil)
+    assert r.status_code == 403 and r.json()["error"] == "unknown_customer"
+    r = api.get("/v1/products/search", params={"q": "milk", "customer_id": "evil-corp"})
+    assert r.status_code == 403 and r.json()["error"] == "unknown_customer"
+    # known customers are not refused
+    assert api.post("/v1/offers", headers=H, json=body).status_code == 200
+    for c in ("hotel-aurora", "school-tampere", "hospital-meilahti"):
+        assert api.post("/v1/plan", json={**need, "customer_id": c}).status_code != 403
+        assert api.get("/v1/products/search", params={"q": "milk"}, headers={"X-Customer-Id": c}).status_code != 403
+
+
+def test_mcp_unknown_customer_is_refused(monkeypatch):
+    from mcp import Client
+
+    from aimo.gateway.mcp_server import build_mcp
+
+    need = {"customer_id": "evil-corp", "product_query": "lactose-free milk", "quantity": 10, "unit": "L",
+            "delivery_by": "2026-11-16"}
+
+    async def run():
+        async with Client(build_mcp()) as c:
+            return await c.call_tool("plan_need", {"need": need})
+
+    res = asyncio.run(run())
+    text = " ".join(getattr(c, "text", "") for c in res.content)
+    assert getattr(res, "is_error", None) or getattr(res, "isError", None)
+    assert "unknown_customer" in text
+    monkeypatch.setenv("AIMO_CUSTOMER_ID", "evil-corp")
+
+    async def run2():
+        async with Client(build_mcp()) as c:
+            return await c.call_tool("get_offers", {"product_ids": ["463038"], "requested_date": "2026-11-16"})
+
+    res = asyncio.run(run2())
+    assert "unknown_customer" in " ".join(getattr(c, "text", "") for c in res.content)

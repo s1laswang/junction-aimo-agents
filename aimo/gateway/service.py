@@ -1297,6 +1297,28 @@ def list_customers() -> list[dict[str, Any]]:
     return FALLBACK_CUSTOMERS
 
 
+def known_customer_ids() -> set[str]:
+    """Customer ids this gateway has a mandate/policy for (GET /v1/customers)."""
+    try:
+        customers = list_customers()
+    except Exception:  # noqa: BLE001
+        customers = FALLBACK_CUSTOMERS
+    return {str(c["customer_id"]).strip() for c in customers if isinstance(c, dict) and c.get("customer_id")}
+
+
+def require_known_customer(customer_id: str | None) -> str:
+    """Read routes (search, offers, plan) refuse a customer the gateway has no mandate for: 403 unknown_customer
+    (ported from fleet commit 0a792f0). Before this, /v1/plan and /v1/offers answered for e.g. `evil-corp`."""
+    cid = str(customer_id).strip() if customer_id is not None else ""
+    if not cid:
+        raise ServiceError(401, "identity_required", "A known customer is required (send X-Customer-Id).")
+    known = known_customer_ids()
+    if cid not in known:
+        raise ServiceError(403, "unknown_customer", f"unknown customer {cid[:64]!r}; GET /v1/customers lists valid ids",
+                           {"customer_id": cid[:64], "known_customers": sorted(known)})
+    return cid
+
+
 def _policies() -> list[dict[str, Any]]:
     t = _trust()
     try:

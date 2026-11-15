@@ -220,14 +220,21 @@ def build_router() -> APIRouter:
                 "upstream": _upstream_state(), "breakers": _breakers()}
 
     # ---------------------------------------------------------- catalog
-    @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary])
+    @r.get("/v1/products/search", tags=["catalog"], summary="Search products", response_model=list[ProductSummary], responses=ERR)
     def search_products(
         q: str = Query(..., description="Free text (English or Finnish)", examples=["lactose free milk"]),
         claims: Optional[str] = Query(None, description="Comma-separated required claims", examples=["FREE_FROM_LACTOSE"]),
         category: Optional[str] = Query(None, description="Category code, e.g. 10400"),
         content_unit: Optional[str] = Query(None, description="L | KG | PCS"),
         limit: int = Query(20, ge=1, le=100),
+        customer_id: Optional[str] = Query(None, description="Customer the agent acts for (optional; must be known)"),
+        x_customer_id: Optional[str] = Header(None, description="Customer the agent acts for (optional; must be known)"),
     ):
+        if (x_customer_id or "").strip() or (customer_id or "").strip():
+            hdr = (x_customer_id or "").strip()
+            if hdr and (customer_id or "").strip() and customer_id.strip() != hdr:
+                raise service.ServiceError(403, "customer_mismatch", "X-Customer-Id disagrees with customer_id")
+            service.require_known_customer(hdr or customer_id)
         _require_catalog()
         cl = [c.strip() for c in claims.split(",") if c.strip()] if claims else []
         res = service.find_products(q, cl, category, content_unit, limit)
@@ -246,11 +253,15 @@ def build_router() -> APIRouter:
         product's order closing time is already past (it cannot make the requested date). Provenance is in
         each offer's `provenance` and in the `X-Aimo-*` response headers."""
         who = _with_body_claims(ident, body.customer_id, None)
+        service.require_known_customer(who.customer_id)
         res, meta = service.fetch_offers(body.product_ids, body.requested_date, who.customer_id)
         return JSONResponse([o.model_dump(mode="json") for o in res], headers=_prov_headers(meta))
 
     @r.post("/v1/plan", tags=["plan"], summary="Plan a need (good/better/best + split)", response_model=Plan, responses=ERR)
-    def plan(need: Need):
+    def plan(need: Need, ident: service.Identity = Depends(identity)):
+        if getattr(ident, "authenticated", {}).get("customer"):
+            _with_body_claims(ident, need.customer_id, None)  # X-Customer-Id that disagrees with the need: 403
+        service.require_known_customer(need.customer_id)
         try:
             _require_catalog()
         except service.ServiceError:
