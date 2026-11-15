@@ -33,6 +33,9 @@ PRODUCTS: dict[str, dict[str, Any]] = {
     "462775": dict(name="Arla Milkdrink 1L lactose free fat free UHT Suomesta", sales_unit="ST",
                    content_amount=1.0, content_unit="L", claims=["FREE_FROM_LACTOSE"], brand="Arla",
                    allergens={"milk": "contains"}),
+    "470889": dict(name="Oatly Oat Drink Whole 1 L", sales_unit="ST", content_amount=1.0, content_unit="L",
+                   claims=["VEGAN"], brand="Oatly",
+                   allergens={"milk": "free", "nuts": "free", "gluten": "contains"}),
     "470863": dict(name="Oatly Oat Drink Semi 1L", sales_unit="ST", content_amount=1.0, content_unit="L",
                    claims=[], brand="Oatly", allergens={"milk": "free", "nuts": "free", "gluten": "contains"}),
     "469040": dict(name="10 x Elovena 1l oat drink 1,5%", sales_unit="KI", content_amount=10.0,
@@ -57,6 +60,7 @@ OFFERS: dict[str, tuple] = {
     "464306": (1.01, 5000, "Stock", datetime(2026, 11, 15, 17, 0, tzinfo=HEL)),
     "469363": (1.15, 384, "Stock", datetime(2026, 11, 15, 17, 0, tzinfo=HEL)),
     "462775": (1.09, 51, "Stock", datetime(2026, 11, 15, 17, 0, tzinfo=HEL)),
+    "470889": (1.85, 1000, "Stock", datetime(2026, 11, 16, 17, 0, tzinfo=HEL)),
     "470863": (1.79, 400, "Stock", datetime(2026, 11, 16, 17, 0, tzinfo=HEL)),
     "469040": (16.50, 40, "Stock", datetime(2026, 11, 16, 17, 0, tzinfo=HEL)),
     "471424": (2.10, 200, "Stock", datetime(2026, 11, 16, 17, 0, tzinfo=HEL)),
@@ -75,15 +79,15 @@ LIMITS = {"hotel-aurora": (500, 5000, "procurement_manager"),
 
 def _product_kind(text: str) -> str | None:
     t = text.lower()
-    if "oat" in t or "kaura" in t:
+    if "oat" in t or "kaura" in t or "havre" in t:
         return "oat"
-    if "cream" in t or "kerma" in t:
+    if "cream" in t or "kerma" in t or "grädde" in t:
         return "cream"
-    if "butter" in t or re.search(r"\bvoi(?:ta|n)?\b", t):
+    if "butter" in t or re.search(r"\b(?:voi(?:ta|n)?|smör)\b", t):
         return "butter"
-    if "bread" in t or "leip" in t:
+    if "bread" in t or "leip" in t or "bröd" in t:
         return "bread"
-    if "milk" in t or "maito" in t:
+    if "milk" in t or "maito" in t or "mjölk" in t:
         return "milk"
     return None
 
@@ -155,13 +159,72 @@ class FakeGateway:
     def get_offers(self, product_ids: list[str], requested_date: str) -> list[dict]:
         return [self._offer(pid, requested_date) for pid in product_ids if pid in OFFERS]
 
+    def _eval_candidate(self, pid: str, p: dict, delivery_by: str, req_claims: set[str],
+                        eff_excl: list[str], preferred: list[str]) -> dict:
+        from aimo.catalog.screening_bridge import screen_product_row, screen_reason
+        offer = self._offer(pid, delivery_by)
+        reasons, flags = [], []
+        tier = "preferred" if pid in preferred else ("best" if p["brand"] == "Valio" else "better")
+        if not req_claims <= set(p["claims"]):
+            tier, reasons = "rejected", reasons + ["missing required claim"]
+        amap = p.get("allergens") or {}
+        for a in eff_excl:
+            st = amap.get(a) or "unknown"
+            if st != "free":
+                tier = "rejected"
+                reasons.append(f"{a}: {st} (unknown is never treated as safe)")
+                flag = f"allergen_{st}"
+                if flag not in flags:
+                    flags.append(flag)
+        if offer["cutoff_passed"]:
+            flags.append("cutoff_passed")
+            reasons.append(f"order cut-off {offer['closing_time']} has passed")
+            if tier != "rejected":
+                tier = "rejected"
+        if tier not in ("preferred", "rejected"):
+            flags.append("outside_preference")
+        mkt = INJECTION if (self.scenario == "injection" and pid == "469363") else p.get("marketing_text")
+        sc = screen_product_row(pid, {"marketing_text": mkt})
+        inj_screen = {
+            "suspicious": sc["suspicious"],
+            "reasons": sc["reasons"],
+            "layers": sc["layers"],
+            **({"injected": True} if sc.get("injected") else {}),
+        }
+        cand_reasons = list(reasons) if reasons else ["meets hard constraints"]
+        if sc["suspicious"]:
+            flags.append("supplier_text_injection_suspected")
+            if sc.get("injected"):
+                flags.append("injected:inject_text")
+            sr = screen_reason(sc)
+            if sr:
+                cand_reasons.append(sr)
+        return {"product": self._summary(pid), "offer": offer, "tier": tier, "reasons": cand_reasons,
+                "flags": flags, "injection_screen": inj_screen}
+
     def plan_need(self, need: dict) -> dict:
+        from aimo.catalog.allergens import effective_excluded_allergens, normalize_allergens, policy_allergen_block
+        from aimo.catalog.plan import _excluded_groups_named, _profile_usual_products
+        raw_qty = need["quantity"]
+        if isinstance(raw_qty, bool):
+            raise ValueError("quantity must be > 0")
+        qty = float(raw_qty)
+        if not math.isfinite(qty) or qty <= 0:
+            raise ValueError("quantity must be > 0")
+        cust = (need.get("customer_id") or self.customer_id or "").strip()
+        raw_excl = list(need.get("excluded_allergens") or [])
+        caller_excl = normalize_allergens(raw_excl)
+        eff_excl = effective_excluded_allergens(cust, raw_excl)
+        pb = policy_allergen_block(cust)
+        policy_added = [a for a in eff_excl if a not in caller_excl]
+        out_need = {**need, "excluded_allergens": eff_excl} if eff_excl != raw_excl else need
         req_claims = set(need.get("required_claims") or [])
-        excl = need.get("excluded_allergens") or []
-        preferred = need.get("preferred_product_ids") or []
-        qty = float(need["quantity"])
-        q = need.get("product_query", "").lower()
+        preferred = list(need.get("preferred_product_ids") or [])
+        raw_q = str(need.get("product_query") or "")
+        q = raw_q.lower()
         q_kind = _product_kind(q)
+        eff_q_kind = q_kind or ("milk" if not q.strip() else None)
+        delivery_by = str(need["delivery_by"])
         cands, lines = [], []
         for pid, p in PRODUCTS.items():
             if p["content_unit"] != need.get("unit"):
@@ -176,43 +239,37 @@ class FakeGateway:
                 kind_ok = bool(words) and any(w in p["name"].lower() for w in words)
             if not kind_ok:
                 continue
-            offer = self._offer(pid, str(need["delivery_by"]))
-            reasons, flags = [], []
-            tier = "preferred" if pid in preferred else ("best" if p["brand"] == "Valio" else "better")
-            if not req_claims <= set(p["claims"]):
-                tier, reasons = "rejected", reasons + ["missing required claim"]
-            for a in excl:
-                st = p["allergens"].get(a, "unknown")
-                if st != "free":
-                    tier = "rejected"
-                    reasons.append(f"{a}: {st} (unknown is never treated as safe)")
-                    flags.append(f"allergen_{st}")
-            if offer["cutoff_passed"]:
-                flags.append("cutoff_passed")
-                reasons.append(f"order cut-off {offer['closing_time']} has passed")
-                if tier != "rejected":
-                    tier = "rejected"
-            if tier not in ("preferred", "rejected"):
-                flags.append("outside_preference")
-            from aimo.catalog.screening_bridge import screen_product_row, screen_reason
-            mkt = INJECTION if (self.scenario == "injection" and pid == "469363") else p.get("marketing_text")
-            sc = screen_product_row(pid, {"marketing_text": mkt})
-            inj_screen = {
-                "suspicious": sc["suspicious"],
-                "reasons": sc["reasons"],
-                "layers": sc["layers"],
-                **({"injected": True} if sc.get("injected") else {}),
-            }
-            cand_reasons = list(reasons) if reasons else ["meets hard constraints"]
-            if sc["suspicious"]:
-                flags.append("supplier_text_injection_suspected")
-                if sc.get("injected"):
-                    flags.append("injected:inject_text")
-                sr = screen_reason(sc)
-                if sr:
-                    cand_reasons.append(sr)
-            cands.append({"product": self._summary(pid), "offer": offer, "tier": tier, "reasons": cand_reasons,
-                          "flags": flags, "injection_screen": inj_screen})
+            cands.append(self._eval_candidate(pid, p, delivery_by, req_claims, eff_excl, preferred))
+        lit_named, imp_named = _excluded_groups_named(raw_q, eff_excl)
+        named_excl = lit_named + imp_named
+        alt_used = False
+        if eff_q_kind in ("milk", "cream", "butter") and "milk" in eff_excl and not any(c["tier"] != "rejected" for c in cands):
+            if need.get("unit") == "L":
+                usual_ids = [pid for pid in _profile_usual_products(cust) if pid in PRODUCTS]
+                alt_pref = list(dict.fromkeys([*preferred, *usual_ids]))
+                seen_pids = {c["product"]["id"] for c in cands}
+                alt_pool = list(dict.fromkeys([
+                    *usual_ids,
+                    "470889",
+                    "470863",
+                    *[k for k, v in PRODUCTS.items() if _product_kind(v["name"]) == "oat"],
+                ]))
+                alt_label = raw_q or eff_q_kind
+                alt_reason = (
+                    f"Allergen-safe alternative: request asked for '{alt_label}', which contains milk "
+                    f"(excluded for {cust or 'this customer'}); planned milk-free replacement that requires human confirmation."
+                )
+                for pid in alt_pool:
+                    if pid not in PRODUCTS or pid in seen_pids or PRODUCTS[pid]["content_unit"] != "L":
+                        continue
+                    ac = self._eval_candidate(pid, PRODUCTS[pid], delivery_by, req_claims, eff_excl, alt_pref)
+                    if ac["tier"] != "rejected":
+                        if "allergen_safe_alternative" not in ac["flags"]:
+                            ac["flags"].append("allergen_safe_alternative")
+                        ac["reasons"] = [alt_reason, *[r for r in ac["reasons"] if r != "meets hard constraints"]]
+                        cands.append(ac)
+                        seen_pids.add(pid)
+                        alt_used = True
         order = {"preferred": 0, "best": 1, "better": 2, "good": 3, "rejected": 9}
         remaining = qty
         for c in sorted(cands, key=lambda c: (order[c["tier"]], c["offer"]["unit_price"])):
@@ -225,34 +282,76 @@ class FakeGateway:
                 units = min(units, avail)
             if units <= 0:
                 continue
+            lflags = list(c["flags"])
+            lreasons = list(c["reasons"])
+            if named_excl and "allergen_safe_alternative" not in lflags:
+                lflags.append("allergen_safe_alternative")
+                lreasons.insert(
+                    0,
+                    f"Allergen-safe alternative: request asked for '{raw_q}', which normally contains "
+                    f"{' and '.join(named_excl)} (excluded by policy); requires human confirmation.",
+                )
             lines.append({"product_id": c["product"]["id"], "product_name": c["product"]["name"], "tier": c["tier"],
                           "qty_sales_units": units, "sales_unit": c["product"]["sales_unit"],
                           "covered_amount": round(units * ca, 4), "unit_price": c["offer"]["unit_price"],
-                          "line_total": round(units * c["offer"]["unit_price"], 2), "reasons": list(c["reasons"]),
-                          "flags": list(c["flags"]), "injection_screen": c["injection_screen"]})
+                          "line_total": round(units * c["offer"]["unit_price"], 2), "reasons": lreasons,
+                          "flags": lflags, "injection_screen": c["injection_screen"]})
             remaining = round(remaining - units * ca, 6)
         covered = round(sum(l["covered_amount"] for l in lines), 4)
+        notes: list[str] = []
+        if policy_added:
+            pid_label = pb.policy_id or cust
+            why = f" ({pb.reason})" if pb.reason else ""
+            notes.append(f"Customer policy ({pid_label}) excludes {', '.join(policy_added)}{why} as a hard block.")
+        if (alt_used or named_excl) and lines:
+            alt_names = ", ".join(f"{l['product_name']} ({l['product_id']})" for l in lines)
+            grp_txt = " and ".join(named_excl or ["milk"])
+            notes.append(
+                f"Request '{raw_q or eff_q_kind}' normally contains {grp_txt}, which is excluded "
+                f"({', '.join(eff_excl)}); planned allergen-safe alternative {alt_names} (requires human approval)."
+            )
+        elif eff_excl and not lines:
+            notes.append(
+                f"No orderable product is confirmed free of {', '.join(eff_excl)}; "
+                f"unsafe or unknown-allergen items were rejected as a hard block."
+            )
         flagged = list(dict.fromkeys(
             f"{l['product_name']} ({l['product_id']})"
             for l in lines
             if (l.get("injection_screen") or {}).get("suspicious")
         ))
-        explanation = (
-            f"Prompt-injection screen: untrusted supplier text on {', '.join(flagged)} was flagged "
-            f"and requires human approval."
-            if flagged else ""
-        )
-        return {"need": need, "lines": lines, "candidates": cands, "covered_amount": covered,
+        if flagged:
+            notes.append(
+                f"Prompt-injection screen: untrusted supplier text on {', '.join(flagged)} was flagged "
+                f"and requires human approval."
+            )
+        explanation = " ".join(notes).strip()
+        return {"need": out_need, "lines": lines, "candidates": cands, "covered_amount": covered,
                 "shortfall": round(max(0.0, qty - covered), 4), "total_net": round(sum(l["line_total"] for l in lines), 2),
                 "explanation": explanation, "_fake": True}
 
     def create_quote(self, delivery_date: str, lines: list[dict], need: dict | None = None) -> dict:
+        from aimo.catalog.allergens import effective_excluded_allergens
+        from aimo.catalog.plan import _excluded_groups_named
         from aimo.catalog.screening_bridge import screen_product_row
+        cust = (self.customer_id or (need or {}).get("customer_id") or "").strip()
+        raw_excl = list((need or {}).get("excluded_allergens") or [])
+        eff_excl = effective_excluded_allergens(cust, raw_excl)
+        quote_need = (
+            {**need, "excluded_allergens": eff_excl}
+            if isinstance(need, dict) and eff_excl != raw_excl
+            else need
+        )
+        named_excl: list[str] = []
+        if isinstance(need, dict) and eff_excl:
+            lit, imp = _excluded_groups_named(str(need.get("product_query") or ""), eff_excl)
+            named_excl = lit + imp
         qlines = []
         for l in lines:
             pid = l["product_id"]
+            p = PRODUCTS[pid]
             o = self._offer(pid, delivery_date)
-            mkt = self.get_product(pid).get("marketing_text") or PRODUCTS[pid].get("marketing_text")
+            mkt = self.get_product(pid).get("marketing_text") or p.get("marketing_text")
             sc = screen_product_row(pid, {"marketing_text": mkt})
             in_flags = list(l.get("flags") or [])
             qflags = []
@@ -260,14 +359,18 @@ class FakeGateway:
                 qflags.append("supplier_text_injection_suspected")
             if "injected:inject_text" in in_flags or sc.get("injected"):
                 qflags.append("injected:inject_text")
-            qlines.append({"product_id": pid, "product_name": PRODUCTS[pid]["name"], "qty_sales_units": l["qty_sales_units"],
-                           "sales_unit": PRODUCTS[pid]["sales_unit"], "unit_price": o["unit_price"],
+            amap = p.get("allergens") or {}
+            safe_for_excl = all((amap.get(a) or "unknown") == "free" for a in eff_excl)
+            if "allergen_safe_alternative" in in_flags or (named_excl and safe_for_excl):
+                qflags.append("allergen_safe_alternative")
+            qlines.append({"product_id": pid, "product_name": p["name"], "qty_sales_units": l["qty_sales_units"],
+                           "sales_unit": p["sales_unit"], "unit_price": o["unit_price"],
                            "line_total": round(l["qty_sales_units"] * o["unit_price"], 2), "tier": l.get("tier", "preferred"), "flags": qflags})
         qid = "Q-" + uuid.uuid4().hex[:8]
         q = {"quote_id": qid, "customer_id": self.customer_id, "agent_id": self.agent_id, "delivery_date": delivery_date,
              "lines": qlines, "total_net": round(sum(l["line_total"] for l in qlines), 2), "currency": "EUR",
              "created_at": datetime.now(HEL).isoformat(), "expires_at": (datetime.now(HEL) + timedelta(minutes=15)).isoformat(),
-             "need": need, "_fake": True}
+             "need": quote_need, "_fake": True}
         q["quote_hash"] = hashlib.sha256(json.dumps(q, sort_keys=True, default=str).encode()).hexdigest()
         q["signature"], q["kid"] = "fake.jws.signature", "fake-key"
         self.quotes[qid] = q
@@ -275,10 +378,13 @@ class FakeGateway:
         return q
 
     def place_order(self, quote_id: str, quote_hash: str) -> dict:
+        from aimo.catalog.allergens import effective_excluded_allergens, policy_allergen_block
+        from aimo.catalog.plan import _excluded_groups_named
         q = self.quotes.get(quote_id)
         if not q or q["quote_hash"] != quote_hash:
             raise ValueError("unknown quote or quote_hash mismatch")
         auto, hard, role = LIMITS.get(self.customer_id, (500, 5000, "approver"))
+        sev = {"allow": 0, "auto_approve": 0, "needs_approval": 1, "reject": 2}
         hits = []
         if q["total_net"] > hard:
             outcome = "reject"
@@ -291,6 +397,71 @@ class FakeGateway:
         if any(l["tier"] in ("better", "good") for l in q["lines"]) and outcome == "auto_approve":
             outcome = "needs_approval"
             hits.append({"rule_id": "substitution.tier", "outcome": "needs_approval", "message": "A substitute outside tier 'best' needs approval."})
+        pb = policy_allergen_block(self.customer_id)
+        q_need = q.get("need") if isinstance(q.get("need"), dict) else None
+        eff_excl = effective_excluded_allergens(self.customer_id, (q_need or {}).get("excluded_allergens") or [])
+        why = f" ({pb.reason})" if pb.reason else ""
+        allergen_blocked = False
+        if eff_excl:
+            for l in q.get("lines", []):
+                pid = str(l.get("product_id") or "")
+                p = PRODUCTS.get(pid) or {}
+                amap = p.get("allergens") or {}
+                in_flags = list(l.get("flags") or [])
+                found: dict[str, list[str]] = {"contains": [], "may_contain": [], "unknown": []}
+                for a in eff_excl:
+                    if pid in PRODUCTS:
+                        st = amap.get(a) or "unknown"
+                    else:
+                        st = ("contains" if f"contains:{a}" in in_flags
+                              else "may_contain" if f"may_contain:{a}" in in_flags
+                              else "unknown")
+                    if st in found:
+                        found[st].append(a)
+                lname = f"{l.get('product_name', pid)} ({pid})"
+                candidates_out: list[tuple[str, str]] = []
+                if found["contains"]:
+                    candidates_out.append((
+                        pb.on_contains,
+                        f"{lname} contains {', '.join(found['contains'])}, which is excluded for this customer{why}.",
+                    ))
+                if found["may_contain"]:
+                    candidates_out.append((
+                        pb.on_may_contain,
+                        f"{lname} may contain traces of {', '.join(found['may_contain'])}, which is excluded for this customer{why}.",
+                    ))
+                if found["unknown"]:
+                    candidates_out.append((
+                        pb.on_unknown,
+                        f"Allergen status of {', '.join(found['unknown'])} is unknown for {lname} (unknown is never treated as safe){why}.",
+                    ))
+                if candidates_out:
+                    allergen_blocked = True
+                    rule_out, msg = max(candidates_out, key=lambda item: sev.get(item[0], 2))
+                    if rule_out in ("reject", "needs_approval"):
+                        hits.append({"rule_id": f"allergens:{pid}", "outcome": rule_out, "message": msg})
+                        if rule_out == "reject":
+                            outcome = "reject"
+                        elif outcome != "reject":
+                            outcome = "needs_approval"
+        named_excl: list[str] = []
+        if q_need and eff_excl:
+            lit, imp = _excluded_groups_named(str(q_need.get("product_query") or ""), eff_excl)
+            named_excl = lit + imp
+        has_alt_flag = any("allergen_safe_alternative" in (l.get("flags") or []) for l in q.get("lines", []))
+        if has_alt_flag or (named_excl and not allergen_blocked):
+            q_text = str((q_need or {}).get("product_query") or "")
+            named_txt = " and ".join(named_excl) if named_excl else "an excluded allergen"
+            hits.append({
+                "rule_id": "substitution.allergen_safe_alternative",
+                "outcome": "needs_approval",
+                "message": (
+                    f"Request{f' for {q_text!r}' if q_text else ''} involves {named_txt} "
+                    f"(excluded by policy); allergen-safe replacement requires {role} confirmation."
+                ),
+            })
+            if outcome != "reject":
+                outcome = "needs_approval"
         if (((q.get("need") or {}).get("preferences") or {}).get("injection_flags")
                 or any("supplier_text_injection_suspected" in (l.get("flags") or []) for l in q.get("lines", []))):
             hits.append({"rule_id": "security.prompt_injection", "outcome": "needs_approval",
@@ -317,11 +488,24 @@ class FakeGateway:
         return [e for e in self.audit if e["subject_id"] == subject_id] or self.audit
 
     def list_policies(self) -> dict:
+        from aimo.catalog.allergens import effective_excluded_allergens, policy_allergen_block
         auto, hard, role = LIMITS.get(self.customer_id, (500, 5000, "approver"))
-        return {"customer_id": self.customer_id, "policy_id": self.customer_id, "_fake": True,
-                "rules": [f"auto-approve up to EUR {auto}", f"EUR {auto}-{hard} needs {role}", f"over EUR {hard} rejected",
-                          "substitutions: tier best allowed, better/good need approval",
-                          "unknown allergen status is never safe"]}
+        rules = [
+            f"auto-approve up to EUR {auto}",
+            f"EUR {auto}-{hard} needs {role}",
+            f"over EUR {hard} rejected",
+            "substitutions: tier best allowed, better/good need approval",
+            "unknown allergen status is never safe",
+        ]
+        excl = effective_excluded_allergens(self.customer_id)
+        if excl:
+            pb = policy_allergen_block(self.customer_id)
+            why = f" ({pb.reason})" if pb.reason else ""
+            rules.append(
+                f"excluded allergens (hard block): {', '.join(excl)}{why} "
+                f"(contains={pb.on_contains}, may_contain={pb.on_may_contain}, unknown={pb.on_unknown})"
+            )
+        return {"customer_id": self.customer_id, "policy_id": self.customer_id, "_fake": True, "rules": rules}
 
     # -- human side (the UI does this through POST /v1/approvals/{id}/decision)
     def pending(self) -> list[dict]:
