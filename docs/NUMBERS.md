@@ -2,7 +2,7 @@
 
 Every number we say in the README, demo, deck, submission or Gemini write-up, with the exact command that produces it. Rule: if a number is not in this file with a command, we don't say it.
 
-Setup for all commands: a clone with `.env` (never committed), `uv sync --extra dev`, and `uv run aimo serve` run once (builds `data/catalog.sqlite`, embeddings and allergen hints). Commands marked **live** call the Valio Aimo mock API or Gemini and need the keys; **replay** commands run with no keys against `AIMO_REPLAY=tests/fixtures/snapshot uv run aimo serve`; everything else is offline.
+Setup for all commands: a clone with `.env` (never committed), `uv sync --extra dev`, and `uv run aimo serve` run once (builds `data/catalog.sqlite`, embeddings and allergen hints). Commands marked **live** call the Valio Aimo mock API or Gemini and need the keys; **replay** commands run with no keys against `uv run aimo serve` in replay mode (automatic without `AIMO_API_KEY`, or `AIMO_REPLAY=1`); everything else is offline.
 
 Status: **R** = re-run by the person or session named, with the date; **S** = single source (a report or a one-off run), not re-run. Latest re-runs by the submit session: Sat 14 Nov 23:05–23:20 Helsinki, main at fac34f0.
 
@@ -18,7 +18,7 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 | Delivery reliability for 4,425 products | ASSUMPTIONS | `sqlite3 data/catalog.sqlite "select count(*) from products where delivery_reliability is not null"` | 4425 | R pitch, Sat 19:00 |
 | Unit parser agrees with live comparison price on 702 of 752 sampled products (93%) | ASSUMPTIONS, SUBMISSION | none committed (catalog report, Sat 14:40; re-sampling needs ~752 live price lookups, which we avoid because of the mock API's rate limits) | 93% | S. Always say "single source" with it. |
 | Product JSON 87 MB | DECISIONS | `ls -l data/valio_aimo_junction26_product_data.json` | 87,077,467 bytes | R pitch |
-| Replay snapshot: 92 product ids, 4 delivery dates, recorded Sat 14 Nov 14:20 | README | `cat tests/fixtures/snapshot/meta.json` | 92 ids; 13, 15, 16, 17 Nov | R submit, Sat 23:10 |
+| Replay snapshot: 669 products, delivery dates 16–20 Nov, recorded Sat 14 Nov 23:50 with 10 upstream calls | README, DEMO | `cat tests/fixtures/snapshot/replay/meta.json` | 669; 2026-11-16 … 2026-11-20; 10 | R submit, Sun 02:35 |
 
 ## Mock API behaviour
 | Number | Claimed in | Command | Value | Status |
@@ -64,7 +64,8 @@ Status: **R** = re-run by the person or session named, with the date; **S** = si
 |---|---|---|---|---|
 | s0–s7: 8/8 PASS | PLAN, docs/SCENARIOS.md, README | `uv run python -m scenarios.run_all` (**live**) | 8/8 | R submit, see docs/reports/pitch.md "Gate runs" for the latest |
 | Test count | README, SUBMISSION, deck | `uv run --extra dev pytest -q` (with the catalog file present) | **344 passed, 7 skipped, 1 xfailed, 1 xpassed** in 34 s | R submit, Sun 00:29, 89bc3db. Re-run at the freeze. |
-| `make accept` | README | `make accept` | RESULT: PASS (table in docs/reports/pitch.md "Gate runs") | R submit |
+| `make accept`, keyed | README | `make accept` | RESULT: PASS (19 PASS, 1 SKIP since the S1 merge) | R submit, every gate run in docs/reports/submit.md |
+| `make accept`, keyless (fresh clone, empty `.env`, no key variables) | README, SUBMISSION | `git clone … && cd … && : > .env && uv sync --extra dev && make accept` | RESULT: PASS (PASS=16 FAIL=0 SKIP=4); scenarios 8/8 in replay, conformance 44/44, MILK FLOW OK, Peppol AP | R submit, Sun 02:31 (order ORD-20261114-e59bebe2); also S1 (docs/reports/replay.md). Keyless pytest inside it: 245 passed, 8 failed (tests needing the full catalog, not marked `needs_data`), reported as SKIP |
 
 ## Input hardening
 | Number | Claimed in | Command | Value | Status |

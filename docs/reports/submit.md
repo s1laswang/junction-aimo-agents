@@ -23,6 +23,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 | Sat 14 Nov 23:22–23:28 | 8d0d10e (on fac34f0) | 267 passed, 7 skipped, 2 xfailed (41 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP: live Gemini demo by design; keyed .env; conformance 44/44, MILK FLOW OK) |
 | Sat 14 Nov 23:26–23:29 | 74b5e79 (rebased on 4ae14c6, S5 ui merged) | 285 passed, 7 skipped, 2 xfailed (58 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
 | Sun 15 Nov 00:28–00:31 | rebased on 89bc3db (S2 harden, S3 need v1+v2, S5 ui round 2 merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (34 s) | 8/8 PASS (live) | RESULT: PASS (15 PASS, 1 SKIP) → pushed to main |
+| Sun 15 Nov 02:29–02:31 | rebased on 2a68792 (S1 replay merged) | 344 passed, 7 skipped, 1 xfailed, 1 xpassed (32 s) | 8/8 PASS (live) | keyed RESULT: PASS (19 PASS, 1 SKIP); keyless fresh clone RESULT: PASS (16 PASS, 4 SKIP) → pushed to main |
 
 ## Done (hourly re-check 1, Sun 15 Nov 00:28)
 - S3 need: wind-tunnel headline now 0 policy / 0 allergen violations for the gateway, recall 99.7%, precision 68.2% (from 54.0%; 90% target not met). Naive column stays Sat 18:24 and is labelled as against the earlier policy. Updated SUBMISSION, GEMINI row 8, DEMO 2:45 line, deck slide 5, QA 15–16, DECISIONS D5, ASSUMPTIONS, NUMBERS, README pillar 3.
@@ -30,6 +31,10 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 - S2 harden: fuzz (0 server errors over ~2,600 requests) and quantity 422s in SUBMISSION, QA 13, NUMBERS; audit reports now label the simulated clock (DEMO 2:30 note).
 - S5 round 2 (re-quote after the price lock, presenter fit): no claim in S4 docs affected.
 - Test count 344 / 7 / 1 xfailed / 1 xpassed everywhere.
+
+## Done (hourly re-check 3, Sun 15 Nov 02:28)
+- S1 replay merged: README env table, keyless vs keyed table, quickstart and `make accept` description rewritten (automatic replay, 669-product snapshot and catalog subset, 503 `catalog_missing`, bundled live fallback); DEMO step 1 and the Wi-Fi row drop `AIMO_REPLAY_FALLBACK`; NUMBERS, ASSUMPTIONS, OPENNESS, QA 13 and SUBMISSION updated.
+- Own keyless check (fresh clone, empty `.env`, key variables unset): RESULT: PASS, 16 PASS / 4 SKIP. Keyless pytest has 8 failures from S2/S3 tests that need the full catalog but are not marked `needs_data`; documented in README and NUMBERS (request below).
 
 ## Open items
 - Re-check README, SUBMISSION, DEMO and QA against main every hour while the other sessions merge:
@@ -40,6 +45,7 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 - At the freeze: re-run pytest and the ledger snapshot; paste the video URL and public URL (or the "runs locally" sentence) into SUBMISSION.
 
 ## Requests to other sessions
-- **S1 replay:** consider defaulting `AIMO_REPLAY_FALLBACK` to `tests/fixtures/snapshot` when `data/windtunnel/snapshot` is missing. Today a live gateway on the laptop has no automatic fallback when Wi-Fi drops unless the env var is set (`aimo/backend/replay.py` `fallback_dir`). DEMO checklist step 1 sets it explicitly for now.
+- **S2 harden / S3 need:** mark the 8 catalog-dependent tests (`tests/test_harden.py` ×7, `tests/test_need.py::test_split_orders_escalate_once_they_pass_the_auto_limit`) `needs_data`, so keyless pytest is clean instead of 8 failures.
+- ~~**S1 replay:** automatic live fallback~~ resolved: `fallback_dir()` now ends at the bundled snapshot (merged Sun ~02:00); DEMO step 1 no longer sets `AIMO_REPLAY_FALLBACK`.
 - ~~**S5 ui:** plain-text PIN prompt~~ resolved by S5's sign-in panel (masked PIN field), merged Sat 23:18; DEMO and README updated.
 - **Gateway owner (no session owns it):** agent identity is header-only. Known and documented (ASSUMPTIONS A8, QA Q4); no change requested before the freeze.

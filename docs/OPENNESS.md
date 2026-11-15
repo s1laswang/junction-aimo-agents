@@ -48,7 +48,7 @@ uv run python -m conformance --base http://127.0.0.1:8820 --query "rye bread"   
 
 | Wholesaler | Result | Report |
 |---|---|---|
-| Valio Aimo Trusted Trade Gateway (replay of recorded mock-API responses, `AIMO_REPLAY=tests/fixtures/snapshot`) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
+| Valio Aimo Trusted Trade Gateway (replay of recorded mock-API responses; keyless `make accept` re-runs this on every clone) | **44/44 PASS** | [docs/openness/conformance-valio-aimo.json](openness/conformance-valio-aimo.json) |
 | Nordic Bakery Supply (synthetic, static backend) | **44/44 PASS** | [docs/openness/conformance-nordic-bakery.json](openness/conformance-nordic-bakery.json) |
 
 The earlier run (Sat 19:10, 43 checks, Valio against the live mock API) also passed in full. Both gateways and the suite need the same `AIMO_APPROVER_PIN` in their environment, because the suite's approval checks act as a human.

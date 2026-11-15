@@ -11,9 +11,9 @@ UI labels below are from `web/app.js` on main (Sat 15:00). A full live run takes
    ```bash
    mkdir -p ~/aimo-demo-data && cd ~/aimo-demo-data
    for f in /PATH/TO/junction-aimo-agents/data/*; do case "$f" in *state.sqlite*) ;; *) ln -sf "$f" . ;; esac; done
-   cd /PATH/TO/junction-aimo-agents && AIMO_REPLAY_FALLBACK=tests/fixtures/snapshot AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve
+   cd /PATH/TO/junction-aimo-agents && AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve
    ```
-   `AIMO_REPLAY_FALLBACK` makes the gateway answer from the recorded snapshot if the live mock API stops responding (Wi-Fi drop). Without it there is no automatic fallback on this laptop, because `data/windtunnel/snapshot` does not exist.
+   If the live mock API stops responding (Wi-Fi drop), the gateway falls back to the bundled recorded snapshot by itself and marks responses `served_from: replay`.
 2. **Approver PIN.** Set a stage-only `AIMO_APPROVER_PIN` (12+ characters) in `.env` before starting the gateway, or read the generated one with `cat ~/aimo-demo-data/keys/approver_pin`. Write it on paper for the driver. The sign-in panel's PIN field is masked. Do not sign in during the warm-up in tab (a): the sign-in is a beat in the script.
 3. **Check health:** `curl -s localhost:8000/healthz` must show every integration as `aimo.catalog` / `aimo.trust`, not `fallback`, and `"clock": {"mode": ...}` must be what you expect (`real`, `env` when `AIMO_NOW` is set, or `replay`).
 4. **Warm up once** (fills the 5-minute offers cache and the query-embedding cache): `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` must end in `MILK FLOW OK`. Then restart with a fresh state dir again (step 1) so the audit view starts clean.
@@ -105,7 +105,7 @@ Without a credential both routes return 401. Verified Sat 14 Nov 23:13 with an a
 | Problem | Do this | Time cost |
 |---|---|---|
 | Gemini slow or failing | The agent falls back to the deterministic need parser; keep talking over the timeline. If the run stalls for > 20 s, switch to tab (b) mock mode. | 5 s |
-| **Wi-Fi drops** (mock API unreachable) | If the gateway was started with `AIMO_REPLAY_FALLBACK=tests/fixtures/snapshot` (checklist step 1), prices and stock keep working: when the live upstream fails after retries, it serves the recorded snapshot and marks responses `served_from: replay`. To be fully offline from the start, restart with `AIMO_REPLAY=tests/fixtures/snapshot AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve` (the clock is anchored at the recording, Sat 14 Nov 14:20, so Monday is still orderable). The Gemini agent still needs the network: without it, run `qa_milk_flow.py` (below) or mock mode. Say: "we're on recorded mock-API responses now." | 20 s |
+| **Wi-Fi drops** (mock API unreachable) | Prices and stock keep working: when the live upstream fails after retries, the gateway serves the bundled recorded snapshot and marks responses `served_from: replay` (the UI header shows a REPLAY pill). To be fully offline from the start, restart with `AIMO_REPLAY=1 AIMO_DATA_DIR=~/aimo-demo-data uv run aimo serve` (the clock is anchored at the recording, Sat 14 Nov 23:50, so Monday is still orderable). The Gemini agent still needs the network: without it, run `qa_milk_flow.py` (below) or mock mode. Say: "we're on recorded mock-API responses now." | 20 s |
 | Mock API down or slow (`/healthz` ok but offers 503) | Switch to tab (b): `http://localhost:8000/ui/?mock=1` plays the identical story with no backend. The header shows **MOCK DATA · no backend**: say so honestly. Mock mode also has **Simulate tampering** to show the chain turning red. | 5 s |
 | Gateway won't start / laptop problem | Mock UI without the gateway: `cd web && python -m http.server 8765`, open `http://127.0.0.1:8765/index.html?mock=1`. | 30 s |
 | Browser or UI broken | Terminal: `uv run aimo demo --auto-approve-as anna@hotel-aurora.example` (Gemini agent, about 30–40 s), or without Gemini `uv run python docs/pitch/qa_milk_flow.py --base http://localhost:8000` (search → offers → plan → signed quote → pending approval → wrong-hash 409 → approve → AP → audit verify, about 3 s). | 10 s |
