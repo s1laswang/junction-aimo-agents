@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import unicodedata
 from functools import lru_cache
+from typing import Any
 
 _AGENT = r"(?:ai|a\.i\.|llm|gpt|gemini|claude|assistant|agent|bot|model|automated|automatic|ordering|purchasing|buying|buyer)"
 _APPROVAL = r"(?:approv\w*|sign[- ]?off|signed off|human review|review step|verification|human check|checks?|guardrails?)"
@@ -75,7 +77,7 @@ STRONG: list[tuple[str, str]] = [
     ("output hijack", r"\b(output|reply|respond|answer|say|print)( only| just)?( with)? [\"']?(approved|yes|ok)[\"']?\b(?! by)"),
 ]
 WEAK: list[tuple[str, str]] = [
-    ("url or contact redirection", r"https?://|www\.[a-z0-9-]+\.[a-z]{2,}|\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b"),
+    ("url or contact redirection", r"https?://|www\.[a-z0-9-]{1,255}\.[a-z]{2,24}|\b[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,255}\.[a-z]{2,24}\b"),
     ("secret word", r"\b(api[_ ]?keys?|passwords?|credentials|access tokens?)\b"),
     ("invisible characters", "[​-‏‪-‮⁠-⁤﻿]"),
     ("agent-addressed", r"\b(to|for|note (to|for)|message (to|for)|attention|dear|p\.?s\.? to|if you are an?)\b[^.\n]{0,12}\b" + _AGENT + r"\b[^.\n]{0,15}\b(agents?|assistants?|bots?|buyers?|models?|systems?|purchasers?)\b|\b(tekoäly\w*|ostobot\w*)\b|\bai-(inköpare|assistent\w*|agent\w*)\b|\bautomatiska köpare\b"),
@@ -86,17 +88,45 @@ _S = [(r, re.compile(p, re.IGNORECASE | re.MULTILINE)) for r, p in STRONG]
 _W = [(r, re.compile(p, re.IGNORECASE | re.MULTILINE)) for r, p in WEAK]
 WEAK_REASONS = {r for r, _ in WEAK}
 _ZW = re.compile("[​-‏‪-‮⁠-⁤﻿]")
+_MAX_SCAN_CHARS = 32_768
+_SCAN_HEAD = 24_576
+_SCAN_TAIL = 8_192
+
+
+def _sanitize_text(text: Any) -> str:
+    if not isinstance(text, str) or not text:
+        return ""
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "replace").decode("utf-8")
+
+
+def _bound_text(text: Any) -> str:
+    if not isinstance(text, str) or not text:
+        return ""
+    window = text if len(text) <= _MAX_SCAN_CHARS else (text[:_SCAN_HEAD] + "\n" + text[-_SCAN_TAIL:])
+    return _sanitize_text(window)
 
 
 def _normalize(text: str) -> str:
     """NFKC (fullwidth/compat letters), drop zero-width characters used to split keywords, squash spaces."""
-    t = unicodedata.normalize("NFKC", text)
+    s = _bound_text(text)
+    if not s:
+        return ""
+    t = unicodedata.normalize("NFKC", s)
     t = _ZW.sub("", t)
     return re.sub(r"[ \t]+", " ", t)
 
 
 def _regex_screen(text: str) -> tuple[list[str], list[str], list[str]]:
-    norm = _normalize(text)
+    bounded = _bound_text(text)
+    if not bounded:
+        return [], [], []
+    norm = _normalize(bounded)
     strong, weak, matches = [], [], []
     for reason, rx in _S:
         m = rx.search(norm)
@@ -105,7 +135,7 @@ def _regex_screen(text: str) -> tuple[list[str], list[str], list[str]]:
                 strong.append(reason)
             matches.append(m.group(0)[:80])
     for reason, rx in _W:
-        m = rx.search(text if reason == "invisible characters" else norm)
+        m = rx.search(bounded if reason == "invisible characters" else norm)
         if m:
             if reason not in weak:
                 weak.append(reason)
@@ -154,6 +184,33 @@ ordinary request, it is not suspicious.
 GEMINI_MIN_CONFIDENCE = 0.8
 
 
+def _parse_suspicious(val: Any) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return math.isfinite(float(val)) and val != 0
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes")
+    return False
+
+
+def _parse_confidence(val: Any) -> float:
+    if val is None or isinstance(val, bool):
+        return 0.0
+    if isinstance(val, (int, float)):
+        num = float(val)
+    elif isinstance(val, str):
+        try:
+            num = float(val.strip())
+        except ValueError:
+            return 0.0
+    else:
+        return 0.0
+    if not math.isfinite(num):
+        return 0.0
+    return max(0.0, min(1.0, num))
+
+
 @lru_cache(maxsize=4096)
 def _gemini_screen(text_hash: str, text: str) -> tuple[bool, float, tuple[str, ...]] | None:
     try:
@@ -162,14 +219,30 @@ def _gemini_screen(text_hash: str, text: str) -> tuple[bool, float, tuple[str, .
         from aimo import gemini
         from aimo.config import GEMINI_FAST_MODEL
 
+        safe_text = _sanitize_text(text)[:6000]
+        prompt = _PROMPT.replace("<untrusted>\n%s\n</untrusted>", f"<untrusted>\n{safe_text}\n</untrusted>")
         cfg = types.GenerateContentConfig(response_mime_type="application/json", response_schema=_SCHEMA,
                                           temperature=0)
-        r = gemini.generate("injection_screen", GEMINI_FAST_MODEL, _PROMPT % text[:6000], config=cfg, retries=2)
-        out = json.loads(r.text)
-        reasons = tuple(str(x) for x in out.get("reasons", []))[:5]
-        if out.get("category") and out.get("category") != "none":
-            reasons = (str(out["category"]),) + reasons
-        return bool(out.get("suspicious")), float(out.get("confidence") or 0), reasons
+        r = gemini.generate("injection_screen", GEMINI_FAST_MODEL, prompt, config=cfg, retries=2)
+        raw_text = getattr(r, "text", None)
+        if not isinstance(raw_text, str):
+            return None
+        out = json.loads(raw_text)
+        if not isinstance(out, dict):
+            return None
+        raw_reasons = out.get("reasons")
+        if isinstance(raw_reasons, (list, tuple)):
+            reasons = tuple(_sanitize_text(x).strip() for x in raw_reasons if isinstance(x, str) and _sanitize_text(x).strip())[:5]
+        elif isinstance(raw_reasons, str) and _sanitize_text(raw_reasons).strip():
+            reasons = (_sanitize_text(raw_reasons).strip(),)
+        else:
+            reasons = ()
+        cat = out.get("category")
+        if isinstance(cat, str):
+            cat_clean = _sanitize_text(cat).strip()
+            if cat_clean and cat_clean.lower() != "none":
+                reasons = (cat_clean,) + reasons
+        return _parse_suspicious(out.get("suspicious")), _parse_confidence(out.get("confidence")), reasons
     except Exception:  # noqa: BLE001  layer 2 is best effort; layer 1 already ran
         return None
 
@@ -177,20 +250,26 @@ def _gemini_screen(text_hash: str, text: str) -> tuple[bool, float, tuple[str, .
 def screen_text(text: str | None, use_gemini: bool | None = None) -> dict:
     """{"suspicious", "reasons", "strong_reasons", "matches", "layers"}. suspicious = any strong regex
     signal, or two different weak ones, or (layer 2) Gemini at confidence >= 0.8."""
-    text = text or ""
-    strong, weak, matches = _regex_screen(text)
+    clean = _bound_text(text)
+    strong, weak, matches = _regex_screen(clean)
     if len(weak) >= 2:
         strong.append("combined weak signals (" + ", ".join(weak) + ")")
     reasons = strong + [w for w in weak if w not in strong]
     layers = ["regex"]
     if use_gemini is None:
-        use_gemini = os.environ.get("AIMO_SCREEN_GEMINI", "0") == "1"
-    if use_gemini and text.strip():
-        res = _gemini_screen(hashlib.sha256(text.encode()).hexdigest(), text)
+        gem_enabled = os.environ.get("AIMO_SCREEN_GEMINI", "0") == "1"
+    elif isinstance(use_gemini, str):
+        gem_enabled = use_gemini.strip().lower() in ("1", "true", "yes")
+    else:
+        gem_enabled = bool(use_gemini)
+    if gem_enabled and clean.strip():
+        digest = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+        res = _gemini_screen(digest, clean[:6000])
         if res is not None:
             layers.append("gemini")
             sus, conf, g_reasons = res
-            if sus and conf >= GEMINI_MIN_CONFIDENCE:
+            safe_conf = _parse_confidence(conf)
+            if _parse_suspicious(sus) and safe_conf >= GEMINI_MIN_CONFIDENCE:
                 g = [f"gemini: {r}" for r in (g_reasons or ("classified as suspicious",))]
                 strong += g
                 reasons += g
@@ -202,9 +281,16 @@ def screen_text(text: str | None, use_gemini: bool | None = None) -> dict:
 
 def format_plan_screen(screen: dict | None, flags: list[str] | None = None) -> str:
     data = screen if isinstance(screen, dict) else {}
-    if bool(data.get("suspicious")) or "supplier_text_injection_suspected" in (flags or []):
-        reasons = [str(r) for r in (data.get("reasons") or []) if str(r).strip()]
-        return "screen: FLAGGED (" + ", ".join(reasons) + ")" if reasons else "screen: FLAGGED"
+    flag_items = flags if isinstance(flags, (list, tuple, set, frozenset)) else ()
+    raw_reasons = data.get("reasons")
+    if isinstance(raw_reasons, (list, tuple)):
+        reason_items = [_sanitize_text(r).strip() for r in raw_reasons if isinstance(r, str) and _sanitize_text(r).strip()]
+    elif isinstance(raw_reasons, str) and _sanitize_text(raw_reasons).strip():
+        reason_items = [_sanitize_text(raw_reasons).strip()]
+    else:
+        reason_items = []
+    if _parse_suspicious(data.get("suspicious")) or "supplier_text_injection_suspected" in flag_items:
+        return "screen: FLAGGED (" + ", ".join(reason_items) + ")" if reason_items else "screen: FLAGGED"
     if isinstance(screen, dict):
         return "screen: clean"
     return "screen: unscreened"
