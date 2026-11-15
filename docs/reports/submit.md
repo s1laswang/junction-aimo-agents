@@ -40,6 +40,12 @@ Branch `team/submit`, worktree `~/junction-aimo-team/sessions/submit`. Owner of 
 - S1 replay merged: README env table, keyless vs keyed table, quickstart and `make accept` description rewritten (automatic replay, 669-product snapshot and catalog subset, 503 `catalog_missing`, bundled live fallback); DEMO step 1 and the Wi-Fi row drop `AIMO_REPLAY_FALLBACK`; NUMBERS, ASSUMPTIONS, OPENNESS, QA 13 and SUBMISSION updated.
 - Own keyless check (fresh clone, empty `.env`, key variables unset): RESULT: PASS, 16 PASS / 4 SKIP. Keyless pytest has 8 failures from S2/S3 tests that need the full catalog but are not marked `needs_data`; documented in README and NUMBERS (request below).
 
+## Done for the CEO's S4 list (Sun 15 Nov 05:00–05:20)
+- S4-1 numbers/behaviour sync and S4-2 SUBMISSION rows: merged 9742758.
+- S4-3 exception matrix in docs/RUN.md (9 rows, rubric wording); every cited command run and passing on d4b0b41; the two `aimo demo` rows quoted from a truly keyless `git archive` export.
+- S4-4 QA 21 (precision: 154 unnecessary escalations, not the 144 in the request; 37 deliberate stops) and QA 22 (clock / fake stock); PLAN.md questions refreshed.
+- Found: the team Gemini key returns 429 RESOURCE_EXHAUSTED (05:05); reported to the CEO.
+
 ## Done (hourly re-check, Sun 15 Nov 04:28)
 - Fleet port `ccab8f5` (per-approver credentials) verified on a replay gateway: Anna's passphrase signs in as Anna (200) and not as Mikko (401); Mikko's own works (200); 6 other approvers each get a 12-character passphrase. README assumption 3, QA Q3 and DEMO step 2 updated (stage: use Anna's own `keys/approver_pin`, leave the operator `AIMO_APPROVER_PIN` empty); deck test count 357.
 

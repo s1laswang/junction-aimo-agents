@@ -1,17 +1,20 @@
 # PLAN: Valio Aimo Trusted Trade Agents (Junction 2026)
 
-Owner: CEO (Claude). Last updated: Sat 14 Nov 2026, 19:15 Helsinki. Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
+Owner: CEO (Claude). Last updated: Sun 15 Nov 2026, 05:15 Helsinki (questions block). Deadline: **Sun 15 Nov 10:00**. Main must be submission-ready from **Sun 06:00**.
 
-## Questions for Silas
-1. **Momin's code: approve the merge plan in [docs/MERGE-MOMIN.md](MERGE-MOMIN.md).** I reviewed it read-only: `junction26-valio` dev on freighter. It's a solid deterministic gateway with all 8 brief scenarios as runnable acceptance scripts, but it runs with no LLM by default.
-   - **Recommendation:** submit **junction-aimo-agents**. Gemini is essential throughout it, it has the richer live UI, a red-teamed trust layer, 123 tests, and it's on GitHub. Port four things from Momin's repo, credited to him: recipe → order, the proactive seller agent, the standing-order drift detector, and his s0–s7 acceptance suite plus Dockerfile.
-   - **Optional:** retarget the fleet's `valio` team to open `fr8/valio/*` PRs against our repo.
-   - I won't touch the fleet's board, repos, jobs or branches without your OK. **Porting is done** (Sat 19:00): recipe → order, seller, drift and the s0–s7 suite (8/8 PASS live, `uv run python -m scenarios.run_all`) are all on main and credited to Momin. Say so if you prefer Momin's as the base.
-2. **Live demo hosting: decided.** A cloudflared tunnel from the demo laptop, plus replay mode as the fallback.
-3. **FR8 data dir:** `/data/silas` doesn't exist and we can't create it, because /data is root-owned. Can you ask the cluster admin to create `/data/silas`, owned by silas? Until then we use `~/junction-aimo-agents-data` (/home is 97% full; our data is under 1 GB).
-4. **Who presents?** The default is Silas presenting and Chintufp driving the demo.
-5. **When is the pitch slot?** The live "by Monday" story depends on a real mock-API cut-off. Stock milk can be ordered for Monday delivery only until **Sun 15 Nov 17:00**. If judging runs after about 16:30 on Sunday, we switch the request to "by Tuesday", or use the recorded video or mock mode. Tell us the slot once you know it.
-6. **ElevenLabs: approved (Sat 20:30). Still needed: put the key in `.env` as `ELEVENLABS_API_KEY`** (never commit it). The voice engineer is building it on team/voice, with a Web Speech fallback until the key lands. Use: a voice approval call. The procurement manager gets a phone-style voice prompt, "Approve €1,010 lactose-free milk for Monday?", answers by voice, and the approval is still bound to the quote hash and audited. ElevenLabs does speech-to-text and text-to-speech; Gemini stays the brain. It's optional and scores on "autonomy and controls" plus the demo. If you don't want it, we skip it.
+## Questions for Silas (refreshed Sun 15 Nov 05:15)
+Resolved overnight (kept for the record):
+- **Momin's code:** we submit junction-aimo-agents; recipe → order, seller, drift and the s0–s7 suite were ported Sat 19:00, and single fleet functions (per-approver credentials, request-text injection screen, unknown-customer 403) were ported Sun 03:40, each credited in docs/MERGE-MOMIN.md. `combined` and `fr8/valio/*` are not merged.
+- **Hosting:** no hosted instance. Judges run it locally in 3 commands with no keys (replay mode, `make accept` → RESULT: PASS).
+- **Pitch after Sun 17:00:** solved without changing the story: replay mode anchors the clock at the recording, and `AIMO_NOW` sets it explicitly (docs/DEMO.md step 5).
+- **ElevenLabs:** voice approval is built with a browser-speech fallback; the key is optional.
+- **FR8 data dir:** no longer needed.
+
+Open, needs you:
+1. **Tag `aimo-v1` at 07:30** after the CEO's final gate: OK to push the public tag? (Commands in the V1 prompt; README already clones `--branch aimo-v1`.)
+2. **Gemini quota:** the team key returned `429 RESOURCE_EXHAUSTED` at 05:05. Live Gemini runs (stage demo, live video) need the quota reset or billing fixed; the keyless scripted path works meanwhile.
+3. **Video:** keep the narrated walkthrough (docs/pitch/demo-walkthrough.mp4), or record a live screen run from docs/DEMO.md before 09:30?
+4. **Who presents, and when is the slot?** Default: Silas presents, Chintufp drives.
 
 ## Scoring checklist (official rubric, JUDGING.md)
 Tick a box only with evidence: a command, a test or a file. The status column is current as of Sat 20:15.

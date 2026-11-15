@@ -1,4 +1,4 @@
-# Judge Q&A: 20 hard questions
+# Judge Q&A: 22 hard questions
 
 Short answers for the presenter, each with the file that backs it. Facts re-checked against main (fac34f0) on Sat 14 Nov 23:00–23:30 unless marked otherwise. If a judge pushes past an answer, say what is demo-only and point at the production path; never round a number up.
 
@@ -68,6 +68,12 @@ Prices and availability are live from the challenge's mock API. Orders go to our
 
 **19. What is the path to production?**
 Read-only first, then quotes, then orders with every order human-approved, then autonomy inside limits relaxed one rule at a time from audit evidence (allergen rules never relax for schools and hospitals). In parallel: SAP adapter for contract prices and real available-to-promise, GS1 Synkka as the allergen truth source, OAuth 2.1 and customer SSO, KMS keys, WORM audit, Peppol through Valio's access point. Valio legal must confirm whether a signed quote is a binding offer. README "Production next steps", docs/ARCHITECTURE.md §5.
+
+**21. Why does it ask a human this often (68% precision)?**
+Because it is built to stop when unsure. In the final-code wind tunnel (640 Gemini-written scenarios) it escalated 331 times when it had to and 154 times when auto-approval would also have been acceptable, while letting through 0 policy and 0 allergen violations and missing 1 required escalation (recall 99.7%). Of the 154, 37 are deliberate stops: 21 detected injection attempts and 16 price jumps over 15%. Most of the rest is conservatism about products that are not the customer's usual ones (substitutions in school and hospital kitchens, recipe quotes with several ingredients, claim-only "gluten-free"). Each human "always allow this swap" teaches the gateway that swap, so the same question is not asked again, and small verified alternatives under the customer's limit (hotel: €50) already go through alone. docs/windtunnel-results.json (`main`), docs/reports/need.md, `aimo/trust/learned.py`.
+
+**22. Can an agent move the clock or fake stock?**
+No. The demo clock (`X-Aimo-Now`) and fault injection (`X-Aimo-Faults`: stock-outs, price shocks, injected text) are operator tools: on any request carrying agent identity, over REST or MCP, the gateway ignores them unless the operator started it with `AIMO_DEMO_FAULTS=1`, and never with `AIMO_ENV=production`. So an agent cannot backdate "now" past a cut-off or invent stock. Prices and stock come from the backend; the quote is signed; and if stock drops while the order waits for approval, the approval returns 409 `requote_needed` instead of a partial order. `tests/test_overrides.py`, `tests/test_gateway.py::test_partial_stock_at_approval_requotes_instead_of_silently_less`, docs/TRUST.md (tail).
 
 ## Gemini
 
