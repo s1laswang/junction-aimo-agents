@@ -1518,6 +1518,18 @@ def test_mcp_catalog_missing_returns_structured_tool_error(tmp_path, monkeypatch
             "plan_need",
             {
                 "need": {
+                    "customer_id": "hotel-aurora",
+                    "product_query": "lactose free milk",
+                    "quantity": 2_000_000,
+                    "unit": "L",
+                    "delivery_by": DELIVERY,
+                }
+            },
+        ),
+        (
+            "plan_need",
+            {
+                "need": {
                     "customer_id": "rogue-corp",
                     "product_query": "lactose free milk",
                     "quantity": 10,
@@ -1535,9 +1547,35 @@ def test_mcp_catalog_missing_returns_structured_tool_error(tmp_path, monkeypatch
     assert err_plan and "catalog_missing" in txt_plan and "UnexpectedToolError" not in txt_plan
 
     _, err_bad_qty, _, txt_bad_qty = results[2]
-    assert err_bad_qty and "bad_quantity" in txt_bad_qty
+    assert err_bad_qty and ("greater_than" in txt_bad_qty or "bad_quantity" in txt_bad_qty) and "catalog_missing" not in txt_bad_qty
 
-    _, err_bad_cust, _, txt_bad_cust = results[3]
-    assert err_bad_cust and "unknown_customer" in txt_bad_cust
+    _, err_absurd_qty, _, txt_absurd_qty = results[3]
+    assert err_absurd_qty and "absurd_quantity" in txt_absurd_qty and "catalog_missing" not in txt_absurd_qty
+
+    _, err_bad_cust, _, txt_bad_cust = results[4]
+    assert err_bad_cust and "customer_mismatch" in txt_bad_cust and "catalog_missing" not in txt_bad_cust
+
+    monkeypatch.delenv("AIMO_CUSTOMER_ID", raising=False)
+    unauth_res = asyncio.run(
+        _inproc_mcp_batch(
+            srv,
+            [
+                (
+                    "plan_need",
+                    {
+                        "need": {
+                            "customer_id": "rogue-corp",
+                            "product_query": "lactose free milk",
+                            "quantity": 10,
+                            "unit": "L",
+                            "delivery_by": DELIVERY,
+                        }
+                    },
+                )
+            ],
+        )
+    )
+    _, err_unknown, _, txt_unknown = unauth_res[0]
+    assert err_unknown and "unknown_customer" in txt_unknown and "catalog_missing" not in txt_unknown
 
 
