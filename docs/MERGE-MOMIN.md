@@ -44,3 +44,11 @@ What Momin's does as well or better:
 
 ## Ask to Silas
 Approve: (a) ours as the submission; (b) porting the four items above; (c) optionally retargeting the fleet's `valio` team to open `fr8/valio/*` PRs against junction-aimo-agents.
+
+## Fleet ports into main (Sun 15 Nov, ~03:45, merge session)
+Hand-ported from the fleet's `fr8/valio/*` branches (PR #6, built on `combined`, so it does not merge onto main directly). Credit to the fleet workers named in each commit:
+- `0a792f0` (valio-auth-w2), read-route part: unknown customer gets 403 `unknown_customer` on `POST /v1/plan`, `POST /v1/offers`, `GET /v1/products/search` and the MCP `search_products`, `get_offers`, `plan_need` tools. Agent keys and the buyer-run checks were not ported.
+- `0d96f61` + `599a991` (valio-auth-lead): per-approver credentials. Anna keeps `data/keys/approver_pin`, the other approvers get their own passphrases in `data/keys/approver_pins.json`, and a credential only acts as its own approver. Per-identity lockout was not ported; main's per-source lock and global backstop stay.
+- `70289e6` (valio-auth-w5): `injection_screen` on candidates and plan lines, with flagged lines named in the plan explanation, built on main's existing `plan.mark_supplier_text`.
+- Two fixes in the same session, not from the fleet: the policy injection rule now also screens the buyer's request text (`need.raw_text`), and day formatting no longer uses `%-d` (fails on Windows), with `tzdata` declared.
+Tests: 357 passed with the catalog, 256 keyless (was 349 / 250). Keyless `make accept` gives PASS=17 FAIL=0 SKIP=3. Scenarios 8/8, conformance 44/44.
